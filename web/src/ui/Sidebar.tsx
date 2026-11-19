@@ -1,5 +1,6 @@
 import { retryFailed } from '../api/useResource'
 import type { SceneMode } from '../scene/Viewport'
+import { ObjectControls } from './ObjectControls'
 import { CATEGORIES, MANIFEST_LOAD, useViewer, type Category, type LoadState } from '../state/store'
 
 /** The load of the object `id`, whatever resource key it is under ("mesh:<id>", ...). */
@@ -55,6 +56,7 @@ function CategoryNode({ id, label }: { id: Category; label: string }) {
                 <span className="tree-name">{o.name}</span>
                 <LoadTag id={o.id} />
               </label>
+              {visible && o.visible && <ObjectControls id={o.id} />}
             </li>
           ))}
         </ul>

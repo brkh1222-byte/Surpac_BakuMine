@@ -19,7 +19,18 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 1,
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1280, height: 800 },
+        // Ask headless Chromium for the real GPU where there is one (the performance
+        // probe is meaningless on the software rasteriser); it falls back by itself.
+        launchOptions: { args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=default'] },
+      },
+    },
+  ],
   webServer: [
     {
       command: `uv run uvicorn bakumine.api:app --host 127.0.0.1 --port ${API_PORT}`,

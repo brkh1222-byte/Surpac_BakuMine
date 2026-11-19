@@ -1,24 +1,33 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect } from 'react'
-import { Object3D, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import { Object3D, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import { useDisplay } from '../state/display'
 import { useViewer } from '../state/store'
+import { HolePanel } from '../ui/HolePanel'
+import { HoverTooltip } from '../ui/HoverTooltip'
+import { LegendStack } from '../ui/Legend'
 import { CameraRig } from './CameraRig'
 import { installDebugHandle } from './debug'
 import { SceneContent } from './layers'
 import { MockLayer } from './MockLayer'
 import { getOrigin, renderToWorld } from './origin'
+import { PerfScene } from './PerfScene'
 import { ProjectScene } from './ProjectScene'
 import { gridElevation, ReferenceGrid } from './ReferenceGrid'
 import { SCENE_COLORS } from './theme'
-import { overlay, view } from './view'
+import { overlay, view, type PickResult } from './view'
 
 // World convention: x = east, y = north, z = up.
 Object3D.DEFAULT_UP.set(0, 0, 1)
 
-/** Visible leaf objects under `root` (three's raycaster does not skip hidden ones). */
+/**
+ * Visible leaf objects under `root` for three's raycaster (which does not skip hidden
+ * ones). Objects flagged `userData.noRaycast` are left out: their layer picks them
+ * itself (view.pickers) or they are too heavy to raycast on every pointer move.
+ */
 function pickable(root: Object3D, out: Object3D[] = []): Object3D[] {
   if (!root.visible) return out
-  if ((root as Object3D & { geometry?: unknown }).geometry) out.push(root)
+  if ((root as Object3D & { geometry?: unknown }).geometry && !root.userData.noRaycast) out.push(root)
   for (const child of root.children) pickable(child, out)
   return out
 }
@@ -35,22 +44,48 @@ function CursorProbe() {
     const hit = new Vector3()
     let pointer: { x: number; y: number } | null = null
     let scheduled = 0
+    let down: { x: number; y: number } | null = null
+
+    /** Casts the pointer ray: nearest raycast hit and nearest layer-picker result. */
+    const cast = (x: number, y: number) => {
+      const camera = view.camera
+      if (!camera) return null
+      const rect = dom.getBoundingClientRect()
+      ndc.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1)
+      raycaster.setFromCamera(ndc, camera)
+      raycaster.params.Line.threshold = view.metresPerPixel * 4
+      const hits = view.content ? raycaster.intersectObjects(pickable(view.content), false) : []
+
+      const perspective = camera instanceof PerspectiveCamera
+      const ray = {
+        origin: raycaster.ray.origin,
+        direction: raycaster.ray.direction,
+        metresPerPixel0: perspective ? 0 : view.metresPerPixel,
+        metresPerPixelSlope: perspective ? (2 * Math.tan((camera.fov * Math.PI) / 360)) / rect.height : 0,
+      }
+      const results = [...view.pickers].map((picker) => picker(ray)).filter((r): r is PickResult => r !== null)
+      const nearest = results.reduce<PickResult | null>((best, r) => (!best || r.distance < best.distance ? r : best), null)
+      // An opaque surface in front hides what is behind it; a see-through one does not.
+      const blocker = hits.find((h) => !h.object.userData.seeThrough)
+      const picked = nearest && blocker && blocker.distance < nearest.distance ? null : nearest
+      return { hits, picked }
+    }
 
     const probe = () => {
       scheduled = 0
-      const camera = view.camera
       const { setCursor, verticalExaggeration } = useViewer.getState()
-      if (!camera || !pointer) return
-      const rect = dom.getBoundingClientRect()
-      ndc.set(
-        ((pointer.x - rect.left) / rect.width) * 2 - 1,
-        -((pointer.y - rect.top) / rect.height) * 2 + 1,
-      )
-      raycaster.setFromCamera(ndc, camera)
-      raycaster.params.Line.threshold = view.metresPerPixel * 4
+      if (!pointer) return
+      const result = cast(pointer.x, pointer.y)
+      if (!result) return
       const origin = getOrigin()
-
-      const hits = view.content ? raycaster.intersectObjects(pickable(view.content), false) : []
+      const { hits, picked } = result
+      if (picked) {
+        picked.hover(pointer.x, pointer.y)
+        const [e, n, z] = renderToWorld(picked.point, verticalExaggeration, origin)
+        setCursor({ e, n, z, on: 'object' })
+        return
+      }
+      useDisplay.getState().setHover(null)
       if (hits.length > 0) {
         const p = hits[0].point
         const [e, n, z] = renderToWorld([p.x, p.y, p.z], verticalExaggeration, origin)
@@ -74,12 +109,29 @@ function CursorProbe() {
     const onLeave = () => {
       pointer = null
       useViewer.getState().setCursor(null)
+      useDisplay.getState().setHover(null)
+    }
+    // A click (press and release without dragging) selects what is under the pointer.
+    const onDown = (event: PointerEvent) => {
+      down = event.button === 0 ? { x: event.clientX, y: event.clientY } : null
+    }
+    const onUp = (event: PointerEvent) => {
+      const start = down
+      down = null
+      if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return
+      const picked = cast(event.clientX, event.clientY)?.picked
+      if (picked) picked.select()
+      else useDisplay.getState().setSelection(null)
     }
     dom.addEventListener('pointermove', onMove)
     dom.addEventListener('pointerleave', onLeave)
+    dom.addEventListener('pointerdown', onDown)
+    dom.addEventListener('pointerup', onUp)
     return () => {
       dom.removeEventListener('pointermove', onMove)
       dom.removeEventListener('pointerleave', onLeave)
+      dom.removeEventListener('pointerdown', onDown)
+      dom.removeEventListener('pointerup', onUp)
       if (scheduled) cancelAnimationFrame(scheduled)
     }
   }, [gl])
@@ -122,13 +174,16 @@ function OrientationGizmo() {
   )
 }
 
-/** `api`: the project served by the API; `mock`: client-side stand-ins; `none`: empty. */
-export type SceneMode = 'api' | 'mock' | 'none'
+/**
+ * `api`: the project served by the API; `mock`: client-side stand-ins; `perf`: large
+ * client-generated objects for the performance probe; `none`: empty.
+ */
+export type SceneMode = 'api' | 'mock' | 'perf' | 'none'
 
 export function Viewport({ mode }: { mode: SceneMode }) {
   const theme = useViewer((s) => s.theme)
   const colors = SCENE_COLORS[theme]
-  const debug = mode === 'mock' || import.meta.env.DEV
+  const debug = mode === 'mock' || mode === 'perf' || import.meta.env.DEV
 
   return (
     <div className="viewport" data-testid="viewport">
@@ -141,6 +196,7 @@ export function Viewport({ mode }: { mode: SceneMode }) {
         <ReferenceGrid />
         <SceneContent>
           {mode === 'mock' && <MockLayer />}
+          {mode === 'perf' && <PerfScene />}
           {mode === 'api' && <ProjectScene />}
         </SceneContent>
         <CursorProbe />
@@ -153,7 +209,18 @@ export function Viewport({ mode }: { mode: SceneMode }) {
           overlay.labels = el
         }}
       />
+      <div
+        className="grid-labels hole-labels"
+        aria-hidden="true"
+        data-testid="hole-labels"
+        ref={(el) => {
+          overlay.holeLabels = el
+        }}
+      />
       <OrientationGizmo />
+      <LegendStack />
+      <HolePanel />
+      <HoverTooltip />
       <div className="scale" title="Scale at the view centre">
         <div
           className="scale-bar"

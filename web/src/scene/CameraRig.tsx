@@ -168,6 +168,17 @@ class Rig implements RigApi {
     this.place(new Vector3(p[0], p[1], p[2]), this.direction(new Vector3()), Math.max(distance, 0.02))
   }
 
+  orbitBy = (azimuth: number): void => {
+    if (this.controls) this.target.copy(this.controls.target)
+    const offset = this.camera.position.clone().sub(this.target)
+    offset.applyAxisAngle(new Vector3(0, 0, 1), azimuth)
+    this.camera.position.copy(this.target).add(offset)
+    this.camera.lookAt(this.target)
+    this.controls?.update()
+    this.frame()
+    this.onChange()
+  }
+
   /** Keeps the view on the same true-world point when the exaggeration changes. */
   setExaggeration(value: number): void {
     if (value === this.exaggeration) return

@@ -8,9 +8,12 @@ import { Toolbar } from './ui/Toolbar'
 const PARAMS = new URLSearchParams(window.location.search)
 /**
  * Where the scene comes from: the API's project by default; `?mock=1` fills it with
- * stand-in objects so the viewer runs without the API; `?scene=none` leaves it empty.
+ * stand-in objects so the viewer runs without the API; `?mock=perf` generates large objects
+ * for the performance probe; `?scene=none` leaves it empty.
  */
-const MODE: SceneMode = PARAMS.get('mock') === '1' ? 'mock' : PARAMS.get('scene') === 'none' ? 'none' : 'api'
+const MOCK = PARAMS.get('mock')
+const MODE: SceneMode =
+  MOCK === '1' ? 'mock' : MOCK === 'perf' ? 'perf' : PARAMS.get('scene') === 'none' ? 'none' : 'api'
 
 function App() {
   const theme = useViewer((s) => s.theme)

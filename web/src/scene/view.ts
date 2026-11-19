@@ -28,10 +28,40 @@ export interface RigApi {
   zoomToExtents: () => void
   /** Orbits around a world point from `distance` metres, keeping the view direction. */
   lookAt: (world: Vec3, distance: number) => void
+  /** Turns the camera around the orbit centre about the vertical axis, radians. */
+  orbitBy: (azimuth: number) => void
   getState: () => CameraState
 }
 
+/** The pointer ray handed to pickers, render space. */
+export interface PointerRay {
+  origin: Vector3
+  /** Unit vector. */
+  direction: Vector3
+  /** Metres per CSS pixel at distance t along the ray: metresPerPixel0 + slope * t. */
+  metresPerPixel0: number
+  metresPerPixelSlope: number
+}
+
+export interface PickResult {
+  /** Distance along the ray, render space. */
+  distance: number
+  /** Hit point, render space. */
+  point: [number, number, number]
+  /** Called when this result is what the pointer is over (client pixel position). */
+  hover: (clientX: number, clientY: number) => void
+  /** Called when the user clicks it. */
+  select: () => void
+}
+
+/**
+ * A layer's own picking routine. Layers that draw merged geometry register one here
+ * (and set `userData.noRaycast` on their objects) instead of being raycast by three.
+ */
+export type Picker = (ray: PointerRay) => PickResult | null
+
 export const view = {
+  pickers: new Set<Picker>(),
   /** Metres per CSS pixel at the orbit centre (render space). */
   metresPerPixel: 1,
   /** Orbit centre, render space. */
@@ -47,6 +77,8 @@ export const view = {
 /** DOM nodes the scene updates directly each frame (no React re-render). */
 export const overlay = {
   labels: null as HTMLDivElement | null,
+  /** Host of the drillhole labels; each drillhole layer adds its own child. */
+  holeLabels: null as HTMLDivElement | null,
   gizmo: null as SVGSVGElement | null,
   scaleBar: null as HTMLDivElement | null,
   scaleText: null as HTMLSpanElement | null,

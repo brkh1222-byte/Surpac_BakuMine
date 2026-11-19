@@ -287,6 +287,65 @@ input {
   text-overflow: ellipsis;
 }
 
+.object-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 10px 7px 30px;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  color: var(--text-muted);
+}
+
+.control > span {
+  flex: none;
+  width: 58px;
+}
+
+.control select,
+.control input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font: inherit;
+}
+
+.control-check > span {
+  width: auto;
+}
+
+.control-check input {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
+.control input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.control input[type='color'] {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: none;
+}
+
 /* ---- Viewport and overlays ------------------------------------------------------- */
 
 .viewport {
@@ -396,6 +455,290 @@ input {
   height: 6px;
   border: 1px solid var(--text);
   border-top: 0;
+}
+
+.hole-labels span.is-selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Legends: bottom right of the viewport, newest on top. */
+.legends {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.legend {
+  width: 196px;
+  padding: 7px 9px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.legend header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.legend-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.legend-subject {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-ramp {
+  height: 12px;
+  border-radius: 2px;
+  outline: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin: 3px 0 2px;
+  color: var(--text);
+}
+
+.legend-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 15px;
+}
+
+.legend-row i,
+.hole-table td i {
+  flex: none;
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+  outline: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.legend-ticks + .legend-row {
+  margin-top: 3px;
+}
+
+.legend-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 6px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.legend-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.legend-field input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.legend-mode button,
+.legend-reset {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-raised);
+  cursor: pointer;
+}
+
+.legend-mode button:not([aria-pressed='true']):hover,
+.legend-reset:hover {
+  background: var(--panel-hover);
+}
+
+.legend-reset {
+  border-radius: 3px;
+  justify-self: end;
+}
+
+/* Hover tooltip: follows the pointer (client coordinates). */
+.tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  min-width: 120px;
+  max-width: 260px;
+  padding: 6px 9px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 28%);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.tooltip-title {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.tooltip-depth span {
+  color: var(--text-muted);
+}
+
+.tooltip dl,
+.hole-facts {
+  margin: 5px 0 0;
+}
+
+.tooltip dl > div,
+.hole-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tooltip dt,
+.hole-facts dt {
+  color: var(--text-muted);
+}
+
+.tooltip dd,
+.hole-facts dd {
+  margin: 0;
+}
+
+/* Selected hole: panel at the top left of the viewport. */
+.hole-panel {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 236px;
+  max-height: calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.hole-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 5px 5px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hole-panel-title {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--accent);
+}
+
+.hole-panel header button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hole-panel header button:hover {
+  background: var(--panel-hover);
+}
+
+.hole-facts {
+  margin: 0;
+  padding: 6px 9px;
+}
+
+.hole-table {
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.hole-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.hole-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--text-muted);
+  font-weight: 400;
+  text-align: right;
+  padding: 3px 9px 3px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hole-table td {
+  text-align: right;
+  padding: 1px 9px 1px 4px;
+  white-space: nowrap;
+}
+
+.hole-table td i {
+  width: 8px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+.hole-table td.is-missing,
+.hole-empty {
+  color: var(--text-muted);
+}
+
+.hole-empty {
+  margin: 0;
+  padding: 6px 9px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.status-hover {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-hover b {
+  font-weight: 600;
 }
 
 /* ---- Status bar ------------------------------------------------------------------ */

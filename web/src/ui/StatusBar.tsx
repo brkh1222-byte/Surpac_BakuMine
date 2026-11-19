@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { fetchHealth, type HealthState } from '../health'
 import { formatCoord, formatLength } from '../scene/format'
 import type { SceneMode } from '../scene/Viewport'
+import { useDisplay } from '../state/display'
 import { loadSummary, useViewer } from '../state/store'
+import { hoverDepthText } from './HoverTooltip'
 
 const HEALTH_TEXT: Record<HealthState, string> = {
   checking: 'API: checking…',
@@ -61,6 +63,25 @@ function LoadStatus() {
   )
 }
 
+/** What the pointer is over: hole id, depth range and the interval's values. */
+function HoverStatus() {
+  const hover = useDisplay((s) => s.hover)
+  if (!hover) return null
+  const values = hover.values.map((v) => `${v.name} ${v.text}`).join(' · ')
+  return (
+    <span
+      className="status-hover"
+      data-testid="status-hover"
+      data-hole={hover.holeId}
+      data-from={hover.from ?? ''}
+      data-to={hover.to ?? ''}
+    >
+      <b>{hover.holeId}</b> {hoverDepthText(hover)}
+      {values && ` · ${values}`}
+    </span>
+  )
+}
+
 export function StatusBar({ mode }: { mode: SceneMode }) {
   const cursor = useViewer((s) => s.cursor)
   const gridSpacing = useViewer((s) => s.gridSpacing)
@@ -83,6 +104,7 @@ export function StatusBar({ mode }: { mode: SceneMode }) {
         <span className="coord"><i>Z</i> {cursor ? formatCoord(cursor.z, 2) : '–'}</span>
         <span className="coord-source">{cursor ? (cursor.on === 'object' ? 'on object' : 'on grid plane') : ''}</span>
       </span>
+      <HoverStatus />
       <span className="spacer" />
       <span className="status-item" data-testid="status-grid">Grid {formatLength(gridSpacing)}</span>
       <span className="status-item" data-testid="status-projection">
@@ -90,7 +112,7 @@ export function StatusBar({ mode }: { mode: SceneMode }) {
       </span>
       <span className="status-item">Vertical × {exaggeration}</span>
       <LoadStatus />
-      {mode === 'mock' ? <span className="status-item" data-testid="api-status">Mock data</span> : <ApiStatus />}
+      {mode === 'mock' || mode === 'perf' ? <span className="status-item" data-testid="api-status">Mock data</span> : <ApiStatus />}
     </footer>
   )
 }

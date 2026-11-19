@@ -21,9 +21,9 @@ export function drillholesKey(objectId: string, table: string | null): string {
 }
 
 /** Traces of a drillhole object with the intervals of `table` (null = traces only). */
-export function useDrillholes(object: ManifestObject, table: string | null): Resource<DrillholeSet> {
+export function useDrillholes(object: ManifestObject, table: string | null, enabled = true): Resource<DrillholeSet> {
   return useResource(
-    drillholesKey(object.id, table),
+    enabled ? drillholesKey(object.id, table) : null,
     table ? `${object.name} (${table})` : object.name,
     (signal) => fetchDrillholes(object, table, signal),
     (data) => data.byteLength,
