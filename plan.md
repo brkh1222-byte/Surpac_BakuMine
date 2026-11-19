@@ -1,0 +1,244 @@
+# BakuMine Block Modeller — execution plan
+
+Build BakuMine's own block modeller: drilling data in, validated 3D block model out, viewed in an interactive 3D scene. Functional target is the modelling chain of GEOVIA Surpac. Theory and formulas are in `research.md`; every agent reads the relevant section before coding.
+
+Budget: 48 hours of continuous agent work. This file is the single source of truth for what is done and what is next.
+
+---
+
+## 0. Ground rules
+
+1. **Clean room.** Implement from `research.md` and published literature. Never decompile, disassemble or copy Surpac binaries, code, icons or UI assets. Never parse the binary `.mdl` format. Interop is through text exports only (`.str`, `.dtm`, block CSV, DXF).
+2. **Tests are the definition of done.** A task is ticked only when its acceptance tests exist, pass under `make check`, and are committed. No test, no tick.
+3. **Numbers are checked against an independent source.** Every numerical routine is tested against an analytic case or a second implementation (GSLIB, PyKrige, gstools, trimesh, scipy), not only against itself.
+4. **Coordinates.** Internally always `x = east, y = north, z = up`, metres, float64. Surpac's `Y, X, Z` order is converted at the I/O boundary only.
+5. **No silent defaults in geology.** Missing assays stay missing (NaN); they are never set to 0 unless the user asks.
+6. **One task, one commit**, message `P<phase>.T<n>: <summary>`. Do not push.
+7. **Stay in scope.** No statistics module, plotting module, pit design, scheduling or macro language.
+
+---
+
+## 1. Architecture
+
+| Layer | Choice | Reason |
+|-------|--------|--------|
+| Core engine | Python 3.12 (pinned with `uv`; system 3.14 is too new for numba), numpy, scipy, numba, pandas, pyarrow | Fast to write, easy to verify, vectorised and JIT-compiled where hot |
+| Geometry helpers | `scipy.spatial` (Delaunay, cKDTree), `triangle` (constrained Delaunay), `trimesh` (test oracle only) | |
+| API | FastAPI + uvicorn, binary array responses (Arrow IPC) | Viewer needs millions of values without JSON overhead |
+| Viewer / UI | Vite + React + TypeScript + three.js (react-three-fiber) | Runs locally in a browser, no install for users |
+| Storage | Project folder: `project.json` + Parquet tables (holes, composites, blocks) + mesh files | Open, inspectable, fast |
+| Tests | pytest (+ hypothesis for geometry), vitest, Playwright for viewer smoke tests | |
+
+```
+bakumine/
+  core/
+    drillholes/   # import, validate, desurvey, composite
+    geometry/     # strings, DTM, solids, mesh ops, point-in-solid
+    blockmodel/   # definition, octree sub-blocks, attributes, constraints, storage
+    estimation/   # search, NN, IDW, variogram models, kriging
+    io/           # csv, surpac_str, surpac_dtm, block_csv, dxf, obj
+    report/       # volume / tonnes / grade
+  api/            # FastAPI app
+  cli.py          # `bakumine <command>` — every pipeline step runnable headless
+web/              # viewer + workflow UI
+data/synthetic/   # generated benchmark deposit with known truth
+data/reference/   # outputs from independent implementations
+tests/
+```
+
+Every pipeline step must be callable from the CLI without the UI. The UI is a client of the same functions.
+
+---
+
+## 2. Orchestrator protocol (the loop)
+
+Each loop iteration, the orchestrating session does exactly this:
+
+1. Read this file. Find the earliest phase with unticked tasks whose dependencies are ticked.
+2. Run `make check`. If it fails on `main`, fixing it is the only job of this iteration.
+3. Select up to **4** unblocked tasks that touch different directories. Spawn one subagent per task with `isolation: "worktree"`, using the brief template in §3.
+4. When an agent returns: read its diff, run `make check` in its worktree, and run the task's acceptance tests yourself. Do not trust the agent's report.
+5. Pass → merge to `main`, tick the box, add one line to the progress log (§8). Fail → send the failure output back to the same agent once; if it fails again, log it under Blockers and move on.
+6. At each phase gate (§5), run the gate checks before starting dependent phases.
+7. If a task is blocked on a human decision (see §7), log it under Blockers, pick the stated default, and continue.
+8. Stop the loop only when every box in Phases 0–7 is ticked and the final gate passes, or when every remaining task is blocked.
+
+Never mark a task done because time is short. An unticked box with a note is correct; a ticked box with failing tests is not.
+
+---
+
+## 3. Subagent brief template
+
+```
+You are implementing one task of the BakuMine Block Modeller.
+
+Task: <ID and title, copied from plan.md>
+Read first: plan.md §0–§1, research.md §<sections>, and <existing files this task touches>.
+Deliverable: <files / functions / CLI command>
+Acceptance tests (you must write them and they must pass): <copied from plan.md>
+Constraints: clean-room rule; internal coords x=east,y=north,z=up; no new dependencies
+without stating why; do not edit files outside <directories>.
+Finish by running `make check` and reporting: files changed, tests added, the exact test
+output, and anything you could not verify. Report failures as failures.
+```
+
+---
+
+## 4. Phases and tasks
+
+Estimated hours are wall-clock with parallel agents.
+
+### Phase 0 — Bootstrap (H0–H2) · sequential
+
+- [ ] **P0.T1 Repo skeleton.** `uv` project pinned to Python 3.12, package layout from §1, `web/` Vite app, `.gitignore`, `Makefile` with `make check` (ruff + pytest + tsc + vitest), `make dev` (API + web). *Accept:* `make check` green on an empty test; `make dev` serves a page.
+- [ ] **P0.T2 CLAUDE.md.** Project conventions from §0, commands, directory map. *Accept:* file exists, under 80 lines.
+- [ ] **P0.T3 Synthetic deposit generator.** `bakumine synth` creates: a known ore solid (dipping, plunging lens with a pinch), a known anisotropic grade field (unconditional simulation with known variogram), a topography DTM, 60–100 deviated drillholes with collar/survey/assay/geology CSVs sampled from the truth, and the true block grades. Seeded and deterministic. *Accept:* files written; truth solid volume known analytically or from a fine voxel count; rerun with the same seed gives identical files.
+- [ ] **P0.T4 Public dataset.** Add one small real, openly licensed drillhole dataset under `data/public/` with its licence noted. *Accept:* loads via pandas; licence file present.
+
+### Phase 1 — Drillhole data (H2–H12) · parallel with Phase 2 and 5A
+
+Read `research.md` §2–§4.
+
+- [ ] **P1.T1 Table import + column mapping.** Read collar/survey/assay/geology from CSV/XLSX with a user column map; unit and coordinate-order options; store as Parquet. *Accept:* synthetic and public datasets import; Y/X swap option tested.
+- [ ] **P1.T2 Validation report.** All checks listed in `research.md` §2.5, returned as structured errors/warnings per hole. *Accept:* a deliberately corrupted dataset triggers each check exactly once.
+- [ ] **P1.T3 Desurvey.** Minimum curvature (default), balanced tangential, tangent; dip sign convention selectable (Surpac negative-down default); `xyz_at(hole, depth)` with arc interpolation; straight extension past the last station. *Accept:* vertical hole exact; straight inclined hole exact; quarter-circle hole within 1 mm of the analytic arc; results match an independent implementation (e.g. `wellpathpy`) to 1e-6 m.
+- [ ] **P1.T4 Interval merge.** Combine assay and geology intervals into one segment table per hole (split at every boundary). *Accept:* total length preserved; property test with random intervals.
+- [ ] **P1.T5 Compositing.** Downhole fixed length; by bench; within-domain (by geology code or by solid, once P2.T6 exists); best-fit option; min-length rule; optional density weighting; NaN handling. *Accept:* metal accumulation (Σ grade × length) conserved to 1e-9 per hole; hand-worked example matches; no composite crosses a domain boundary in domain mode.
+- [ ] **P1.T6 Grade capping** as a compositing/estimation pre-step. *Accept:* unit test.
+- [ ] **P1.T7 CLI.** `bakumine import`, `validate`, `desurvey`, `composite`. *Accept:* end-to-end on synthetic data from the shell.
+
+### Phase 2 — Geometry: strings, surfaces, solids (H2–H14) · parallel
+
+Read `research.md` §5.
+
+- [ ] **P2.T1 Mesh core.** Vertex/face arrays, weld duplicates, edge map, normals, bounding boxes, BVH or uniform-grid triangle index. *Accept:* unit tests on cube, tetrahedron.
+- [ ] **P2.T2 Mesh validation.** Closed, manifold, consistent orientation, degenerate/duplicate faces, self-intersection; auto-fix orientation. *Accept:* each defect injected into a cube is detected; results agree with `trimesh` on 20 random meshes.
+- [ ] **P2.T3 Volume, area, centroid.** *Accept:* cube, sphere (within tessellation error), torus; equals `trimesh` to 1e-9 relative.
+- [ ] **P2.T4 DTM from points and strings.** Delaunay in plan, breaklines honoured, optional boundary string, `z_at(x, y)` batch query. *Accept:* plane and paraboloid reproduced; breakline edges present in output; 1M-point query < 2 s.
+- [ ] **P2.T5 Point-in-solid, batch.** Ray casting with column acceleration for regular grids; robust on edges/vertices. *Accept:* matches `trimesh.contains` on 1M random points for 5 shapes including a concave one and one with a hole; 10M grid centroids < 20 s.
+- [ ] **P2.T6 Solid from sections.** Triangulate between consecutive closed strings (shortest-diagonal stitching), end caps, simple bifurcation; output passes P2.T2. *Accept:* slices of a known ellipsoid rebuild to within 2% volume; synthetic deposit sections rebuild to a valid solid.
+- [ ] **P2.T7 Mesh–plane section.** Cut a mesh with an arbitrary plane, return polylines. *Accept:* cube and sphere sections exact.
+- [ ] **P2.T8 I/O.** Surpac `.str` and `.dtm` text read/write, DXF (3DFACE, POLYLINE) read/write, OBJ read/write. *Accept:* round-trip is lossless; parser is written to the layout in `research.md` §5.6 and marked provisional until checked against a real Surpac export (see §7).
+- [ ] **P2.T9 (stretch) Implicit solid from drillholes.** RBF on signed distance to contacts + marching cubes. *Accept:* synthetic ore solid recovered with IoU > 0.85.
+
+### Phase 3 — Block model core (H12–H22) · needs P2.T1–T5
+
+Read `research.md` §6.
+
+- [ ] **P3.T1 Definition and indexing.** Origin, extent, user block size, rotation (bearing/dip/plunge); `ijk ↔ centroid ↔ world`; containing-block lookup; auto-extent from meshes + margin. *Accept:* round-trip on random points for rotated and unrotated models.
+- [ ] **P3.T2 Block table with octree sub-blocks.** Flat columnar store (centroid, size, level, parent id, Morton key); split and merge; dense fast path when no sub-blocks. *Accept:* total volume invariant under any split/merge sequence (property test); 5M blocks fit in < 2 GB.
+- [ ] **P3.T3 Attributes.** Typed columns, background values, add/delete/rename, calculated attributes from a safe expression parser (no `eval`). *Accept:* unit tests including a malicious expression rejected.
+- [ ] **P3.T4 Constraints.** Primitives: DTM above/below, solid inside/outside, attribute comparison, plane, closed string, coordinate range. Boolean expression tree (AND/OR/NOT). Save/load as JSON. *Accept:* each primitive tested; composite expression equals manual mask.
+- [ ] **P3.T5 Sub-blocking on geometric constraints.** Split boundary blocks to the minimum size while coding. *Accept:* volume of blocks inside the synthetic solid within 1% of mesh volume at 1/8 sub-blocks; error decreases monotonically with depth.
+- [ ] **P3.T6 Partial percentages.** Fraction of block inside a solid by lattice sampling. *Accept:* sphere volume via partials within 0.5%.
+- [ ] **P3.T7 Assign value / code blocks.** Fill an attribute under a constraint. *Accept:* air/ore/waste coding of the synthetic model correct vs truth > 99% by volume.
+- [ ] **P3.T8 Persistence and interchange.** Save/load as Parquet + JSON header; import/export block CSV in Surpac's export layout (centroid Y, X, Z, sizes, attributes). *Accept:* lossless round-trip; 5M blocks save < 10 s.
+- [ ] **P3.T9 Report.** Volume, tonnes, grade, metal under a constraint, grouped by attribute, bench and cut-off; CSV output. *Accept:* hand-computed 3×3×3 example.
+
+**Gate A (after Phases 1–3):** synthetic data → composites → coded block model, run from the CLI in one script; volume check passes; `/code-review high` on the whole core with findings fixed.
+
+### Phase 4 — Estimation (H18–H30) · needs P1.T5, P3.T2
+
+Read `research.md` §7. This phase decides whether the product is credible; it gets the most verification.
+
+- [ ] **P4.T1 Rotation conventions.** Rotation matrices for `surpac_zxy_lrl` (default), `gslib`, `datamine_zxz`, with a documented test per convention: an ellipsoid with bearing 30°, plunge 20°, dip 10° must put its major axis at the hand-computed world vector. *Accept:* tests pass; conventions selectable everywhere an ellipsoid is used.
+- [ ] **P4.T2 Anisotropic search.** Transform to isotropic space, cKDTree; radius, min/max samples, max per hole, octant limits, max vertical distance. *Accept:* equals brute force on 10k random queries for every option combination.
+- [ ] **P4.T3 Nearest neighbour.** *Accept:* equals brute force; global mean equals declustered (cell/polygonal) mean within tolerance.
+- [ ] **P4.T4 IDW.** Any power, anisotropic, exact at coincident samples, block discretisation optional. *Accept:* hand example; brute-force match; 1M blocks × 20k composites < 60 s.
+- [ ] **P4.T5 Variogram models.** Nugget + nested spherical / exponential / gaussian with per-structure anisotropy; covariance form; JSON schema. *Accept:* values match `gstools` at 1000 random lags.
+- [ ] **P4.T6 Ordinary and simple kriging.** Point and block (discretisation nx×ny×nz); weights, estimate, kriging variance, sample count, mean distance, optional negative-weight correction; duplicate-sample handling; numba-parallel. *Accept:* weights sum to 1 (OK); exact interpolation at a sample with zero nugget; a 4-sample hand-solved system matches to 1e-10; estimates and variances match GSLIB `kt3d` (or PyKrige `OrdinaryKriging3D`) to 1e-6 on the synthetic set; 1M blocks, max 24 samples, < 5 min.
+- [ ] **P4.T7 Multi-pass estimation per domain.** Run a list of passes under a constraint, composites filtered by domain, fill only unestimated blocks, store pass number. *Accept:* no block uses samples from another domain; pass attribute consistent.
+- [ ] **P4.T8 Experimental variogram (minimal).** Directional, lag/tolerance parameters, output table + a least-squares auto-fit to seed kriging parameters. No UI beyond a simple chart. *Accept:* recovers the synthetic field's range within 20% and nugget ratio within 0.1.
+- [ ] **P4.T9 Validation tools.** Swath table (blocks vs composites along X/Y/Z), global mean comparison vs NN, leave-one-out cross-validation. *Accept:* run on synthetic; OK beats IDW beats NN in RMSE against truth, and this is asserted in a test.
+- [ ] **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
+
+**Gate B:** full synthetic run. Estimated model vs truth: OK correlation with true block grades > 0.75 inside the ore domain; global tonnes and metal within 5% of truth; all P4 reference comparisons green.
+
+### Phase 5 — 3D viewer (5A: H2–H14 in parallel with mock data; 5B: H24–H36 on real output)
+
+Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and legends.
+
+- [ ] **P5.T1 Scene.** Orbit/pan/zoom, Z-up, orthographic/perspective toggle, grid, axes with real coordinates, vertical exaggeration, large-coordinate handling (recentre to local origin to avoid float32 jitter). *Accept:* Playwright screenshot test; a point at E 500 000 / N 5 000 000 renders without jitter.
+- [ ] **P5.T2 Drillholes.** Traces as tubes/lines coloured by any interval attribute, collar labels, hover/pick shows hole, depth, values. *Accept:* 500 holes at 60 fps.
+- [ ] **P5.T3 Meshes.** DTMs and solids, solid/wireframe/transparent modes, per-object visibility and colour. *Accept:* 1M triangles interactive.
+- [ ] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
+- [ ] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
+- [ ] **P5.T6 Section tools.** Clipping plane at any orientation with thickness (slab), step forward/back, section view locks camera normal to plane; drillholes, mesh outlines and blocks all clip together. *Accept:* screenshot test on synthetic section matches expected composition.
+- [ ] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
+- [ ] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
+
+### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
+
+- [ ] **P6.T1 Project.** Create/open a project folder; object tree (database, composites, strings, DTMs, solids, block models, constraints). *Accept:* reopen restores everything.
+- [ ] **P6.T2 Import wizard.** Column mapping, preview, validation report with click-to-hole. *Accept:* public dataset imported through the UI by a Playwright script.
+- [ ] **P6.T3 Compositing dialog.** *Accept:* result equals CLI.
+- [ ] **P6.T4 Block model dialogs.** Create (with auto-extent), attributes, constraints builder, code blocks with sub-blocking. *Accept:* result equals CLI.
+- [ ] **P6.T5 Estimation dialog.** Method, attribute, domain constraint, ellipsoid (shown live in the 3D scene), variogram parameters, passes; background job with progress and cancel. *Accept:* result equals CLI; cancel leaves the model unchanged.
+- [ ] **P6.T6 Report panel.** Volume/tonnes/grade table with export. *Accept:* equals CLI.
+- [ ] **P6.T7 Job log and undo.** Every operation logged with its parameters (reproducible as a CLI script); undo for attribute-changing operations via snapshot. *Accept:* replaying the log on a fresh project gives an identical model.
+
+### Phase 7 — Validation, performance, delivery (H40–H48)
+
+- [ ] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
+- [ ] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
+- [ ] **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
+- [ ] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
+- [ ] **P7.T5 Review.** `/code-review high` and `/security-review` on the full diff; fix confirmed findings. *Accept:* no open important findings.
+- [ ] **P7.T6 User guide + one-command start.** `README.md` with install, `make dev`, and a walkthrough of the synthetic project with screenshots. *Accept:* a fresh clone reaches the 3D model by following the README only.
+- [ ] **P7.T7 Honest status report.** `STATUS.md`: what works, what is verified against which reference, what is provisional, what is not done. *Accept:* every unticked box and every **[verify]** item in `research.md` is listed.
+
+---
+
+## 5. Dependency map
+
+```
+P0 ──┬── P1 (drillholes) ───────────────┬── P4 (estimation) ──┐
+     ├── P2 (geometry) ── P3 (blocks) ──┘         │           ├── P6 (app) ── P7
+     └── P5A (viewer on mock data) ──────── P5B (viewer on real data) ┘
+                              Gate A after P1–P3 · Gate B after P4
+```
+
+Parallel width: 3–4 agents from H2 to H36. Phases 0 and 7 are mostly sequential.
+
+---
+
+## 6. Time plan
+
+| Hours | Work | Checkpoint |
+|-------|------|------------|
+| 0–2 | Phase 0 | `make check` green, synthetic deposit exists |
+| 2–14 | Phases 1, 2, 5A in parallel | Composites; valid solids; viewer shows mock data |
+| 12–22 | Phase 3 | **Gate A** — coded block model from CLI |
+| 18–30 | Phase 4 | **Gate B** — estimates match references |
+| 24–36 | Phase 5B | 2M real blocks in the viewer with sections |
+| 30–40 | Phase 6 | Whole workflow from the UI |
+| 40–48 | Phase 7 | End-to-end test, README, STATUS |
+
+If behind schedule, cut in this order: P2.T9, P4.T10, P5.T7, P6.T7 undo, P4.T8 auto-fit. Never cut tests, Gate A or Gate B.
+
+---
+
+## 7. Inputs needed from BakuMine (non-blocking; defaults apply)
+
+| # | Input | Used by | Default if absent |
+|---|-------|---------|-------------------|
+| 1 | A Surpac licence, or files exported from one: a `.str` + `.dtm` pair, a block model CSV export, and the estimation parameters used | P2.T8, P7.T3, all **[verify]** items | Formats stay "provisional"; equivalence shown only against GSLIB-class references |
+| 2 | A real BakuMine drillhole dataset (collar, survey, assay, geology) | P1, P7.T2 | Public dataset + synthetic deposit |
+| 3 | Commodity, typical block size and bench height | Defaults in dialogs | Gold, 10 × 10 × 5 m |
+| 4 | UI language | Phase 6 | English, with strings in one file for later translation |
+
+---
+
+## 8. Progress log
+
+One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
+
+(empty)
+
+### Blockers
+
+(none)
+
+### Measured performance
+
+(empty)
