@@ -238,7 +238,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 
 ### Blockers
 
-- `origin/main` (GitHub) holds an unrelated "Initial commit" (LICENSE, README) that local `main` does not contain. Not blocking; needs a decision before the first push (merge with `--allow-unrelated-histories` or force-push). Agents: always branch from local `main`.
+(none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
 
 ### Measured performance
 
