@@ -1,0 +1,43 @@
+[project]
+name = "bakumine"
+version = "0.1.0"
+description = "BakuMine Block Modeller: drillholes in, validated 3D block model out"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "scipy",
+    "numba",
+    "pandas",
+    "pyarrow",
+    "fastapi",
+    "uvicorn",
+]
+
+[project.scripts]
+bakumine = "bakumine.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "hypothesis",
+    "ruff",
+    "httpx",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bakumine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

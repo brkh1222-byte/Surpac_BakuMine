@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.numba_cache/
+build/
+dist/
+
+# Node
+node_modules/
+web/dist/
+*.tsbuildinfo
+*.log
+*.local
+
+# Data outputs (generated); keep the directories
+data/synthetic/*
+data/reference/*
+!data/**/.gitkeep
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
