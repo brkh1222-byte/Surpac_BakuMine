@@ -23,6 +23,7 @@ from scipy.spatial import cKDTree
 
 if TYPE_CHECKING:
     from bakumine.core.geometry.spatial import TriangleBVH, TriangleGridXY
+    from bakumine.core.geometry.validation import ValidationReport
 
 __all__ = ["EdgeMap", "Mesh"]
 
@@ -258,6 +259,40 @@ class Mesh:
     def edges(self) -> np.ndarray:
         """(k, 2) unique undirected edges, each as ``(low, high)`` vertex index."""
         return self.edge_map.edges
+
+    @property
+    def is_closed(self) -> bool:
+        """Every edge is shared by exactly two faces (and there is at least one face)."""
+        return self.n_faces > 0 and bool((self.edge_map.counts == 2).all())
+
+    @property
+    def is_winding_consistent(self) -> bool:
+        """Every two-face edge is traversed once in each direction."""
+        em = self.edge_map
+        pairs = em.manifold_halfedge_pairs
+        forward = em.forward.reshape(-1)
+        return bool((forward[pairs[:, 0]] != forward[pairs[:, 1]]).all())
+
+    # -------------------------------------------------------------- validation
+
+    def validate(
+        self, *, check_self_intersection: bool = True, degenerate_tol: float = 1e-12
+    ) -> ValidationReport:
+        """Full defect report; see :func:`bakumine.core.geometry.validation.validate`."""
+        from bakumine.core.geometry.validation import validate
+
+        return validate(
+            self, check_self_intersection=check_self_intersection, degenerate_tol=degenerate_tol
+        )
+
+    def fix_orientation(self) -> Mesh:
+        """Mesh with consistent, outward winding (positive volume for closed shells).
+
+        See :func:`bakumine.core.geometry.validation.fix_orientation`.
+        """
+        from bakumine.core.geometry.validation import fix_orientation
+
+        return fix_orientation(self)
 
     # ----------------------------------------------------------------- cleanup
 
