@@ -331,3 +331,20 @@ def test_ellipsoid_validation_equality_and_json():
     assert c != a  # different parameterisation, even though same geometry
     with pytest.raises(ValueError):
         a.rotation[0, 0] = 5.0  # read-only
+
+
+def test_transform_is_bit_reproducible_per_point():
+    """A point's transform must not depend on the batch it is in (the search
+    needs coincident sample/target pairs to give a distance of exactly 0)."""
+    rng = np.random.default_rng(0)
+    e = Ellipsoid(60.0, 1.5, 3.0, angles=(30.0, 20.0, 10.0))
+    pts = rng.uniform(-1e4, 1e4, size=(1001, 3))
+    full = e.to_isotropic(pts)
+    for size in (1, 2, 3, 5, 7, 64):
+        for start in (0, 1, 17, 500):
+            np.testing.assert_array_equal(
+                e.to_isotropic(pts[start : start + size]), full[start : start + size]
+            )
+    np.testing.assert_array_equal(e.to_isotropic(pts[::-1])[::-1], full)
+    np.testing.assert_array_equal(e.to_isotropic(np.asfortranarray(pts)), full)
+    assert (e.distance(pts, pts.copy()) == 0.0).all()

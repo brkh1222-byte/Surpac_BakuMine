@@ -374,13 +374,24 @@ class Ellipsoid:
 
         Returns an array of the same shape ``(..., 3)`` with columns
         ``(x', y', z')`` = coordinates along (semi-major, major, minor).
+
+        The result for a point is bit-for-bit the same whatever other points
+        are in the batch (plain elementwise arithmetic, no BLAS call, whose
+        rounding can depend on array size and position). The search relies
+        on this: a target that coincides with a sample transforms to exactly
+        the same coordinates, so their distance is exactly 0.
         """
         p = np.asarray(points, dtype=np.float64)
         if p.shape[-1] != 3:
             raise ValueError("points must have shape (..., 3)")
         if centre is not None:
             p = p - np.asarray(centre, dtype=np.float64)
-        return p @ self.rotation
+        r = self.rotation
+        px, py, pz = p[..., 0], p[..., 1], p[..., 2]
+        out = np.empty(p.shape, dtype=np.float64)
+        for j in range(3):
+            out[..., j] = px * r[0, j] + py * r[1, j] + pz * r[2, j]
+        return out
 
     def to_isotropic(self, points: Any, centre: Any = None) -> np.ndarray:
         """Rotate world points into the ellipsoid's axes and stretch the
