@@ -93,7 +93,7 @@ Estimated hours are wall-clock with parallel agents.
 - [x] **P0.T1 Repo skeleton.** `uv` project pinned to Python 3.12, package layout from §1, `web/` Vite app, `.gitignore`, `Makefile` with `make check` (ruff + pytest + tsc + vitest), `make dev` (API + web). *Accept:* `make check` green on an empty test; `make dev` serves a page.
 - [x] **P0.T2 CLAUDE.md.** Project conventions from §0, commands, directory map. *Accept:* file exists, under 80 lines.
 - [ ] **P0.T3 Synthetic deposit generator.** `bakumine synth` creates: a known ore solid (dipping, plunging lens with a pinch), a known anisotropic grade field (unconditional simulation with known variogram), a topography DTM, 60–100 deviated drillholes with collar/survey/assay/geology CSVs sampled from the truth, and the true block grades. Seeded and deterministic. *Accept:* files written; truth solid volume known analytically or from a fine voxel count; rerun with the same seed gives identical files.
-- [ ] **P0.T4 Public dataset.** Add one small real, openly licensed drillhole dataset under `data/public/` with its licence noted. *Accept:* loads via pandas; licence file present.
+- [x] **P0.T4 Public dataset.** Add one small real, openly licensed drillhole dataset under `data/public/` with its licence noted. *Accept:* loads via pandas; licence file present.
 
 ### Phase 1 — Drillhole data (H2–H12) · parallel with Phase 2 and 5A
 
@@ -234,10 +234,11 @@ If behind schedule, cut in this order: P2.T9, P4.T10, P5.T7, P6.T7 undo, P4.T8 a
 One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 
 2026-11-19 16:01  P0.T1  12214e3  skeleton; `make check` green (re-run by orchestrator). Vite uses 5174 if 5173 is taken. CLI subcommands register via `bakumine.cli.register`.
+2026-11-19 16:08  P0.T4  77bee15  Babbitt Cu-Ni (399 holes, from MIT-licensed pygslib repo); `make check` green. Quirks: units are feet, dip is POSITIVE down, 70 holes have a sentinel survey at depth 90000, no geology table. Upstream (NRRI TR-2003/21) has no explicit licence: fine for local testing, confirm before redistributing.
 
 ### Blockers
 
-(none)
+- `origin/main` (GitHub) holds an unrelated "Initial commit" (LICENSE, README) that local `main` does not contain. Not blocking; needs a decision before the first push (merge with `--allow-unrelated-histories` or force-push). Agents: always branch from local `main`.
 
 ### Measured performance
 
