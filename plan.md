@@ -143,10 +143,10 @@ Read `research.md` §7. This phase decides whether the product is credible; it g
 
 - [x] **P4.T1 Rotation conventions.** Rotation matrices for `surpac_zxy_lrl` (default), `gslib`, `datamine_zxz`, with a documented test per convention: an ellipsoid with bearing 30°, plunge 20°, dip 10° must put its major axis at the hand-computed world vector. *Accept:* tests pass; conventions selectable everywhere an ellipsoid is used.
 - [x] **P4.T2 Anisotropic search.** Transform to isotropic space, cKDTree; radius, min/max samples, max per hole, octant limits, max vertical distance. *Accept:* equals brute force on 10k random queries for every option combination.
-- [ ] **P4.T3 Nearest neighbour.** *Accept:* equals brute force; global mean equals declustered (cell/polygonal) mean within tolerance.
-- [ ] **P4.T4 IDW.** Any power, anisotropic, exact at coincident samples, block discretisation optional. *Accept:* hand example; brute-force match; 1M blocks × 20k composites < 60 s.
+- [x] **P4.T3 Nearest neighbour.** *Accept:* equals brute force; global mean equals declustered (cell/polygonal) mean within tolerance.
+- [x] **P4.T4 IDW.** Any power, anisotropic, exact at coincident samples, block discretisation optional. *Accept:* hand example; brute-force match; 1M blocks × 20k composites < 60 s.
 - [x] **P4.T5 Variogram models.** Nugget + nested spherical / exponential / gaussian with per-structure anisotropy; covariance form; JSON schema. *Accept:* values match `gstools` at 1000 random lags.
-- [ ] **P4.T6 Ordinary and simple kriging.** Point and block (discretisation nx×ny×nz); weights, estimate, kriging variance, sample count, mean distance, optional negative-weight correction; duplicate-sample handling; numba-parallel. *Accept:* weights sum to 1 (OK); exact interpolation at a sample with zero nugget; a 4-sample hand-solved system matches to 1e-10; estimates and variances match GSLIB `kt3d` (or PyKrige `OrdinaryKriging3D`) to 1e-6 on the synthetic set; 1M blocks, max 24 samples, < 5 min.
+- [x] **P4.T6 Ordinary and simple kriging.** Point and block (discretisation nx×ny×nz); weights, estimate, kriging variance, sample count, mean distance, optional negative-weight correction; duplicate-sample handling; numba-parallel. *Accept:* weights sum to 1 (OK); exact interpolation at a sample with zero nugget; a 4-sample hand-solved system matches to 1e-10; estimates and variances match GSLIB `kt3d` (or PyKrige `OrdinaryKriging3D`) to 1e-6 on the synthetic set; 1M blocks, max 24 samples, < 5 min.
 - [ ] **P4.T7 Multi-pass estimation per domain.** Run a list of passes under a constraint, composites filtered by domain, fill only unestimated blocks, store pass number. *Accept:* no block uses samples from another domain; pass attribute consistent.
 - [ ] **P4.T8 Experimental variogram (minimal).** Directional, lag/tolerance parameters, output table + a least-squares auto-fit to seed kriging parameters. No UI beyond a simple chart. *Accept:* recovers the synthetic field's range within 20% and nugget ratio within 0.1.
 - [ ] **P4.T9 Validation tools.** Swath table (blocks vs composites along X/Y/Z), global mean comparison vs NN, leave-one-out cross-validation. *Accept:* run on synthetic; OK beats IDW beats NN in RMSE against truth, and this is asserted in a test.
@@ -242,6 +242,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-19 17:12  P1.T1/T2/T4  22a89b0  `import_drillholes` + `DrillholeDatabase` (Parquet), `validate()` (18 check codes), `merge_intervals`. Babbitt imports from raw; synthetic import test runs on main (no skip). Defaults to note: below-detection = half the limit; -99/-999 sentinels apply to attribute columns only.
 2026-11-19 17:25  P4.T1/T5/T2  dde480f  `Ellipsoid` (rotation.py), `VariogramModel` (+ njit covariance), `SampleSearch.query -> SearchResult` (padded indices/distances, `estimated` mask). Variograms match gstools; search matches brute force (also re-checked by orchestrator). Local frame is (semi-major, major, minor). `datamine_zxz` NOT implemented (convention not known with confidence). `surpac_zxy_lrl` and `gslib` are derived from recalled documentation, unverified against the real programs: positive plunge = major axis UP. 1M targets x 20k samples: 0.5 s plain, 8 s with octant + per-hole limits.
 2026-11-19 20:17  --  --  Usage limit stopped all four agents at about 17:40; resumed at 20:17 from their worktrees (P2.T5/T4/T7, P1.T6/T7, P4.T6, P5.T8/T2/T3). About 2.5 h of wall-clock lost; expect this again roughly every 5 h of full-width work.
+2026-11-19 20:30  P4.T3/T4/T6  59d93d1  `nearest_neighbour`, `inverse_distance`, `krige` (OK/SK, point/block). OK matches PyKrige and gstools to 1e-6 (measured 1e-14); orchestrator's own variogram-form solve agrees to 1e-15. Synthetic ore blocks vs truth: NN RMSE 1.417 / r 0.71, IDW2 0.921 / 0.84, OK 0.879 / 0.86. Block kriging and nested models are checked only against a dense numpy solver; kt3d nugget treatment is from memory, not run against GSLIB. `lagrange` is covariance-form (sign opposite to research.md).
 
 ### Blockers
 
@@ -249,4 +250,5 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 
 ### Measured performance
 
-(empty)
+- 1M targets x 20k samples, max 24 neighbours, 10 threads: IDW point 0.7 s, IDW block 4x4x2 1.8 s, point OK 1.3 s, block OK 4x4x2 1.6 s (agent-measured, one machine).
+- Search alone: 0.5 s plain; 8.3 s with octant + per-hole limits.
