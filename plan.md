@@ -114,10 +114,10 @@ Read `research.md` §5.
 - [x] **P2.T1 Mesh core.** Vertex/face arrays, weld duplicates, edge map, normals, bounding boxes, BVH or uniform-grid triangle index. *Accept:* unit tests on cube, tetrahedron.
 - [x] **P2.T2 Mesh validation.** Closed, manifold, consistent orientation, degenerate/duplicate faces, self-intersection; auto-fix orientation. *Accept:* each defect injected into a cube is detected; results agree with `trimesh` on 20 random meshes.
 - [x] **P2.T3 Volume, area, centroid.** *Accept:* cube, sphere (within tessellation error), torus; equals `trimesh` to 1e-9 relative.
-- [ ] **P2.T4 DTM from points and strings.** Delaunay in plan, breaklines honoured, optional boundary string, `z_at(x, y)` batch query. *Accept:* plane and paraboloid reproduced; breakline edges present in output; 1M-point query < 2 s.
-- [ ] **P2.T5 Point-in-solid, batch.** Ray casting with column acceleration for regular grids; robust on edges/vertices. *Accept:* matches `trimesh.contains` on 1M random points for 5 shapes including a concave one and one with a hole; 10M grid centroids < 20 s.
+- [x] **P2.T4 DTM from points and strings.** Delaunay in plan, breaklines honoured, optional boundary string, `z_at(x, y)` batch query. *Accept:* plane and paraboloid reproduced; breakline edges present in output; 1M-point query < 2 s.
+- [x] **P2.T5 Point-in-solid, batch.** Ray casting with column acceleration for regular grids; robust on edges/vertices. *Accept:* matches `trimesh.contains` on 1M random points for 5 shapes including a concave one and one with a hole; 10M grid centroids < 20 s.
 - [ ] **P2.T6 Solid from sections.** Triangulate between consecutive closed strings (shortest-diagonal stitching), end caps, simple bifurcation; output passes P2.T2. *Accept:* slices of a known ellipsoid rebuild to within 2% volume; synthetic deposit sections rebuild to a valid solid.
-- [ ] **P2.T7 Mesh–plane section.** Cut a mesh with an arbitrary plane, return polylines. *Accept:* cube and sphere sections exact.
+- [x] **P2.T7 Mesh–plane section.** Cut a mesh with an arbitrary plane, return polylines. *Accept:* cube and sphere sections exact.
 - [ ] **P2.T8 I/O.** Surpac `.str` and `.dtm` text read/write, DXF (3DFACE, POLYLINE) read/write, OBJ read/write. *Accept:* round-trip is lossless; parser is written to the layout in `research.md` §5.6 and marked provisional until checked against a real Surpac export (see §7).
 - [ ] **P2.T9 (stretch) Implicit solid from drillholes.** RBF on signed distance to contacts + marching cubes. *Accept:* synthetic ore solid recovered with IoU > 0.85.
 
@@ -244,6 +244,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-19 20:17  --  --  Usage limit stopped all four agents at about 17:40; resumed at 20:17 from their worktrees (P2.T5/T4/T7, P1.T6/T7, P4.T6, P5.T8/T2/T3). About 2.5 h of wall-clock lost; expect this again roughly every 5 h of full-width work.
 2026-11-19 20:30  P4.T3/T4/T6  59d93d1  `nearest_neighbour`, `inverse_distance`, `krige` (OK/SK, point/block). OK matches PyKrige and gstools to 1e-6 (measured 1e-14); orchestrator's own variogram-form solve agrees to 1e-15. Synthetic ore blocks vs truth: NN RMSE 1.417 / r 0.71, IDW2 0.921 / 0.84, OK 0.879 / 0.86. Block kriging and nested models are checked only against a dense numpy solver; kt3d nugget treatment is from memory, not run against GSLIB. `lagrange` is covariance-form (sign opposite to research.md).
 2026-11-19 20:45  P1.T5/T6/T7  a7c4ccc  `composite()` (downhole / bench / domain, best-fit, density weighting), `cap_grades()`, CLI `import | validate | desurvey | composite`. Orchestrator ran the CLI chain on the synthetic CSVs: 11 410 two-metre domain composites, metal accumulation conserved exactly (3086.592 in and out). `<attr>_coverage` is a length, not a fraction. Domain source is pluggable (callable) for the later inside-solid case. No third-party compositing oracle exists; checks are hand arithmetic + conservation + truth. Phase 1 complete.
+2026-11-19 21:00  P2.T5/T4/T7  8aa764a  `points_in_solid`, `grid_in_solid` (+ per-column entry/exit intervals), `DTM.z_at/above_below`, `section()`. Exact plan-view predicates (symbolic perturbation); 0 of 5M points differ from trimesh (agent's full run, 13 min, gated by BAKUMINE_FULL_ORACLE=1). Orchestrator checks: truth-block ORE codes agree 99.997%, AIR 99.97%, collars exactly on topo, 70M-cell voxel volume within 0.003% of mesh volume in 0.03 s. `grid_in_solid` origin = first centroid, not model corner. Default test suite now takes about 75 s.
 
 ### Blockers
 
@@ -252,4 +253,5 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 ### Measured performance
 
 - 1M targets x 20k samples, max 24 neighbours, 10 threads: IDW point 0.7 s, IDW block 4x4x2 1.8 s, point OK 1.3 s, block OK 4x4x2 1.6 s (agent-measured, one machine).
+- `grid_in_solid`: 10M centroids in 0.01 s; 70M in 0.03 s (orchestrator). DTM `z_at` 1M points 0.012 s.
 - Search alone: 0.5 s plain; 8.3 s with octant + per-hole limits.
