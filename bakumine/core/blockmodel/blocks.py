@@ -79,13 +79,21 @@ above. :meth:`BlockModel.locate` implements exactly this.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 import numpy as np
 
-from bakumine.core.blockmodel.attributes import Attribute, check_name
+from bakumine.core.blockmodel.attributes import BUILTIN_VARIABLES, Attribute, check_name
 from bakumine.core.blockmodel.definition import BlockModelDefinition, cell_index
+from bakumine.core.blockmodel.expressions import (
+    CategoryValues,
+    Expression,
+    ExpressionError,
+    ExpressionWarning,
+    parse,
+)
 
 __all__ = ["BlockModel", "SplitResult"]
 
@@ -735,6 +743,118 @@ class BlockModel:
         if spec.kind == "category":
             return values < 0
         return np.zeros(len(values), dtype=bool)
+
+    # ------------------------------------------------------------- expressions
+
+    def variables(self, names: Iterable[str], where: Any = None) -> dict[str, Any]:
+        """Values of expression variables for the selected blocks.
+
+        ``names`` may contain attribute names and the built-in variables
+        ``x``, ``y``, ``z`` (world centroid), ``dx``, ``dy``, ``dz`` (block
+        size along the model axes) and ``volume``. Category attributes are
+        returned as :class:`~bakumine.core.blockmodel.expressions.CategoryValues`.
+        Unknown names raise ``ExpressionError``.
+        """
+        rows = self._rows(where)
+        out: dict[str, Any] = {}
+        names = list(names)
+        centroid = sizes = None
+        for name in names:
+            if name in self._columns:
+                spec = self._attributes[name]
+                values = self._columns[name] if rows is None else self._columns[name][rows]
+                if spec.kind == "category":
+                    values = CategoryValues(values, tuple(spec.categories))
+                out[name] = values
+            elif name in ("x", "y", "z"):
+                if centroid is None:
+                    centroid = self.centroids(rows)
+                out[name] = centroid[:, "xyz".index(name)]
+            elif name in ("dx", "dy", "dz", "volume"):
+                if sizes is None:
+                    sizes = self.sizes(rows)
+                if name == "volume":
+                    out[name] = sizes[:, 0] * sizes[:, 1] * sizes[:, 2]
+                else:
+                    out[name] = sizes[:, ("dx", "dy", "dz").index(name)]
+            else:
+                known = ", ".join([*self._columns, *BUILTIN_VARIABLES])
+                raise ExpressionError(f"unknown name {name!r}; available: {known}")
+        return out
+
+    def evaluate(
+        self, expression: str | Expression, where: Any = None, *, return_invalid: bool = False
+    ) -> Any:
+        """Evaluate an expression for the selected blocks (default all).
+
+        The language is described in :mod:`bakumine.core.blockmodel.expressions`;
+        it is parsed with a strict whitelist and never passed to ``eval``.
+
+        Returns one value per selected block: a bool array for a condition,
+        float64 otherwise. Elements where an operation gave inf / NaN from
+        finite operands (division by zero, log of a non-positive number...)
+        are counted: with ``return_invalid=True`` the result is ``(values,
+        count)``; otherwise a non-zero count is reported as an
+        :class:`~bakumine.core.blockmodel.expressions.ExpressionWarning`.
+        """
+        expr = parse(expression)
+        rows = self._rows(where)
+        n = self.n_blocks if rows is None else (
+            int(rows.sum()) if rows.dtype == bool else len(rows)
+        )
+        result = expr.evaluate(self.variables(expr.names, rows))
+        values = np.asarray(result.values)
+        n_invalid = result.n_invalid
+        if values.shape != (n,):
+            n_invalid *= n if values.ndim == 0 else 1
+            values = np.broadcast_to(values, (n,)).copy()
+        if return_invalid:
+            return values, n_invalid
+        if n_invalid:
+            warnings.warn(
+                f"expression {expr.source!r}: {n_invalid} value(s) became inf or NaN "
+                "(division by zero, log or sqrt outside the domain, or overflow)",
+                ExpressionWarning,
+                stacklevel=2,
+            )
+        return values
+
+    def calculate(
+        self, name: str, expression: str | Expression, where: Any = None, **attribute: Any
+    ) -> int:
+        """Fill an attribute from an expression (a calculated attribute).
+
+        If ``name`` does not exist it is created first (``**attribute`` are
+        the arguments of :meth:`add_attribute`; kind ``"float"`` by default,
+        and the description defaults to ``"= <expression>"``). The expression
+        is evaluated for the selected blocks (default all) and stored there;
+        other blocks keep their value (the background for a new attribute).
+        The values are computed once: they do not follow later changes of
+        the attributes they were computed from.
+
+        A condition stores 1 / 0. An integer attribute needs whole, finite
+        results. A category attribute cannot be calculated.
+
+        Returns the number of values that became inf / NaN from finite
+        operands (see :meth:`evaluate`); nothing is raised or warned for them.
+        """
+        expr = parse(expression)
+        created = name not in self._columns
+        if not created and attribute:
+            raise ValueError(f"attribute {name!r} exists; its settings cannot be given again")
+        if (self._attributes[name].kind if not created else attribute.get("kind")) == "category":
+            raise ValueError("a category attribute cannot be calculated from an expression")
+        values, n_invalid = self.evaluate(expr, where, return_invalid=True)
+        if created:
+            attribute.setdefault("description", f"= {expr.source}")
+            self.add_attribute(name, **attribute)
+        try:
+            self.set(name, values.astype(np.float64) if values.dtype == bool else values, where)
+        except Exception:
+            if created:
+                self.delete_attribute(name)
+            raise
+        return n_invalid
 
     def dense_view(self, name: str) -> np.ndarray:
         """An attribute as an ``(nx, ny, nz)`` array ``a[i, j, k]`` sharing memory with the column.
