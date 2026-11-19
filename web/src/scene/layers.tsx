@@ -1,0 +1,78 @@
+/**
+ * How to add a layer (drillholes, meshes, blocks, ...):
+ *
+ *   1. Write a component that takes WORLD float64 data and renders three.js objects.
+ *   2. Call `useLayerObject({ id, name, category, bounds })` with the world bounds. It
+ *      registers the object with the store (sidebar tree, zoom to extents, clip planes,
+ *      scene origin) and returns `{ ready, visible, origin }`.
+ *   3. Render nothing until `ready`. Then build float32 buffers with
+ *      `worldToScene(worldXyz, origin)` - never from raw world coordinates - and put
+ *      `visible={visible}` on the root object.
+ *   4. Mount the component inside <SceneContent> (see Viewport.tsx). That group applies
+ *      the vertical exaggeration; do not scale Z yourself.
+ *
+ * MockLayer.tsx is a complete example.
+ */
+import { useThree } from '@react-three/fiber'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import type { Group } from 'three'
+import { isObjectVisible, useViewer, type Bounds, type Category } from '../state/store'
+import { useSceneOrigin, type Vec3 } from './origin'
+import { view } from './view'
+
+export interface LayerObject {
+  id: string
+  name: string
+  category: Category
+  /** World bounds, true Z. */
+  bounds: Bounds
+}
+
+export interface LayerObjectState {
+  /** False on the first render, before the object is registered and the origin is known. */
+  ready: boolean
+  /** Object toggle AND category toggle. */
+  visible: boolean
+  /** Scene origin to pass to `worldToScene`. */
+  origin: Vec3
+}
+
+/** Registers one drawable object for the lifetime of the calling component. */
+export function useLayerObject(object: LayerObject): LayerObjectState {
+  const { id, name, category, bounds } = object
+  const [ready, setReady] = useState(false)
+  const origin = useSceneOrigin()
+  const visible = useViewer((s) => isObjectVisible(s, id))
+
+  useLayoutEffect(() => {
+    useViewer.getState().registerObject({ id, name, category, bounds })
+    setReady(true)
+    return () => useViewer.getState().removeObject(id)
+  }, [id, name, category, bounds])
+
+  return { ready, visible, origin }
+}
+
+/** Parent of every layer: applies the vertical exaggeration to the content only. */
+export function SceneContent({ children }: { children?: ReactNode }) {
+  const exaggeration = useViewer((s) => s.verticalExaggeration)
+  const invalidate = useThree((s) => s.invalidate)
+  const ref = useRef<Group>(null)
+
+  useLayoutEffect(() => {
+    view.content = ref.current
+    return () => {
+      view.content = null
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    invalidate()
+  }, [exaggeration, invalidate])
+
+  return (
+    <group ref={ref} name="content" scale={[1, 1, exaggeration]}>
+      {children}
+    </group>
+  )
+}

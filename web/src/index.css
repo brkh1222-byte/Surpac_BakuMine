@@ -1,12 +1,417 @@
-:root {
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  color-scheme: light dark;
+/*
+ * BakuMine viewer chrome. A dense engineering-tool look: flat panels, hairline
+ * separators, 12 px type, tabular figures for every coordinate. One accent colour
+ * (survey amber) marks the active state and north. Canvas colours are in scene/theme.ts.
+ */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --panel: #1d2126;
+  --panel-raised: #262b31;
+  --panel-hover: #2e343b;
+  --line: #333a42;
+  --text: #d3d9df;
+  --text-muted: #8a95a0;
+  --accent: #e2a03a;
+  --accent-text: #1a1408;
+  --label: #a9b3bd;
+  --label-halo: #15181c;
+  --viewport: #15181c;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --panel: #eaece9;
+  --panel-raised: #f7f8f6;
+  --panel-hover: #dfe2de;
+  --line: #c5cac5;
+  --text: #1e2327;
+  --text-muted: #5c666e;
+  --accent: #a45f00;
+  --accent-text: #ffffff;
+  --label: #424b52;
+  --label-halo: #f4f5f3;
+  --viewport: #f4f5f3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
+  overflow: hidden;
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.35 'Segoe UI', 'Helvetica Neue', system-ui, -apple-system, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
-main {
-  padding: 1.5rem;
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.app {
+  display: grid;
+  grid-template: 34px minmax(0, 1fr) 24px / 228px minmax(0, 1fr);
+  grid-template-areas:
+    'toolbar toolbar'
+    'sidebar viewport'
+    'status status';
+  height: 100%;
+}
+
+/* ---- Toolbar -------------------------------------------------------------------- */
+
+.toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 212px;
+  flex: none;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.brand svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.toolbar button {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  background: var(--panel-raised);
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: var(--panel-hover);
+}
+
+.toolbar button:active {
+  background: var(--line);
+}
+
+.toolbar .standalone {
+  border-radius: 3px;
+}
+
+.group {
+  display: flex;
+}
+
+.group button + button {
+  margin-left: -1px;
+}
+
+.group button:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.group button:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.group button[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  position: relative;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.field input {
+  width: 58px;
+  height: 24px;
+  padding: 0 4px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ---- Sidebar -------------------------------------------------------------------- */
+
+.sidebar {
+  grid-area: sidebar;
+  border-right: 1px solid var(--line);
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.sidebar h2 {
+  margin: 0;
+  padding: 7px 10px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree {
+  padding-top: 4px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.tree-row:hover {
+  background: var(--panel-hover);
+}
+
+.tree-row input {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-category > .tree-row .tree-name {
+  font-weight: 600;
+}
+
+.tree-count {
+  color: var(--text-muted);
+}
+
+.tree-leaf {
+  padding-left: 30px;
+}
+
+.tree-leaf.is-off .tree-name {
+  color: var(--text-muted);
+}
+
+.sidebar-note {
+  margin: 10px;
+  color: var(--text-muted);
+}
+
+/* ---- Viewport and overlays ------------------------------------------------------- */
+
+.viewport {
+  grid-area: viewport;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--viewport);
+}
+
+.viewport canvas {
+  display: block;
+  touch-action: none;
+}
+
+.grid-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.grid-labels span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--label);
+  /* Halo in the canvas colour keeps labels readable over grid lines and objects. */
+  text-shadow:
+    0 0 2px var(--label-halo),
+    0 0 2px var(--label-halo),
+    0 0 3px var(--label-halo),
+    0 0 4px var(--label-halo);
+  will-change: transform;
+}
+
+.gizmo {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 88px;
+  height: 88px;
+  pointer-events: none;
+}
+
+.gizmo-ring {
+  fill: var(--panel);
+  fill-opacity: 0.72;
+  stroke: var(--line);
+}
+
+.gizmo-axis {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.gizmo-north {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.gizmo-north-head {
+  fill: var(--accent);
+}
+
+.gizmo-hub {
+  fill: var(--text);
+}
+
+.gizmo-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.gizmo-north-label {
+  fill: var(--accent);
+}
+
+.scale {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  pointer-events: none;
+  color: var(--text);
+  font-size: 11px;
+  /* A plate behind it: the bar must stay readable over any object colour. */
+  padding: 4px 7px 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.scale-bar {
+  order: 2;
+  height: 6px;
+  border: 1px solid var(--text);
+  border-top: 0;
+}
+
+/* ---- Status bar ------------------------------------------------------------------ */
+
+.statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--text-muted);
+}
+
+.status-coords {
+  display: flex;
+  gap: 14px;
+  color: var(--text);
+}
+
+.coord {
+  display: inline-block;
+  min-width: 108px;
+}
+
+.coord i {
+  font-style: normal;
+  color: var(--text-muted);
+  margin-right: 3px;
+}
+
+.coord-source {
+  color: var(--text-muted);
+}
+
+.health-ok {
+  color: var(--text);
+}
+
+@media (max-width: 720px) {
+  .app {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .brand {
+    width: auto;
+  }
+
+  .toolbar {
+    overflow-x: auto;
+  }
 }

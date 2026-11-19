@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install check dev
+.PHONY: install check dev e2e
 
 install:
 	$(UV) sync
@@ -11,6 +11,10 @@ check:
 	$(UV) run pytest
 	npm --prefix web run typecheck
 	npm --prefix web run test
+
+# Browser tests of the viewer (Playwright, chromium). Not part of `check`: slower.
+e2e:
+	npm --prefix web run e2e
 
 # API on :8000 (reload) and the Vite dev server together; Ctrl-C stops both.
 dev:

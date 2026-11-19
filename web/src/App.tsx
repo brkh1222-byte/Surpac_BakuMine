@@ -1,32 +1,26 @@
-import { useEffect, useState } from 'react'
-import { APP_TITLE, fetchHealth, type HealthState } from './health'
+import { useEffect } from 'react'
+import { Viewport } from './scene/Viewport'
+import { useViewer } from './state/store'
+import { Sidebar } from './ui/Sidebar'
+import { StatusBar } from './ui/StatusBar'
+import { Toolbar } from './ui/Toolbar'
 
-const HEALTH_TEXT: Record<HealthState, string> = {
-  checking: 'checking…',
-  ok: 'ok',
-  unreachable: 'unreachable',
-}
+/** `?mock=1` fills the scene with stand-in objects so the viewer runs without the API. */
+const MOCK = new URLSearchParams(window.location.search).get('mock') === '1'
 
 function App() {
-  const [health, setHealth] = useState<HealthState>('checking')
-
+  const theme = useViewer((s) => s.theme)
   useEffect(() => {
-    let cancelled = false
-    void fetchHealth().then((state) => {
-      if (!cancelled) setHealth(state)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   return (
-    <main>
-      <h1>{APP_TITLE}</h1>
-      <p>
-        API status: <span data-testid="api-status">{HEALTH_TEXT[health]}</span>
-      </p>
-    </main>
+    <div className="app">
+      <Toolbar />
+      <Sidebar />
+      <Viewport mock={MOCK} />
+      <StatusBar mock={MOCK} />
+    </div>
   )
 }
 
