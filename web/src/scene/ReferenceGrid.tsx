@@ -2,6 +2,13 @@
  * Reference geometry: ground grid, elevation pole, coordinate labels, orientation gizmo
  * and scale bar. Spacing follows the zoom (1-2-5 steps) and every label is a real world
  * coordinate. Grid buffers are local to the grid's own centre, so they stay small.
+ *
+ * In the section view (camera locked square-on to a section that is not a plan) the
+ * ground grid is edge-on and useless, so a grid ON the section plane replaces it:
+ * horizontal lines at round true elevations, labelled down the left edge, and vertical
+ * lines at round eastings (or northings, whichever changes faster along the section
+ * line), labelled along the top edge. For a section that follows neither axis the top
+ * corners also give the full E / N of the section line where it leaves the picture.
  */
 import { useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
@@ -11,13 +18,16 @@ import {
   Group,
   LineBasicMaterial,
   LineSegments,
+  OrthographicCamera,
   Quaternion,
   Vector3,
   type Camera,
 } from 'three'
+import { frameOf, fromPlane, sectionKind } from '../section/plane'
+import { useSection } from '../state/section'
 import { allBounds, useViewer } from '../state/store'
 import { decimalsFor, formatCoord, formatLength, niceStep } from './format'
-import { getOrigin, renderToWorld } from './origin'
+import { getOrigin, renderToWorld, worldToRender } from './origin'
 import { SCENE_COLORS } from './theme'
 import { overlay, view } from './view'
 
@@ -112,6 +122,11 @@ class LabelPool {
     }
   }
 
+  /** Label centred on a screen point (CSS pixels). */
+  screen(sx: number, sy: number, text: string, kind: string): void {
+    this.place(sx, sy, text.length * 6.4 + 10, text, kind)
+  }
+
   end(): void {
     const host = overlay.labels
     if (!host) return
@@ -183,14 +198,18 @@ export function ReferenceGrid() {
     major.renderOrder = -3
     border.renderOrder = -2
     pole.renderOrder = -2
-    for (const lines of [minor, major, border, pole]) lines.frustumCulled = false
+    const section = new LineSegments(new BufferGeometry(), material(1))
+    section.name = 'section-grid'
+    section.renderOrder = -3
+    section.visible = false
+    for (const lines of [minor, major, border, pole, section]) lines.frustumCulled = false
     const grid = new Group()
     grid.name = 'reference-grid'
     grid.add(minor, major, border)
     const root = new Group()
     root.name = 'reference'
-    root.add(grid, pole)
-    return { root, grid, minor, major, border, pole }
+    root.add(grid, pole, section)
+    return { root, grid, minor, major, border, pole, section }
   }, [])
 
   useEffect(() => {
@@ -198,11 +217,12 @@ export function ReferenceGrid() {
     ;(parts.major.material as LineBasicMaterial).color.set(colors.gridMajor)
     ;(parts.border.material as LineBasicMaterial).color.set(colors.gridBorder)
     ;(parts.pole.material as LineBasicMaterial).color.set(colors.gridBorder)
+    ;(parts.section.material as LineBasicMaterial).color.set(colors.gridMajor)
   }, [parts, colors])
 
   useEffect(
     () => () => {
-      for (const lines of [parts.minor, parts.major, parts.border, parts.pole]) {
+      for (const lines of [parts.minor, parts.major, parts.border, parts.pole, parts.section]) {
         lines.geometry.dispose()
         ;(lines.material as LineBasicMaterial).dispose()
       }
@@ -220,6 +240,80 @@ export function ReferenceGrid() {
     const exaggeration = state.verticalExaggeration
     const origin = getOrigin()
     const mpp = view.metresPerPixel
+
+    // --- Section view: a grid on the section plane instead of the ground grid. --------
+    const sec = useSection.getState()
+    const onSection = sec.enabled && sec.locked && sec.plane.dip >= 5 && camera instanceof OrthographicCamera
+    parts.grid.visible = !onSection
+    parts.section.visible = onSection
+    if (onSection) {
+      parts.pole.visible = false
+      keys.current.grid = '' // the ground grid reports its spacing again afterwards
+      const plane = sec.plane
+      const frame = frameOf(plane)
+      const { u, v } = frame
+      const p0 = worldToRender(plane.centre, exaggeration, origin)
+      // In render space "up the plane" is stretched by the exaggeration.
+      const vr = [v[0], v[1], v[2] * exaggeration]
+      const vScale = Math.hypot(vr[0], vr[1], vr[2])
+      const dx = view.target.x - p0[0]
+      const dy = view.target.y - p0[1]
+      const dz = view.target.z - p0[2]
+      // View centre and half extents in plane coordinates (s along the line, t up).
+      const sC = dx * u[0] + dy * u[1]
+      const tC = (dx * vr[0] + dy * vr[1] + dz * vr[2]) / (vScale * vScale)
+      const hw = (size.width * mpp) / 2
+      const hh = (size.height * mpp) / 2 / vScale
+      const toScreenX = (s: number) => size.width / 2 + (s - sC) / mpp
+      const toScreenY = (t: number) => size.height / 2 - ((t - tC) * vScale) / mpp
+
+      const lines: number[] = []
+      pool.begin()
+      // Vertical lines: round values of the horizontal coordinate that changes faster.
+      const k = Math.abs(u[0]) >= Math.abs(u[1]) ? 0 : 1
+      const hStep = niceStep(mpp * LABEL_SPACING_PX * Math.abs(u[k]))
+      const hDecimals = decimalsFor(hStep)
+      const a = plane.centre[k] + (sC - hw) * u[k]
+      const b = plane.centre[k] + (sC + hw) * u[k]
+      const t0 = tC - hh * 1.05
+      const t1 = tC + hh * 1.05
+      for (let value = Math.ceil(Math.min(a, b) / hStep) * hStep, i = 0; value <= Math.max(a, b) && i < 200; value += hStep, i++) {
+        const s = (value - plane.centre[k]) / u[k]
+        lines.push(s * u[0] + t0 * vr[0], s * u[1] + t0 * vr[1], t0 * vr[2], s * u[0] + t1 * vr[0], s * u[1] + t1 * vr[1], t1 * vr[2])
+        const sx = toScreenX(s)
+        // Keep clear of the orientation gizmo in the top right corner.
+        if (sx > 40 && sx < size.width - 150) pool.screen(sx, 12, `${formatCoord(value, hDecimals)} ${k === 0 ? 'E' : 'N'}`, k === 0 ? 'e' : 'n')
+      }
+      // Horizontal lines: round true elevations.
+      const zStep = niceStep((mpp * Z_TICK_PX * 1.3 * v[2]) / vScale)
+      const zDecimals = decimalsFor(zStep)
+      const zLow = plane.centre[2] + (tC - hh) * v[2]
+      const zHigh = plane.centre[2] + (tC + hh) * v[2]
+      const s0 = sC - hw * 1.05
+      const s1 = sC + hw * 1.05
+      for (let z = Math.ceil(zLow / zStep) * zStep, i = 0; z <= zHigh && i < 400; z += zStep, i++) {
+        const t = (z - plane.centre[2]) / v[2]
+        lines.push(s0 * u[0] + t * vr[0], s0 * u[1] + t * vr[1], t * vr[2], s1 * u[0] + t * vr[0], s1 * u[1] + t * vr[1], t * vr[2])
+        const sy = toScreenY(t)
+        const text = `${formatCoord(z, zDecimals)} m`
+        if (sy > 30 && sy < size.height - 64) pool.screen(8 + (text.length * 6.4 + 10) / 2, sy, text, 'z')
+      }
+      // A section along neither axis: where the section line leaves the picture.
+      const kind = sectionKind(plane)
+      if (kind === 'vertical' || kind === 'inclined') {
+        const ends = [fromPlane(plane, sC - hw, tC, 0, frame), fromPlane(plane, sC + hw, tC, 0, frame)]
+        const texts = ends.map((p) => `E ${formatCoord(p[0], 0)}  N ${formatCoord(p[1], 0)}`)
+        pool.screen(8 + (texts[0].length * 6.4 + 10) / 2, 30, texts[0], 'end')
+        pool.screen(size.width - 150 - (texts[1].length * 6.4 + 10) / 2, 30, texts[1], 'end')
+      }
+      pool.end()
+      setLines(parts.section, lines)
+      parts.section.position.set(p0[0], p0[1], p0[2])
+      state.setGridSpacing(hStep)
+      updateGizmo(camera)
+      updateScaleBar(mpp)
+      return
+    }
 
     // --- Grid patch: labelled lines every `step`, centred on the orbit centre. ---------
     const step = niceStep(mpp * LABEL_SPACING_PX)

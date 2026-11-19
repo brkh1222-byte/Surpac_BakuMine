@@ -1,6 +1,7 @@
 import { retryFailed } from '../api/useResource'
 import type { SceneMode } from '../scene/Viewport'
 import { ObjectControls } from './ObjectControls'
+import { SectionPanel } from './SectionPanel'
 import { CATEGORIES, MANIFEST_LOAD, useViewer, type Category, type LoadState } from '../state/store'
 
 /** The load of the object `id`, whatever resource key it is under ("mesh:<id>", ...). */
@@ -104,6 +105,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
         ))}
       </ul>
       <SceneNote mode={mode} />
+      <SectionPanel />
     </aside>
   )
 }

@@ -40,7 +40,7 @@ export interface CursorReadout {
   n: number
   z: number
   /** What the cursor ray hit. */
-  on: 'grid' | 'object'
+  on: 'grid' | 'object' | 'section'
 }
 
 /** Progress of one request (the scene manifest or one object's data). */

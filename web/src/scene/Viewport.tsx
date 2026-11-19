@@ -1,12 +1,15 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect } from 'react'
 import { Object3D, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import { rayPlane, toPlane } from '../section/plane'
 import { useDisplay } from '../state/display'
-import { useViewer } from '../state/store'
+import { sectionExtent, useSection } from '../state/section'
+import { allBounds, useViewer } from '../state/store'
 import { HolePanel } from '../ui/HolePanel'
 import { HoverTooltip } from '../ui/HoverTooltip'
 import { LegendStack } from '../ui/Legend'
 import { CameraRig } from './CameraRig'
+import { insideSectionSlab, sectionClipActive, updateSectionPlanes } from './clipping'
 import { installDebugHandle } from './debug'
 import { SceneContent } from './layers'
 import { MockLayer } from './MockLayer'
@@ -14,6 +17,7 @@ import { getOrigin, renderToWorld } from './origin'
 import { PerfScene } from './PerfScene'
 import { ProjectScene } from './ProjectScene'
 import { gridElevation, ReferenceGrid } from './ReferenceGrid'
+import { GhostRenderer, SectionCamera, SectionIndicator } from './SectionScene'
 import { SCENE_COLORS } from './theme'
 import { overlay, view, type PickResult } from './view'
 
@@ -32,7 +36,12 @@ function pickable(root: Object3D, out: Object3D[] = []): Object3D[] {
   return out
 }
 
-/** Reports the true world coordinate under the cursor: picked object, else grid plane. */
+/**
+ * Reports the true world coordinate under the cursor: picked object, else grid plane.
+ * In the section view it is always the point of the section plane under the cursor
+ * (ray x plane), which is what a section is read at. While a section line is being
+ * drawn, clicks place its two ends instead of selecting.
+ */
 function CursorProbe() {
   const gl = useThree((s) => s.gl)
 
@@ -54,7 +63,11 @@ function CursorProbe() {
       ndc.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
       raycaster.params.Line.threshold = view.metresPerPixel * 4
-      const hits = view.content ? raycaster.intersectObjects(pickable(view.content), false) : []
+      let hits = view.content ? raycaster.intersectObjects(pickable(view.content), false) : []
+      // What the section clips away is not there to be hit.
+      if (sectionClipActive() && updateSectionPlanes()) {
+        hits = hits.filter((h) => insideSectionSlab(h.point.x, h.point.y, h.point.z, view.metresPerPixel * 0.5))
+      }
 
       const perspective = camera instanceof PerspectiveCamera
       const ray = {
@@ -71,6 +84,39 @@ function CursorProbe() {
       return { hits, picked }
     }
 
+    /** The last cast ray meets the grid plane here (world), or null. */
+    const ground = (): [number, number, number] | null => {
+      const origin = getOrigin()
+      const { verticalExaggeration } = useViewer.getState()
+      const elevation = gridElevation()
+      plane.constant = -(elevation - origin[2]) * verticalExaggeration
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null
+      const [e, n] = renderToWorld([hit.x, hit.y, hit.z], verticalExaggeration, origin)
+      return [e, n, elevation]
+    }
+
+    /** The last cast ray meets the section plane here (world, exactly on the plane), or null. */
+    const onSection = (anywhere: boolean): [number, number, number] | null => {
+      const section = useSection.getState()
+      if (!section.enabled) return null
+      const { verticalExaggeration } = useViewer.getState()
+      const o = raycaster.ray.origin
+      const d = raycaster.ray.direction
+      const p = rayPlane(
+        section.plane,
+        renderToWorld([o.x, o.y, o.z], verticalExaggeration, getOrigin()),
+        [d.x, d.y, d.z / verticalExaggeration],
+        anywhere,
+      )
+      if (!p || anywhere) return p
+      // Free view: only where the section is drawn (the rectangle across the data).
+      const bounds = allBounds(useViewer.getState())
+      if (!bounds) return null
+      const extent = sectionExtent(section.plane, bounds)
+      const [s, t] = toPlane(section.plane, p)
+      return s >= extent.s[0] && s <= extent.s[1] && t >= extent.t[0] && t <= extent.t[1] ? p : null
+    }
+
     const probe = () => {
       scheduled = 0
       const { setCursor, verticalExaggeration } = useViewer.getState()
@@ -78,28 +124,41 @@ function CursorProbe() {
       const result = cast(pointer.x, pointer.y)
       if (!result) return
       const origin = getOrigin()
+      const section = useSection.getState()
+      if (section.draft) {
+        // Drawing the section line: the pointer is a point of the plan.
+        useDisplay.getState().setHover(null)
+        const p = ground()
+        setCursor(p ? { e: p[0], n: p[1], z: p[2], on: 'grid' } : null)
+        if (p && section.draft.a) section.setDraft({ a: section.draft.a, b: p })
+        return
+      }
       const { hits, picked } = result
+      if (picked) picked.hover(pointer.x, pointer.y)
+      else useDisplay.getState().setHover(null)
+      const square = section.locked ? onSection(true) : null
+      if (square) {
+        setCursor({ e: square[0], n: square[1], z: square[2], on: 'section' })
+        return
+      }
       if (picked) {
-        picked.hover(pointer.x, pointer.y)
         const [e, n, z] = renderToWorld(picked.point, verticalExaggeration, origin)
         setCursor({ e, n, z, on: 'object' })
         return
       }
-      useDisplay.getState().setHover(null)
       if (hits.length > 0) {
         const p = hits[0].point
         const [e, n, z] = renderToWorld([p.x, p.y, p.z], verticalExaggeration, origin)
         setCursor({ e, n, z, on: 'object' })
         return
       }
-      const elevation = gridElevation()
-      plane.constant = -(elevation - origin[2]) * verticalExaggeration
-      if (raycaster.ray.intersectPlane(plane, hit)) {
-        const [e, n] = renderToWorld([hit.x, hit.y, hit.z], verticalExaggeration, origin)
-        setCursor({ e, n, z: elevation, on: 'grid' })
-      } else {
-        setCursor(null)
+      const cut = onSection(false)
+      if (cut) {
+        setCursor({ e: cut[0], n: cut[1], z: cut[2], on: 'section' })
+        return
       }
+      const p = ground()
+      setCursor(p ? { e: p[0], n: p[1], z: p[2], on: 'grid' } : null)
     }
 
     const onMove = (event: PointerEvent) => {
@@ -119,6 +178,15 @@ function CursorProbe() {
       const start = down
       down = null
       if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return
+      const section = useSection.getState()
+      if (section.draft) {
+        // First click: one end of the section line; second click: the other end.
+        const p = cast(event.clientX, event.clientY) ? ground() : null
+        if (!p) return
+        if (!section.draft.a) section.setDraft({ a: p, b: p })
+        else if (!section.fromTwoPoints(section.draft.a, p)) section.cancelDrawing()
+        return
+      }
       const picked = cast(event.clientX, event.clientY)?.picked
       if (picked) picked.select()
       else useDisplay.getState().setSelection(null)
@@ -184,9 +252,11 @@ export function Viewport({ mode }: { mode: SceneMode }) {
   const theme = useViewer((s) => s.theme)
   const colors = SCENE_COLORS[theme]
   const debug = mode === 'mock' || mode === 'perf' || import.meta.env.DEV
+  const ghost = useSection((s) => s.enabled && s.mode === 'ghost')
+  const drawing = useSection((s) => s.draft !== null)
 
   return (
-    <div className="viewport" data-testid="viewport">
+    <div className={'viewport' + (drawing ? ' is-drawing' : '')} data-testid="viewport">
       {/* `flat`: no tone mapping, so data colours on screen match their legend exactly. */}
       <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true }} data-testid="scene-canvas">
         <color attach="background" args={[colors.background]} />
@@ -203,6 +273,9 @@ export function Viewport({ mode }: { mode: SceneMode }) {
           {mode === 'perf' && <PerfScene />}
           {mode === 'api' && <ProjectScene />}
         </SceneContent>
+        <SectionIndicator />
+        <SectionCamera />
+        {ghost && <GhostRenderer />}
         <CursorProbe />
         {debug && <DebugHandle />}
       </Canvas>
@@ -225,6 +298,11 @@ export function Viewport({ mode }: { mode: SceneMode }) {
       <LegendStack />
       <HolePanel />
       <HoverTooltip />
+      {drawing && (
+        <div className="viewport-hint" data-testid="section-hint" role="status">
+          Click the two ends of the section line · Esc cancels
+        </div>
+      )}
       <div className="scale" title="Scale at the view centre">
         <div
           className="scale-bar"

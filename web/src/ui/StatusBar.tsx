@@ -102,7 +102,7 @@ export function StatusBar({ mode }: { mode: SceneMode }) {
         <span className="coord"><i>E</i> {cursor ? formatCoord(cursor.e, 2) : '–'}</span>
         <span className="coord"><i>N</i> {cursor ? formatCoord(cursor.n, 2) : '–'}</span>
         <span className="coord"><i>Z</i> {cursor ? formatCoord(cursor.z, 2) : '–'}</span>
-        <span className="coord-source">{cursor ? (cursor.on === 'object' ? 'on object' : 'on grid plane') : ''}</span>
+        <span className="coord-source">{cursor ? (cursor.on === 'object' ? 'on object' : cursor.on === 'section' ? 'on section plane' : 'on grid plane') : ''}</span>
       </span>
       <HoverStatus />
       <span className="spacer" />

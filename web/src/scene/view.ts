@@ -21,6 +21,17 @@ export interface CameraState {
   far: number
 }
 
+/** What `RigApi.sectionView` frames. Everything in render space. */
+export interface SectionViewSpec {
+  /** Point of the plane to put at the view centre. */
+  centre: readonly [number, number, number]
+  /** Unit vector from the plane towards the camera (the plane normal). */
+  direction: readonly [number, number, number]
+  /** Half extents of the rectangle to fit, metres on screen. */
+  halfWidth: number
+  halfHeight: number
+}
+
 /** Imperative camera commands; set by <CameraRig/> while it is mounted. */
 export interface RigApi {
   setView: (view: StandardView) => void
@@ -30,6 +41,12 @@ export interface RigApi {
   lookAt: (world: Vec3, distance: number) => void
   /** Turns the camera around the orbit centre about the vertical axis, radians. */
   orbitBy: (azimuth: number) => void
+  /** Orthographic, square-on to a plane; false when the camera is not orthographic yet. */
+  sectionView: (spec: SectionViewSpec) => boolean
+  /** Locks rotation (pan and zoom only) or frees it. */
+  setRotationLocked: (locked: boolean) => void
+  /** Translates camera and orbit centre together, render space. */
+  shiftBy: (delta: readonly [number, number, number]) => void
   getState: () => CameraState
 }
 
@@ -72,6 +89,20 @@ export const view = {
   rig: null as RigApi | null,
   /** Number of frames rendered so far. */
   frames: 0,
+  /**
+   * Draws one frame the way the render loop does. Set while something other than a
+   * plain `gl.render(scene, camera)` is needed (the section ghost mode draws two passes).
+   */
+  renderFrame: null as (() => void) | null,
+  /** What the section tools currently show, for tests and debugging. */
+  section: {
+    /** Mesh outlines on the section plane by object id (world coordinates). */
+    outlines: new Map<string, import('../section/outline').Outline>(),
+    /** Ids of the holes inside the slab, by drillhole object id. */
+    holes: new Map<string, string[]>(),
+  },
+  /** World xyz of a hole's trace (flat triples, collar first), by drillhole object id. */
+  holeTraces: new Map<string, (hole: number) => Float64Array>(),
 }
 
 /** DOM nodes the scene updates directly each frame (no React re-render). */

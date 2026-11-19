@@ -42,8 +42,11 @@ import {
 import { declutter } from '../drillholes/declutter'
 import { buildPieces } from '../drillholes/pieces'
 import { holeSpheres, pickPiece } from '../drillholes/pick'
+import { holesInSlab } from '../section/plane'
 import { attributeKey, useDisplay } from '../state/display'
+import { useSection } from '../state/section'
 import { useViewer } from '../state/store'
+import { insideSectionSlab, sectionClipActive } from './clipping'
 import { useLayerObject, type LayerObject } from './layers'
 import { worldToScene } from './origin'
 import { overlay, view, type Picker } from './view'
@@ -81,6 +84,7 @@ function makeHalo(capacity: number, width: number, renderOrder: number) {
   geometry.instanceCount = 0
   const material = new LineMaterial({ linewidth: width, depthWrite: false })
   const line = new LineSegments2(geometry, material)
+  line.name = 'drillhole-halo'
   line.renderOrder = renderOrder
   line.frustumCulled = false
   line.visible = false
@@ -238,6 +242,8 @@ export function DrillholesLayer({ object, set, colorBy }: DrillholesLayerProps) 
         pieces.holeOffsets,
         built.spheres,
         ve,
+        // Clipped pieces are not on screen: they cannot be picked.
+        sectionClipActive() ? insideSectionSlab : undefined,
       )
       if (!hit) return null
       const i = hit.piece * 6
@@ -328,6 +334,28 @@ export function DrillholesLayer({ object, set, colorBy }: DrillholesLayerProps) 
     setSelection(holeDetails(object.id, set, selectedHole, attribute, spec, theme))
   }, [selectedHole, set, attribute, spec, theme, object.id])
 
+  // ---- section: which holes reach into the slab, and where each one enters it
+  const clipping = useSection((s) => s.enabled && s.mode === 'clip')
+  const sectionPlane = useSection((s) => s.plane)
+  const slabFront = useSection((s) => s.front)
+  const slabBack = useSection((s) => s.back)
+  const slab = useMemo(() => {
+    if (!clipping) return null
+    const found = holesInSlab(sectionPlane, { front: slabFront, back: slabBack }, pieces.positions, pieces.holeOffsets)
+    return { inside: found.inside, anchors: worldToScene(found.anchors, origin) }
+  }, [clipping, sectionPlane, slabFront, slabBack, pieces, origin])
+  useEffect(() => {
+    if (slab) view.section.holes.set(object.id, set.holeIds.filter((_, h) => slab.inside[h] === 1))
+    else view.section.holes.delete(object.id)
+    return () => void view.section.holes.delete(object.id)
+  }, [slab, set, object.id])
+
+  // "Section through this hole" reads the trace from here.
+  useEffect(() => {
+    view.holeTraces.set(object.id, (h) => pieces.positions.subarray(pieces.holeOffsets[h] * 6, pieces.holeOffsets[h + 1] * 6))
+    return () => void view.holeTraces.delete(object.id)
+  }, [pieces, object.id])
+
   // ---- labels: DOM overlay, decluttered every rendered frame
   const labelRoot = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
@@ -363,9 +391,12 @@ export function DrillholesLayer({ object, set, colorBy }: DrillholesLayerProps) 
       const ve = useViewer.getState().verticalExaggeration
       const { xy, point } = labelState
       const holes = set.holeIds.length
+      // On a section, a hole is labelled where it enters the slab (its collar may be
+      // clipped away), and only if it enters it at all.
+      const anchors = slab ? slab.anchors : built.collars
       for (let h = 0; h < holes; h++) {
-        point.set(built.collars[h * 3], built.collars[h * 3 + 1], built.collars[h * 3 + 2] * ve).project(camera)
-        const inside = point.z > -1 && point.z < 1
+        point.set(anchors[h * 3], anchors[h * 3 + 1], anchors[h * 3 + 2] * ve).project(camera)
+        const inside = point.z > -1 && point.z < 1 && (!slab || slab.inside[h] === 1)
         // Label box: right of the collar marker, a little above it.
         xy[h * 2] = inside ? ((point.x + 1) / 2) * size.width + 7 : Number.NaN
         xy[h * 2 + 1] = inside ? ((1 - point.y) / 2) * size.height - labelState.height - 1 : Number.NaN
@@ -402,7 +433,7 @@ export function DrillholesLayer({ object, set, colorBy }: DrillholesLayerProps) 
       root.dataset.shown = String(kept.length)
     }
   })
-  useEffect(() => invalidate(), [showLabels, invalidate])
+  useEffect(() => invalidate(), [showLabels, slab, invalidate])
 
   if (!scene) return null
   return <primitive object={scene.group} visible={visible} />

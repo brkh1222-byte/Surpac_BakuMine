@@ -64,7 +64,9 @@ export function holeSpheres(positions: Float32Array, holeOffsets: Uint32Array): 
 /**
  * The piece nearest to the ray, or null when none is within tolerance.
  * `positions`: scene xyz of both ends, 6 per piece. `spheres` / `holeOffsets`: from
- * `holeSpheres` and `DrillholePieces.holeOffsets`.
+ * `holeSpheres` and `DrillholePieces.holeOffsets`. `shown`, when given, is asked whether
+ * the render-space point of closest approach is drawn at all (section clipping): pieces
+ * that are not shown cannot be picked and do not hide the ones behind them.
  */
 export function pickPiece(
   ray: PickRay,
@@ -72,6 +74,7 @@ export function pickPiece(
   holeOffsets: Uint32Array,
   spheres: Float32Array,
   zScale = 1,
+  shown?: (x: number, y: number, z: number) => boolean,
 ): PickHit | null {
   const [ox, oy, oz] = ray.origin
   const [dx, dy, dz] = ray.direction
@@ -122,6 +125,7 @@ export function pickPiece(
       const tolerance = ray.tol0 + ray.tolSlope * t
       const closeness = Math.sqrt(mx * mx + my * my + mz * mz) / tolerance
       if (closeness < bestCloseness || (closeness === bestCloseness && best !== null && t < best.t)) {
+        if (shown && !shown(px + ox, py + oy, pz + oz)) continue
         bestCloseness = closeness
         best = { piece, t, s, closeness }
       }

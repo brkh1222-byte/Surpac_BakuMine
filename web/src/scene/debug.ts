@@ -3,7 +3,11 @@
  * Installed in dev builds and in mock mode only.
  */
 import { Vector3, type BufferGeometry, type Object3D, type Scene, type WebGLRenderer } from 'three'
+import { outlineCount, outlinePoints } from '../section/outline'
+import { outlineClient, type OutlineStats } from '../section/outlineClient'
+import { useSection } from '../state/section'
 import { useViewer } from '../state/store'
+import { SECTION_PLANES, sectionClipActive, updateSectionPlanes } from './clipping'
 import { buildMockData } from './mockData'
 import { getOrigin, worldToRender, type Vec3 } from './origin'
 import { view, type CameraState, type StandardView } from './view'
@@ -33,8 +37,46 @@ function quantile(sorted: number[], q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]
 }
 
+export interface OutlineReport {
+  /** One entry per polyline: closed flag and world points (flat xyz). */
+  polylines: { closed: boolean; points: number[] }[]
+}
+
+export interface SectionStepTiming {
+  steps: number
+  /** Store change to the next presented frame, per step. */
+  stepToFrameMs: number[]
+  /** Store change until every outline of the new plane is on screen, per step. */
+  stepToOutlineMs: number[]
+  /** Synchronous main-thread time of the step itself (store update and React commit). */
+  syncMs: number[]
+  /** Longest stretch the main thread did not get back to an animation frame. */
+  maxFrameGapMs: number
+  /** Long tasks (> 50 ms) the browser reported during the run; -1 when unsupported. */
+  longTasks: number
+  outline: OutlineStats
+}
+
 export interface DebugHandle {
   store: typeof useViewer
+  section: typeof useSection
+  /** The slab planes in render space and every content material's plane count. */
+  sectionClip: () => {
+    active: boolean
+    planes: { normal: [number, number, number]; constant: number }[]
+    materials: { name: string; planes: number }[]
+  }
+  /** Mesh outlines on the section plane, by object id (world coordinates). */
+  sectionOutlines: () => Record<string, OutlineReport>
+  /** Ids of the holes inside the slab, by drillhole object id. */
+  sectionHoles: () => Record<string, string[]>
+  outlineStats: () => OutlineStats & { busy: boolean }
+  /** Steps the section `steps` times forward and reports how long each step took. */
+  measureSectionSteps: (steps?: number) => Promise<SectionStepTiming>
+  /** Bounding box (client pixels) and count of the canvas pixels within `tolerance` of a colour. */
+  pixelBounds: (hex: string, tolerance?: number) => { minX: number; minY: number; maxX: number; maxY: number; count: number } | null
+  /** Colour of the canvas pixel at a client position, "#rrggbb". */
+  pixelAt: (clientX: number, clientY: number) => string
   origin: () => Vec3
   camera: () => CameraState | null
   setView: (name: StandardView) => void
@@ -77,8 +119,20 @@ declare global {
 export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void {
   const render = () => {
     if (!view.camera) return
-    gl.render(scene, view.camera)
+    if (view.renderFrame) view.renderFrame()
+    else gl.render(scene, view.camera)
     view.frames++
+  }
+
+  /** Renders and reads the whole framebuffer back (rows bottom-up, RGBA). */
+  const readBack = () => {
+    render()
+    const context = gl.getContext()
+    const width = context.drawingBufferWidth
+    const height = context.drawingBufferHeight
+    const pixels = new Uint8Array(width * height * 4)
+    context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixels)
+    return { width, height, pixels }
   }
 
   const buffers = (): BufferReport[] => {
@@ -102,6 +156,118 @@ export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void 
 
   const handle: DebugHandle = {
     store: useViewer,
+    section: useSection,
+    sectionClip: () => {
+      render()
+      updateSectionPlanes()
+      const materials: { name: string; planes: number }[] = []
+      view.content?.traverse((object) => {
+        const material = (object as Object3D & { material?: { clippingPlanes?: unknown[] | null } | unknown[] }).material
+        if (!material || Array.isArray(material)) return
+        materials.push({ name: object.name || object.type, planes: material.clippingPlanes?.length ?? 0 })
+      })
+      return {
+        active: sectionClipActive(),
+        planes: SECTION_PLANES.map((p) => ({ normal: [p.normal.x, p.normal.y, p.normal.z], constant: p.constant })),
+        materials,
+      }
+    },
+    sectionOutlines: () => {
+      const out: Record<string, OutlineReport> = {}
+      for (const [id, outline] of view.section.outlines) {
+        out[id] = {
+          polylines: Array.from({ length: outlineCount(outline) }, (_, k) => ({
+            closed: outline.closed[k] === 1,
+            points: Array.from(outlinePoints(outline, k)),
+          })),
+        }
+      }
+      return out
+    },
+    sectionHoles: () => Object.fromEntries(view.section.holes),
+    outlineStats: () => ({ ...outlineClient.stats, busy: outlineClient.busy() }),
+    measureSectionSteps: async (steps = 20) => {
+      const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve))
+      let longTasks = -1
+      let observer: PerformanceObserver | null = null
+      try {
+        if (PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+          longTasks = 0
+          observer = new PerformanceObserver((list) => {
+            longTasks += list.getEntries().length
+          })
+          observer.observe({ entryTypes: ['longtask'] })
+        }
+      } catch {
+        observer = null
+      }
+      const stepToFrameMs: number[] = []
+      const stepToOutlineMs: number[] = []
+      const syncMs: number[] = []
+      let maxFrameGapMs = 0
+      await nextFrame()
+      for (let i = 0; i < steps; i++) {
+        const start = performance.now()
+        useSection.getState().stepBy(1)
+        syncMs.push(performance.now() - start)
+        let last = await nextFrame()
+        stepToFrameMs.push(performance.now() - start)
+        // Wait for the outlines of this plane, then one more frame to show them.
+        while (outlineClient.busy()) {
+          const now = await nextFrame()
+          maxFrameGapMs = Math.max(maxFrameGapMs, now - last)
+          last = now
+        }
+        const shown = await nextFrame()
+        maxFrameGapMs = Math.max(maxFrameGapMs, shown - last)
+        stepToOutlineMs.push(performance.now() - start)
+      }
+      observer?.disconnect()
+      return { steps, stepToFrameMs, stepToOutlineMs, syncMs, maxFrameGapMs, longTasks, outline: { ...outlineClient.stats } }
+    },
+    pixelBounds: (hex, tolerance = 24) => {
+      const { width, height, pixels } = readBack()
+      const value = parseInt(hex.slice(1), 16)
+      const r = (value >> 16) & 255
+      const g = (value >> 8) & 255
+      const b = value & 255
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      let count = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4
+          if (Math.abs(pixels[i] - r) > tolerance || Math.abs(pixels[i + 1] - g) > tolerance || Math.abs(pixels[i + 2] - b) > tolerance) continue
+          count++
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+      if (count === 0) return null
+      const rect = gl.domElement.getBoundingClientRect()
+      const sx = rect.width / width
+      const sy = rect.height / height
+      // Framebuffer rows run bottom-up; pixel centres are at +0.5.
+      return {
+        minX: rect.left + (minX + 0.5) * sx,
+        maxX: rect.left + (maxX + 0.5) * sx,
+        minY: rect.top + (height - 1 - maxY + 0.5) * sy,
+        maxY: rect.top + (height - 1 - minY + 0.5) * sy,
+        count,
+      }
+    },
+    pixelAt: (clientX, clientY) => {
+      const { width, height, pixels } = readBack()
+      const rect = gl.domElement.getBoundingClientRect()
+      const x = Math.min(width - 1, Math.max(0, Math.floor(((clientX - rect.left) / rect.width) * width)))
+      const y = Math.min(height - 1, Math.max(0, height - 1 - Math.floor(((clientY - rect.top) / rect.height) * height)))
+      const i = (y * width + x) * 4
+      return '#' + [pixels[i], pixels[i + 1], pixels[i + 2]].map((c) => c.toString(16).padStart(2, '0')).join('')
+    },
     origin: getOrigin,
     camera: () => view.rig?.getState() ?? null,
     setView: (name) => view.rig?.setView(name),

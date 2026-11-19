@@ -25,6 +25,7 @@ import { useDisplay } from '../state/display'
 import { useViewer, type Theme } from '../state/store'
 import { useLayerObject, type LayerObject } from './layers'
 import { worldToScene } from './origin'
+import { SectionOutline } from './SectionScene'
 
 /** Above this many triangles the mesh is skipped by the cursor raycast (too slow per move). */
 const RAYCAST_LIMIT = 300_000
@@ -111,6 +112,7 @@ export function MeshLayer({ object, mesh }: MeshLayerProps) {
 
   return (
     <group visible={visible} name={`mesh:${object.id}`}>
+      {visible && <SectionOutline id={object.id} vertices={mesh.vertices} faces={mesh.faces} color={color} origin={origin} />}
       {fill && (
         <mesh geometry={geometry} name={`mesh-fill:${object.id}`} userData={userData}>
           <meshLambertMaterial

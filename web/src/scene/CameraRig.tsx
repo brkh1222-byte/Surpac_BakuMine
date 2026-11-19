@@ -1,11 +1,12 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useLayoutEffect, useMemo } from 'react'
-import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three'
+import { MOUSE, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { useSection } from '../state/section'
 import { allBounds, useViewer, visibleBounds, type Bounds, type Projection } from '../state/store'
 import { clipPlanes, distanceForOrthoZoom, orthoZoomForDistance, visibleHeight, type DepthSphere } from './cameraMath'
 import { getOrigin, renderToWorld, worldToRender, type Vec3 } from './origin'
-import { view, type CameraState, type RigApi, type StandardView } from './view'
+import { view, type CameraState, type RigApi, type SectionViewSpec, type StandardView } from './view'
 
 /** Narrow field of view: less perspective distortion, closer to a CAD/GIS feel. */
 const FOV = 35
@@ -43,6 +44,8 @@ class Rig implements RigApi {
   width = 1
   height = 1
   private exaggeration = 1
+  /** Rotation locked (section view): pan and zoom only. */
+  private locked = false
   onChange: () => void = () => {}
 
   constructor() {
@@ -75,6 +78,8 @@ class Rig implements RigApi {
 
   /** Switches camera, carrying position, orientation and visible extent across. */
   activate(projection: Projection, dom: HTMLElement): void {
+    // The section view is orthographic by definition: perspective leaves it.
+    if (projection === 'perspective' && useSection.getState().locked) useSection.getState().setLocked(false)
     const next = projection === 'perspective' ? this.persp : this.ortho
     if (next !== this.camera) {
       const from = this.camera
@@ -104,7 +109,47 @@ class Rig implements RigApi {
     controls.addEventListener('change', () => this.onChange())
     controls.update()
     this.controls = controls
+    this.applyLock()
     this.frame()
+  }
+
+  /** Locked: no rotation, and the left button pans instead. */
+  private applyLock(): void {
+    if (!this.controls) return
+    this.controls.enableRotate = !this.locked
+    this.controls.mouseButtons.LEFT = this.locked ? MOUSE.PAN : MOUSE.ROTATE
+  }
+
+  setRotationLocked = (locked: boolean): void => {
+    this.locked = locked
+    this.applyLock()
+  }
+
+  /**
+   * Section view: orthographic camera square-on to a plane, framing a rectangle of it.
+   * Only acts on the orthographic camera (the caller switches the projection first).
+   */
+  sectionView = (spec: SectionViewSpec): boolean => {
+    if (this.isPerspective) return false
+    const dir = new Vector3(...spec.direction).normalize()
+    const zoom = Math.min(this.width / (2 * spec.halfWidth), this.height / (2 * spec.halfHeight)) / 1.12
+    const distance = distanceForOrthoZoom(FOV, zoom, this.height)
+    this.place(new Vector3(...spec.centre), dir, distance)
+    return true
+  }
+
+  /** Moves camera and orbit centre together (render space): the picture slides, nothing turns. */
+  shiftBy = (delta: readonly [number, number, number]): void => {
+    if (this.controls) this.target.copy(this.controls.target)
+    tmp.set(delta[0], delta[1], delta[2])
+    this.target.add(tmp)
+    this.camera.position.add(tmp)
+    if (this.controls) {
+      this.controls.target.copy(this.target)
+      this.controls.update()
+    }
+    this.frame()
+    this.onChange()
   }
 
   dispose(): void {
@@ -136,6 +181,8 @@ class Rig implements RigApi {
   }
 
   setView = (name: StandardView): void => {
+    // A standard view is a free view: leave the section view.
+    if (useSection.getState().locked) useSection.getState().setLocked(false)
     if (this.controls) this.target.copy(this.controls.target)
     const dir = new Vector3(...VIEW_DIRECTIONS[name]).normalize()
     this.place(this.target.clone(), dir, this.viewDistance())
@@ -293,6 +340,7 @@ export function CameraRig() {
 
   // The canvas renders on demand: any state change (visibility, theme, ...) needs a frame.
   useEffect(() => useViewer.subscribe(() => invalidate()), [invalidate])
+  useEffect(() => useSection.subscribe(() => invalidate()), [invalidate])
 
   useFrame(() => {
     rig.frame()

@@ -11,12 +11,18 @@
  *   4. Mount the component inside <SceneContent> (see Viewport.tsx). That group applies
  *      the vertical exaggeration; do not scale Z yourself.
  *
+ * Section clipping needs nothing from a layer: <SceneContent> gives every material
+ * under it the slab planes before each frame (scene/clipping.ts; opt out with
+ * `userData.noClip`). A layer that draws DOM labels or picks by itself asks
+ * `insideSectionSlab` whether a point is shown.
+ *
  * MockLayer.tsx is a complete example.
  */
-import { useThree } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { Group } from 'three'
 import { isObjectVisible, useViewer, type Bounds, type Category } from '../state/store'
+import { applySectionClipping, sectionClipActive, updateSectionPlanes } from './clipping'
 import { useSceneOrigin, type Vec3 } from './origin'
 import { view } from './view'
 
@@ -53,7 +59,10 @@ export function useLayerObject(object: LayerObject): LayerObjectState {
   return { ready, visible, origin }
 }
 
-/** Parent of every layer: applies the vertical exaggeration to the content only. */
+/**
+ * Parent of every layer: applies the vertical exaggeration to the content only, and
+ * clips everything in it to the section slab while a section is on in clip mode.
+ */
 export function SceneContent({ children }: { children?: ReactNode }) {
   const exaggeration = useViewer((s) => s.verticalExaggeration)
   const invalidate = useThree((s) => s.invalidate)
@@ -69,6 +78,17 @@ export function SceneContent({ children }: { children?: ReactNode }) {
   useLayoutEffect(() => {
     invalidate()
   }, [exaggeration, invalidate])
+
+  const gl = useThree((s) => s.gl)
+  useLayoutEffect(() => {
+    gl.localClippingEnabled = true
+  }, [gl])
+  // Every frame, so that materials created since the last one are covered too.
+  useFrame(() => {
+    if (!ref.current) return
+    updateSectionPlanes()
+    applySectionClipping(ref.current, sectionClipActive())
+  })
 
   return (
     <group ref={ref} name="content" scale={[1, 1, exaggeration]}>
