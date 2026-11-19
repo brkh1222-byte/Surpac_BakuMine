@@ -1,0 +1,336 @@
+{
+  "blocks": {
+    "discretisation": [
+      5,
+      5,
+      5
+    ],
+    "order": "row = i + nx * (j + ny * k); x, y, z are block centroids",
+    "ore_volume_m3": 2055344.0,
+    "ore_volume_relative_error": -2.9551421659723687e-05,
+    "origin": [
+      500400.0,
+      5300250.0,
+      825.0
+    ],
+    "shape": [
+      39,
+      52,
+      84
+    ],
+    "size": [
+      10.0,
+      10.0,
+      5.0
+    ]
+  },
+  "config": {
+    "blocks": {
+      "discretisation": [
+        5,
+        5,
+        5
+      ],
+      "margin": 40.0,
+      "size": [
+        10.0,
+        10.0,
+        5.0
+      ]
+    },
+    "drill": {
+      "azimuth_sd": 2.0,
+      "collar_jitter": 2.0,
+      "contact_scan_step": 0.25,
+      "coverage": 0.92,
+      "dip": -60.0,
+      "dip_sd": 1.5,
+      "gap_probabilities": [
+        0.5,
+        0.35,
+        0.15
+      ],
+      "gap_samples": [
+        2,
+        8
+      ],
+      "holes_per_section": 8,
+      "lift_mean": 0.45,
+      "lift_sd": 0.2,
+      "n_sections": 10,
+      "overshoot": [
+        40.0,
+        90.0
+      ],
+      "sample_regular_fraction": 0.65,
+      "sample_start_max": 6.0,
+      "sample_subpoints": 4,
+      "station_spacing": 30.0,
+      "swing_mean": 0.5,
+      "swing_sd": 0.35,
+      "target_jitter": 4.0,
+      "vertical_fraction": 0.08,
+      "wander_sd": 0.15
+    },
+    "grade": {
+      "assay_decimals": 3,
+      "assay_floor": 0.001,
+      "ore_density": 2.85,
+      "ore_median": 1.6,
+      "ore_sigma": 0.8,
+      "waste_density": 2.7,
+      "waste_median": 0.02,
+      "waste_sigma": 0.5
+    },
+    "lens": {
+      "bearing": 30.0,
+      "bend_major": 18.0,
+      "bend_semi": -10.0,
+      "centre": [
+        500600.0,
+        5300500.0,
+        1000.0
+      ],
+      "dip": 55.0,
+      "half_length": 260.0,
+      "half_thickness": 16.0,
+      "half_width": 140.0,
+      "mesh_subdivisions": 5,
+      "pinch_depth": 0.75,
+      "pinch_position": 70.0,
+      "pinch_width": 45.0,
+      "plunge": 15.0
+    },
+    "topo": {
+      "base": 1200.0,
+      "dtm_margin": 100.0,
+      "dtm_spacing": 25.0,
+      "min_cover": 10.0,
+      "origin": [
+        500000.0,
+        5300000.0
+      ],
+      "slope": [
+        0.02,
+        -0.012
+      ],
+      "waves": [
+        [
+          14.0,
+          900.0,
+          70.0,
+          0.4
+        ],
+        [
+          8.0,
+          420.0,
+          340.0,
+          1.3
+        ],
+        [
+          3.0,
+          160.0,
+          30.0,
+          2.1
+        ]
+      ]
+    },
+    "variogram": {
+      "bearing": 35.0,
+      "cell": [
+        4.0,
+        2.5,
+        0.5
+      ],
+      "dip": 50.0,
+      "nugget": 0.15,
+      "plunge": 10.0,
+      "ranges": [
+        120.0,
+        70.0,
+        15.0
+      ]
+    }
+  },
+  "coordinate_system": {
+    "axes": "x = east, y = north, z = up",
+    "azimuth_convention": "degrees clockwise from grid north",
+    "description": "local mine grid; all files use x, y, z order",
+    "dip_convention": "negative downward (vertical hole = -90)",
+    "units": "metres"
+  },
+  "density_t_m3": {
+    "ORE": 2.85,
+    "WASTE": 2.7
+  },
+  "drilling": {
+    "assay_intervals": 22476,
+    "desurvey": "minimum curvature; straight below the last station",
+    "holes": 80,
+    "survey_stations": 794
+  },
+  "files": [
+    "assay.csv",
+    "collar.csv",
+    "geology.csv",
+    "ore_solid.obj",
+    "ore_solid_faces.npy",
+    "ore_solid_vertices.npy",
+    "survey.csv",
+    "topo.obj",
+    "topo_faces.npy",
+    "topo_vertices.npy",
+    "truth_blocks.parquet",
+    "truth_samples.csv",
+    "truth_stations.csv",
+    "truth.json"
+  ],
+  "generator": {
+    "name": "bakumine.synth",
+    "version": 1
+  },
+  "grade": {
+    "element": "au",
+    "ore": "exp(mu + sigma Y), Y = sqrt(1 - nugget) Ys + sqrt(nugget) eps",
+    "ore_ensemble_mean": 2.2034044229375316,
+    "ore_mu": 0.47000362924573563,
+    "ore_sigma": 0.8,
+    "sample_support": "mean of the point grade at sample_subpoints positions along the interval; one nugget draw per sample; rounded to assay_decimals, floored at assay_floor",
+    "units": "g/t",
+    "waste": "exp(waste_mu + waste_sigma eps), spatially uncorrelated",
+    "waste_mean": 0.022662969061336528,
+    "waste_mu": -3.912023005428146,
+    "waste_sigma": 0.5
+  },
+  "rotation_convention": "axes matrix columns = unit vectors (east, north, up) of the major, semi-major and minor axes. major = (sin b cos p, cos b cos p, -sin p) for bearing b, plunge p; with dip 0 the semi-major axis is horizontal, 90 deg anticlockwise of the bearing; dip rotates it downward about the major axis. local = (world - centre) @ axes.",
+  "seed": 42,
+  "solid": {
+    "axes": [
+      [
+        0.4829629131445341,
+        -0.6027378398404813,
+        -0.6351802271413802
+      ],
+      [
+        0.8365163037378079,
+        0.10318031045406567,
+        0.538139663205973
+      ],
+      [
+        -0.25881904510252074,
+        -0.7912401152362238,
+        0.5540322932223234
+      ]
+    ],
+    "centre": [
+      500600.0,
+      5300500.0,
+      1000.0
+    ],
+    "half_axes": [
+      260.0,
+      140.0,
+      16.0
+    ],
+    "implicit": "inside when (u/a)^2 + (v/b)^2 + ((w - m)/(c t))^2 < 1, with t = 1 - pinch_depth exp(-((u - pinch_position)/pinch_width)^2), m = bend_major (u/a)^2 + bend_semi (v/b)^2, (u, v, w) = local coordinates",
+    "mesh": {
+      "faces": 20480,
+      "relative_error": -0.0005703520097318782,
+      "relative_error_bound": 0.01,
+      "vertices": 10242,
+      "volume_m3": 2054232.4359078102
+    },
+    "min_cover_below_topography_m": 63.963738328757245,
+    "volume_m3": 2055404.740132157,
+    "volume_method": "exact: V = pi b c integral_{-a}^{a} t(u) (1 - u^2/a^2) du, adaptive quadrature to 1e-13 relative",
+    "voxel_check": {
+      "cell_m": [
+        4.0,
+        2.5,
+        0.5
+      ],
+      "frame": "variogram axes",
+      "relative_error": -8.74475613720227e-05,
+      "volume_m3": 2055225.0
+    }
+  },
+  "topography": {
+    "dtm_extent": {
+      "max": [
+        500850.0,
+        5300950.0
+      ],
+      "min": [
+        500200.0,
+        5300175.0
+      ]
+    },
+    "dtm_faces": 1772,
+    "dtm_note": "regular grid plus every collar as a vertex; faces counter-clockwise",
+    "dtm_vertices": 944,
+    "formula": "z = base + slope_x X + slope_y Y + sum amp sin(2 pi (X sin d + Y cos d) / wavelength + phase), X = x - origin_x, Y = y - origin_y, d = direction (azimuth); rounded to 1e-6 m"
+  },
+  "totals": {
+    "mean_grade_method": "volume average of the nugget-averaged grade over the simulation lattice nodes inside the solid (see solid.voxel_check for the resolution)",
+    "ore_mean_grade_g_t": 2.010055580265412,
+    "ore_metal_g": 11774711.63767887,
+    "ore_metal_troy_oz": 378565.76978168794,
+    "ore_tonnes": 5857903.509376648,
+    "ore_volume_m3": 2055404.740132157
+  },
+  "variogram": {
+    "angles_deg": {
+      "bearing": 35.0,
+      "dip": 50.0,
+      "plunge": 10.0
+    },
+    "axes": [
+      [
+        0.5648625214636234,
+        -0.6028391963159543,
+        -0.5634849023983624
+      ],
+      [
+        0.8067072841115988,
+        0.25972240176829375,
+        0.5308178894696347
+      ],
+      [
+        -0.17364817766693033,
+        -0.7544065067354888,
+        0.633022221559489
+      ]
+    ],
+    "formula": "gamma(h) = nugget + sill (1.5 h/a - 0.5 (h/a)^3) for h < a, else total",
+    "model": "spherical",
+    "nugget": 0.15,
+    "ranges_m": [
+      120.0,
+      70.0,
+      15.0
+    ],
+    "sill": 0.85,
+    "simulation": {
+      "between_nodes": "trilinear interpolation of the structured component",
+      "cell_m": [
+        4.0,
+        2.5,
+        0.5
+      ],
+      "lower_corner_local_m": [
+        -272.0,
+        -152.5,
+        -30.0
+      ],
+      "method": "FFT moving average on a periodic lattice aligned with the axes",
+      "nugget": "independent standard normal per assay sample",
+      "shape": [
+        137,
+        122,
+        115
+      ]
+    },
+    "space": "Gaussian variable Y (grade = exp(mu + sigma Y) in ore)",
+    "total_sill": 1.0
+  }
+}

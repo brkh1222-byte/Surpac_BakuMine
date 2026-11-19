@@ -44,5 +44,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     return int(func(args) or 0)
 
 
+def _register_builtin() -> None:
+    from bakumine.synth import command as synth
+
+    register("synth", synth.HELP, synth.configure)
+
+
+_register_builtin()
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
