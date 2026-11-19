@@ -11,6 +11,8 @@ dependencies = [
     "pyarrow",
     "fastapi",
     "uvicorn",
+    "triangle>=20250106",
+    "openpyxl>=3.1.5",
 ]
 
 [project.scripts]
@@ -22,6 +24,11 @@ dev = [
     "hypothesis",
     "ruff",
     "httpx",
+    "trimesh>=5.2.1",
+    "rtree>=1.4.1",
+    "wellpathpy>=0.5.2",
+    "gstools>=1.7.0",
+    "pykrige>=1.7.3",
 ]
 
 [build-system]
