@@ -103,9 +103,9 @@ Read `research.md` §2–§4.
 - [x] **P1.T2 Validation report.** All checks listed in `research.md` §2.5, returned as structured errors/warnings per hole. *Accept:* a deliberately corrupted dataset triggers each check exactly once.
 - [x] **P1.T3 Desurvey.** Minimum curvature (default), balanced tangential, tangent; dip sign convention selectable (Surpac negative-down default); `xyz_at(hole, depth)` with arc interpolation; straight extension past the last station. *Accept:* vertical hole exact; straight inclined hole exact; quarter-circle hole within 1 mm of the analytic arc; results match an independent implementation (e.g. `wellpathpy`) to 1e-6 m.
 - [x] **P1.T4 Interval merge.** Combine assay and geology intervals into one segment table per hole (split at every boundary). *Accept:* total length preserved; property test with random intervals.
-- [ ] **P1.T5 Compositing.** Downhole fixed length; by bench; within-domain (by geology code or by solid, once P2.T6 exists); best-fit option; min-length rule; optional density weighting; NaN handling. *Accept:* metal accumulation (Σ grade × length) conserved to 1e-9 per hole; hand-worked example matches; no composite crosses a domain boundary in domain mode.
-- [ ] **P1.T6 Grade capping** as a compositing/estimation pre-step. *Accept:* unit test.
-- [ ] **P1.T7 CLI.** `bakumine import`, `validate`, `desurvey`, `composite`. *Accept:* end-to-end on synthetic data from the shell.
+- [x] **P1.T5 Compositing.** Downhole fixed length; by bench; within-domain (by geology code or by solid, once P2.T6 exists); best-fit option; min-length rule; optional density weighting; NaN handling. *Accept:* metal accumulation (Σ grade × length) conserved to 1e-9 per hole; hand-worked example matches; no composite crosses a domain boundary in domain mode.
+- [x] **P1.T6 Grade capping** as a compositing/estimation pre-step. *Accept:* unit test.
+- [x] **P1.T7 CLI.** `bakumine import`, `validate`, `desurvey`, `composite`. *Accept:* end-to-end on synthetic data from the shell.
 
 ### Phase 2 — Geometry: strings, surfaces, solids (H2–H14) · parallel
 
@@ -243,6 +243,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-19 17:25  P4.T1/T5/T2  dde480f  `Ellipsoid` (rotation.py), `VariogramModel` (+ njit covariance), `SampleSearch.query -> SearchResult` (padded indices/distances, `estimated` mask). Variograms match gstools; search matches brute force (also re-checked by orchestrator). Local frame is (semi-major, major, minor). `datamine_zxz` NOT implemented (convention not known with confidence). `surpac_zxy_lrl` and `gslib` are derived from recalled documentation, unverified against the real programs: positive plunge = major axis UP. 1M targets x 20k samples: 0.5 s plain, 8 s with octant + per-hole limits.
 2026-11-19 20:17  --  --  Usage limit stopped all four agents at about 17:40; resumed at 20:17 from their worktrees (P2.T5/T4/T7, P1.T6/T7, P4.T6, P5.T8/T2/T3). About 2.5 h of wall-clock lost; expect this again roughly every 5 h of full-width work.
 2026-11-19 20:30  P4.T3/T4/T6  59d93d1  `nearest_neighbour`, `inverse_distance`, `krige` (OK/SK, point/block). OK matches PyKrige and gstools to 1e-6 (measured 1e-14); orchestrator's own variogram-form solve agrees to 1e-15. Synthetic ore blocks vs truth: NN RMSE 1.417 / r 0.71, IDW2 0.921 / 0.84, OK 0.879 / 0.86. Block kriging and nested models are checked only against a dense numpy solver; kt3d nugget treatment is from memory, not run against GSLIB. `lagrange` is covariance-form (sign opposite to research.md).
+2026-11-19 20:45  P1.T5/T6/T7  a7c4ccc  `composite()` (downhole / bench / domain, best-fit, density weighting), `cap_grades()`, CLI `import | validate | desurvey | composite`. Orchestrator ran the CLI chain on the synthetic CSVs: 11 410 two-metre domain composites, metal accumulation conserved exactly (3086.592 in and out). `<attr>_coverage` is a length, not a fraction. Domain source is pluggable (callable) for the later inside-solid case. No third-party compositing oracle exists; checks are hand arithmetic + conservation + truth. Phase 1 complete.
 
 ### Blockers
 
