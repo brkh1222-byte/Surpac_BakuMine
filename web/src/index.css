@@ -17,6 +17,7 @@
   --label: #a9b3bd;
   --label-halo: #15181c;
   --viewport: #15181c;
+  --danger: #e66767;
 }
 
 :root[data-theme='light'] {
@@ -32,6 +33,7 @@
   --label: #424b52;
   --label-halo: #f4f5f3;
   --viewport: #f4f5f3;
+  --danger: #b3261e;
 }
 
 * {
@@ -246,6 +248,43 @@ input {
 .sidebar-note {
   margin: 10px;
   color: var(--text-muted);
+}
+
+.tree-tag {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tree-tag-error {
+  color: var(--danger);
+}
+
+.sidebar-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-error button {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  cursor: pointer;
+}
+
+.load-error {
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- Viewport and overlays ------------------------------------------------------- */

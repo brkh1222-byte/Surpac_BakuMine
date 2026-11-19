@@ -60,7 +60,7 @@ async function readCoords(page: Page): Promise<{ e: number; n: number; z: number
 }
 
 test('empty scene: shell, object tree and reference grid only', async ({ page }) => {
-  await page.goto('/?theme=dark')
+  await page.goto('/?scene=none&theme=dark')
   await page.waitForFunction(() => (window.__bakumine?.frames() ?? 0) > 0)
   for (const id of ['drillholes', 'surfaces', 'solids', 'blockModels']) {
     await expect(page.getByTestId(`tree-${id}`)).toBeVisible()

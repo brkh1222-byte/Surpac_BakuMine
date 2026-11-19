@@ -1,12 +1,16 @@
 import { useEffect } from 'react'
-import { Viewport } from './scene/Viewport'
+import { Viewport, type SceneMode } from './scene/Viewport'
 import { useViewer } from './state/store'
 import { Sidebar } from './ui/Sidebar'
 import { StatusBar } from './ui/StatusBar'
 import { Toolbar } from './ui/Toolbar'
 
-/** `?mock=1` fills the scene with stand-in objects so the viewer runs without the API. */
-const MOCK = new URLSearchParams(window.location.search).get('mock') === '1'
+const PARAMS = new URLSearchParams(window.location.search)
+/**
+ * Where the scene comes from: the API's project by default; `?mock=1` fills it with
+ * stand-in objects so the viewer runs without the API; `?scene=none` leaves it empty.
+ */
+const MODE: SceneMode = PARAMS.get('mock') === '1' ? 'mock' : PARAMS.get('scene') === 'none' ? 'none' : 'api'
 
 function App() {
   const theme = useViewer((s) => s.theme)
@@ -17,9 +21,9 @@ function App() {
   return (
     <div className="app">
       <Toolbar />
-      <Sidebar />
-      <Viewport mock={MOCK} />
-      <StatusBar mock={MOCK} />
+      <Sidebar mode={MODE} />
+      <Viewport mode={MODE} />
+      <StatusBar mode={MODE} />
     </div>
   )
 }

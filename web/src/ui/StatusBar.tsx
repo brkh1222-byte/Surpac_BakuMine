@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { fetchHealth, type HealthState } from '../health'
 import { formatCoord, formatLength } from '../scene/format'
-import { useViewer } from '../state/store'
+import type { SceneMode } from '../scene/Viewport'
+import { loadSummary, useViewer } from '../state/store'
 
 const HEALTH_TEXT: Record<HealthState, string> = {
   checking: 'API: checking…',
@@ -27,7 +28,40 @@ function ApiStatus() {
   )
 }
 
-export function StatusBar({ mock }: { mock: boolean }) {
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
+  if (bytes >= 1e3) return `${Math.round(bytes / 1e3)} kB`
+  return `${bytes} B`
+}
+
+/** Progress of the data requests: loading n of m, loaded (with size), or the error. */
+function LoadStatus() {
+  const loads = useViewer((s) => s.loads)
+  const project = useViewer((s) => s.projectName)
+  const summary = loadSummary(loads)
+  if (summary.status === 'idle') return null
+  const objects = Math.max(0, summary.total - 1)
+  const text =
+    summary.status === 'error'
+      ? `Load failed: ${summary.error}`
+      : summary.status === 'loading'
+        ? `Loading ${summary.done + 1} of ${summary.total}…`
+        : objects === 0
+          ? `${project ?? 'Project'}: empty`
+          : `${project ?? 'Project'} · ${objects} ${objects === 1 ? 'object' : 'objects'} · ${formatBytes(summary.bytes)}`
+  return (
+    <span
+      className={`status-item load-${summary.status}`}
+      data-testid="load-status"
+      data-status={summary.status}
+      title={text}
+    >
+      {text}
+    </span>
+  )
+}
+
+export function StatusBar({ mode }: { mode: SceneMode }) {
   const cursor = useViewer((s) => s.cursor)
   const gridSpacing = useViewer((s) => s.gridSpacing)
   const exaggeration = useViewer((s) => s.verticalExaggeration)
@@ -55,7 +89,8 @@ export function StatusBar({ mock }: { mock: boolean }) {
         {projection === 'perspective' ? 'Perspective' : 'Orthographic'}
       </span>
       <span className="status-item">Vertical × {exaggeration}</span>
-      {mock ? <span className="status-item" data-testid="api-status">Mock data</span> : <ApiStatus />}
+      <LoadStatus />
+      {mode === 'mock' ? <span className="status-item" data-testid="api-status">Mock data</span> : <ApiStatus />}
     </footer>
   )
 }

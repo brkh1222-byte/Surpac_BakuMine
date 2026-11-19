@@ -7,6 +7,7 @@ import { installDebugHandle } from './debug'
 import { SceneContent } from './layers'
 import { MockLayer } from './MockLayer'
 import { getOrigin, renderToWorld } from './origin'
+import { ProjectScene } from './ProjectScene'
 import { gridElevation, ReferenceGrid } from './ReferenceGrid'
 import { SCENE_COLORS } from './theme'
 import { overlay, view } from './view'
@@ -121,10 +122,13 @@ function OrientationGizmo() {
   )
 }
 
-export function Viewport({ mock }: { mock: boolean }) {
+/** `api`: the project served by the API; `mock`: client-side stand-ins; `none`: empty. */
+export type SceneMode = 'api' | 'mock' | 'none'
+
+export function Viewport({ mode }: { mode: SceneMode }) {
   const theme = useViewer((s) => s.theme)
   const colors = SCENE_COLORS[theme]
-  const debug = mock || import.meta.env.DEV
+  const debug = mode === 'mock' || import.meta.env.DEV
 
   return (
     <div className="viewport" data-testid="viewport">
@@ -135,7 +139,10 @@ export function Viewport({ mock }: { mock: boolean }) {
         <directionalLight position={[-0.5, -0.8, 1]} intensity={1.9} />
         <CameraRig />
         <ReferenceGrid />
-        <SceneContent>{mock && <MockLayer />}</SceneContent>
+        <SceneContent>
+          {mode === 'mock' && <MockLayer />}
+          {mode === 'api' && <ProjectScene />}
+        </SceneContent>
         <CursorProbe />
         {debug && <DebugHandle />}
       </Canvas>

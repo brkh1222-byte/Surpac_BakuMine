@@ -61,8 +61,8 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 test('review screenshots, empty scene', async ({ page }) => {
-  await open(page, 'theme=dark')
+  await open(page, 'scene=none&theme=dark')
   await shot(page, 'empty-dark')
-  await open(page, 'theme=light')
+  await open(page, 'scene=none&theme=light')
   await shot(page, 'empty-light')
 })

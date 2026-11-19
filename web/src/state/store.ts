@@ -43,7 +43,24 @@ export interface CursorReadout {
   on: 'grid' | 'object'
 }
 
+/** Progress of one request (the scene manifest or one object's data). */
+export interface LoadState {
+  /** What is being loaded, for messages ("Drillholes"). */
+  label: string
+  status: 'loading' | 'ready' | 'error'
+  error?: string
+  /** Size of the decoded payload, when known. */
+  bytes?: number
+}
+
+/** Key of the scene manifest in `ViewerState.loads`. */
+export const MANIFEST_LOAD = 'manifest'
+
 export interface ViewerState {
+  /** Name of the open project; null before the manifest has arrived. */
+  projectName: string | null
+  /** Requests in flight or finished, by resource key (see api/useResource.ts). */
+  loads: Record<string, LoadState>
   theme: Theme
   projection: Projection
   /** Z scale of the scene content. Read-outs always report true Z. */
@@ -54,6 +71,8 @@ export interface ViewerState {
   /** Spacing of the labelled grid lines, metres (set by the grid as the view zooms). */
   gridSpacing: number
 
+  setProjectName: (name: string | null) => void
+  setLoad: (key: string, state: LoadState | null) => void
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setProjection: (projection: Projection) => void
@@ -119,6 +138,22 @@ export function visibleBounds(state: ViewerState): Bounds | null {
   )
 }
 
+/** One-line summary of all requests, for the status bar. */
+export function loadSummary(loads: Record<string, LoadState>): {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  total: number
+  done: number
+  bytes: number
+  error?: string
+} {
+  const list = Object.values(loads)
+  const failed = list.find((l) => l.status === 'error')
+  const done = list.filter((l) => l.status === 'ready').length
+  const bytes = list.reduce((sum, l) => sum + (l.bytes ?? 0), 0)
+  const status = list.length === 0 ? 'idle' : failed ? 'error' : done < list.length ? 'loading' : 'ready'
+  return { status, total: list.length, done, bytes, error: failed && `${failed.label}: ${failed.error}` }
+}
+
 /** World bounds of everything loaded, visible or not. */
 export function allBounds(state: ViewerState): Bounds | null {
   return unionBounds(Object.values(state.objects).map((o) => o.bounds))
@@ -132,6 +167,8 @@ function initialTheme(): Theme {
 }
 
 export const useViewer = create<ViewerState>()((set) => ({
+  projectName: null,
+  loads: {},
   theme: initialTheme(),
   projection: 'perspective',
   verticalExaggeration: 1,
@@ -140,6 +177,14 @@ export const useViewer = create<ViewerState>()((set) => ({
   cursor: null,
   gridSpacing: 100,
 
+  setProjectName: (projectName) => set({ projectName }),
+  setLoad: (key, state) =>
+    set((s) => {
+      const loads = { ...s.loads }
+      if (state) loads[key] = state
+      else delete loads[key]
+      return { loads }
+    }),
   setTheme: (theme) => set({ theme }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
   setProjection: (projection) => set({ projection }),
