@@ -54,6 +54,11 @@ def _register_builtin() -> None:
     for name, (help_text, configure) in drillholes.COMMANDS.items():
         register(name, help_text, configure)
 
+    from bakumine.commands import blockmodel
+
+    for name, (help_text, configure) in blockmodel.COMMANDS.items():
+        register(name, help_text, configure)
+
 
 _register_builtin()
 
