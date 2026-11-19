@@ -99,10 +99,10 @@ Estimated hours are wall-clock with parallel agents.
 
 Read `research.md` §2–§4.
 
-- [ ] **P1.T1 Table import + column mapping.** Read collar/survey/assay/geology from CSV/XLSX with a user column map; unit and coordinate-order options; store as Parquet. *Accept:* synthetic and public datasets import; Y/X swap option tested.
-- [ ] **P1.T2 Validation report.** All checks listed in `research.md` §2.5, returned as structured errors/warnings per hole. *Accept:* a deliberately corrupted dataset triggers each check exactly once.
+- [x] **P1.T1 Table import + column mapping.** Read collar/survey/assay/geology from CSV/XLSX with a user column map; unit and coordinate-order options; store as Parquet. *Accept:* synthetic and public datasets import; Y/X swap option tested.
+- [x] **P1.T2 Validation report.** All checks listed in `research.md` §2.5, returned as structured errors/warnings per hole. *Accept:* a deliberately corrupted dataset triggers each check exactly once.
 - [x] **P1.T3 Desurvey.** Minimum curvature (default), balanced tangential, tangent; dip sign convention selectable (Surpac negative-down default); `xyz_at(hole, depth)` with arc interpolation; straight extension past the last station. *Accept:* vertical hole exact; straight inclined hole exact; quarter-circle hole within 1 mm of the analytic arc; results match an independent implementation (e.g. `wellpathpy`) to 1e-6 m.
-- [ ] **P1.T4 Interval merge.** Combine assay and geology intervals into one segment table per hole (split at every boundary). *Accept:* total length preserved; property test with random intervals.
+- [x] **P1.T4 Interval merge.** Combine assay and geology intervals into one segment table per hole (split at every boundary). *Accept:* total length preserved; property test with random intervals.
 - [ ] **P1.T5 Compositing.** Downhole fixed length; by bench; within-domain (by geology code or by solid, once P2.T6 exists); best-fit option; min-length rule; optional density weighting; NaN handling. *Accept:* metal accumulation (Σ grade × length) conserved to 1e-9 per hole; hand-worked example matches; no composite crosses a domain boundary in domain mode.
 - [ ] **P1.T6 Grade capping** as a compositing/estimation pre-step. *Accept:* unit test.
 - [ ] **P1.T7 CLI.** `bakumine import`, `validate`, `desurvey`, `composite`. *Accept:* end-to-end on synthetic data from the shell.
@@ -158,7 +158,7 @@ Read `research.md` §7. This phase decides whether the product is credible; it g
 
 Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and legends.
 
-- [ ] **P5.T1 Scene.** Orbit/pan/zoom, Z-up, orthographic/perspective toggle, grid, axes with real coordinates, vertical exaggeration, large-coordinate handling (recentre to local origin to avoid float32 jitter). *Accept:* Playwright screenshot test; a point at E 500 000 / N 5 000 000 renders without jitter.
+- [x] **P5.T1 Scene.** Orbit/pan/zoom, Z-up, orthographic/perspective toggle, grid, axes with real coordinates, vertical exaggeration, large-coordinate handling (recentre to local origin to avoid float32 jitter). *Accept:* Playwright screenshot test; a point at E 500 000 / N 5 000 000 renders without jitter.
 - [ ] **P5.T2 Drillholes.** Traces as tubes/lines coloured by any interval attribute, collar labels, hover/pick shows hole, depth, values. *Accept:* 500 holes at 60 fps.
 - [ ] **P5.T3 Meshes.** DTMs and solids, solid/wireframe/transparent modes, per-object visibility and colour. *Accept:* 1M triangles interactive.
 - [ ] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
@@ -238,6 +238,8 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-19 16:20  P1.T3  db13542  desurvey (min curvature / balanced / tangent). Matches wellpathpy to 1e-6 on 50 holes; orchestrator's own quarter-circle check: 1e-9 m. Runs on Babbitt. API: `desurvey(collar, survey, method=, dip_convention=) -> HoleTraces`, `.xyz_at(hole_id, depths)`, `.stations()`.
 2026-11-19 16:35  P0.T3  9a859c8  `bakumine synth`; default dataset in data/synthetic/default (80 holes, 22 476 assays, truth blocks 10x10x5 m, true ore volume 2 055 405 m3, 5.86 Mt @ 2.01 g/t). Orchestrator checks: trimesh says watertight, volume -0.06% of truth; merged desurvey reproduces truth sample XYZ to 5e-7 m. Schemas are listed in truth.json `files`. Phase 0 complete.
 2026-11-19 16:52  P2.T1-T3  180aad2  `Mesh` (immutable), `TriangleGridXY`, `TriangleBVH`, `validate()`, `fix_orientation()`, volume/area/centroid; agrees with trimesh to 1e-9. Orchestrator check: synthetic ore solid validates, volume -0.057% of truth. Indexes return AABB candidates only; exact ray tests belong to P2.T4/T5. Import from modules, not the package `__init__`.
+2026-11-19 17:12  P5.T1  9535af0  viewer shell: Z-up scene, views, ortho/perspective, vertical exaggeration, shared scene origin (`web/src/scene/origin.ts`), zustand store, layer recipe in `web/src/scene/layers.tsx`. `make check` and `make e2e` (9 tests) re-run green by orchestrator; screenshots inspected. Not tested: real mouse/trackpad input, jitter while the camera moves. `npx playwright install chromium` is needed once per machine.
+2026-11-19 17:12  P1.T1/T2/T4  22a89b0  `import_drillholes` + `DrillholeDatabase` (Parquet), `validate()` (18 check codes), `merge_intervals`. Babbitt imports from raw; synthetic import test runs on main (no skip). Defaults to note: below-detection = half the limit; -99/-999 sentinels apply to attribute columns only.
 
 ### Blockers
 
