@@ -24,6 +24,11 @@ from bakumine.core.blockmodel.constraints import (
 )
 from bakumine.core.blockmodel.definition import BlockModelDefinition
 from bakumine.core.blockmodel.expressions import ExpressionError, ExpressionWarning
+from bakumine.core.blockmodel.subblocking import (
+    SubblockResult,
+    merge_uniform,
+    subblock_to_constraint,
+)
 
 __all__ = [
     "And",
@@ -51,3 +56,6 @@ __all__ = [
     "load_constraint",
     "save_constraint",
 ]
+
+# sub-blocking on constraints (P3.T5)
+__all__ += ["SubblockResult", "merge_uniform", "subblock_to_constraint"]
