@@ -3,7 +3,7 @@
  * Each object is registered with the store from the manifest bounds straight away, so
  * the object tree and "zoom to extents" work while the bulk data is still on its way.
  */
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { ManifestObject } from '../api/client'
 import { useDrillholes, useManifest, useMesh } from '../api/useScene'
 import type { DrillholeSet } from '../api/client'
@@ -11,6 +11,7 @@ import { useDisplay } from '../state/display'
 import { useViewer, type Bounds } from '../state/store'
 import { DrillholesLayer } from './DrillholesLayer'
 import { useLayerObject } from './layers'
+import { MeshLayer } from './MeshLayer'
 
 const NO_BOUNDS: Bounds = { min: [0, 0, 0], max: [0, 0, 0] }
 
@@ -46,9 +47,19 @@ function DrillholesObject({ object }: { object: ManifestObject }) {
 }
 
 function MeshObject({ object }: { object: ManifestObject }) {
-  useLayerObject({ id: object.id, name: object.name, category: object.category, bounds: object.bounds ?? NO_BOUNDS })
-  useMesh(object)
-  return null
+  const closed = object.stats.closed === true
+  const bounds = object.bounds ?? NO_BOUNDS
+  useLayoutEffect(() => {
+    useDisplay.getState().registerMesh(object.id, closed, [bounds.min[2], bounds.max[2]])
+    return () => useDisplay.getState().unregisterMesh(object.id)
+  }, [object.id, closed, bounds])
+  const mesh = useMesh(object)
+  const layer = useMemo(
+    () => ({ id: object.id, name: object.name, category: object.category, bounds }),
+    [object.id, object.name, object.category, bounds],
+  )
+  if (mesh.status !== 'ready') return <Placeholder object={object} />
+  return <MeshLayer object={layer} mesh={mesh.data} />
 }
 
 export function ProjectScene() {

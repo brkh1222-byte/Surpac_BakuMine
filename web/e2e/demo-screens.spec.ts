@@ -49,4 +49,51 @@ for (const theme of ['dark', 'light'] as const) {
     }
     await shot(page, `demo-${theme}-hover-select`)
   })
+
+  test(`demo mesh display modes, ${theme} theme`, async ({ page }) => {
+    await openDemo(page, `theme=${theme}`)
+    // Solid transparent with the drillholes inside it.
+    await page.getByTestId('mode-ore-solid').selectOption('transparent')
+    await shot(page, `mesh-${theme}-iso-solid-transparent`)
+    await page.getByTestId('proj-orthographic').click()
+    await page.getByTestId('view-east').click()
+    await shot(page, `mesh-${theme}-east-solid-transparent`)
+    await page.getByTestId('colour-by-drillholes').selectOption('geology/rock')
+    await shot(page, `mesh-${theme}-east-solid-transparent-rock`)
+    await page.getByTestId('view-plan').click()
+    await shot(page, `mesh-${theme}-plan-solid-transparent-rock`)
+
+    // Solid with edges, topography coloured by elevation and opaque.
+    await page.getByTestId('colour-by-drillholes').selectOption('assay/au')
+    await page.getByTestId('proj-perspective').click()
+    await page.getByTestId('view-iso').click()
+    await page.getByTestId('mode-ore-solid').selectOption('edges')
+    await page.getByTestId('tree-surfaces').getByRole('checkbox').first().uncheck()
+    await shot(page, `mesh-${theme}-iso-solid-edges`)
+    await page.getByTestId('shading-ore-solid').selectOption('flat')
+    await page.getByTestId('mode-ore-solid').selectOption('shaded')
+    await shot(page, `mesh-${theme}-iso-solid-flat`)
+    await page.getByTestId('mode-ore-solid').selectOption('wireframe')
+    await shot(page, `mesh-${theme}-iso-solid-wireframe`)
+
+    await page.getByTestId('tree-surfaces').getByRole('checkbox').first().check()
+    await page.getByTestId('mode-topo').selectOption('edges')
+    await page.getByTestId('elevation-topo').check()
+    await shot(page, `mesh-${theme}-iso-topo-elevation-edges`)
+    await page.getByTestId('mode-topo').selectOption('transparent')
+    await page.getByTestId('mode-ore-solid').selectOption('transparent')
+    await shot(page, `mesh-${theme}-iso-all-transparent`)
+  })
 }
+
+test('performance scene screenshot', async ({ page }) => {
+  await page.goto('/?mock=perf&theme=dark')
+  await page.waitForFunction(() => Object.keys(window.__bakumine?.store.getState().objects ?? {}).length >= 2, null, {
+    timeout: 120_000,
+  })
+  await shot(page, 'perf-dark-iso')
+  await page.getByTestId('mode-perf-mesh').selectOption('shaded')
+  await page.getByTestId('elevation-perf-mesh').check()
+  await page.getByTestId('colour-by-perf-holes').selectOption('assay/rock')
+  await shot(page, 'perf-dark-iso-elevation-rock')
+})

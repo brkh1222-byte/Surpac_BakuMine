@@ -3,7 +3,7 @@
  * many intervals, in exactly the structures the API client produces, so the real layers
  * draw them. Deterministic.
  */
-import type { AttributeInfo, DrillholeSet } from '../api/client'
+import type { AttributeInfo, DrillholeSet, MeshData } from '../api/client'
 import { MOCK_CENTRE } from './mockData'
 
 function rng(seed: number): () => number {
@@ -141,4 +141,42 @@ export function buildPerfDrillholes(holes = 500, perHole = 200, seed = 7): PerfD
       { table: 'assay', name: 'rock', type: 'categorical', categories: rocks, count: segments, missing: 0 },
     ],
   }
+}
+
+/**
+ * An undulating surface of about `triangles` triangles (a square grid, two triangles
+ * per cell) under the generated holes. No normals: the layer computes them.
+ */
+export function buildPerfMesh(triangles = 1_000_000): MeshData {
+  const cells = Math.max(1, Math.round(Math.sqrt(triangles / 2)))
+  const side = cells + 1
+  const size = 1100
+  const vertices = new Float64Array(side * side * 3)
+  for (let j = 0; j < side; j++) {
+    for (let i = 0; i < side; i++) {
+      const x = (i / cells - 0.5) * size
+      const y = (j / cells - 0.5) * size
+      const v = (j * side + i) * 3
+      vertices[v] = MOCK_CENTRE.e + x
+      vertices[v + 1] = MOCK_CENTRE.n + y
+      vertices[v + 2] = MOCK_CENTRE.z - 40 + Math.sin(x / 130) * 28 + Math.cos(y / 95) * 22 + Math.sin((x + y) / 37) * 4
+    }
+  }
+  const faces = new Uint32Array(cells * cells * 6)
+  let f = 0
+  for (let j = 0; j < cells; j++) {
+    for (let i = 0; i < cells; i++) {
+      const a = j * side + i
+      const b = a + 1
+      const c = a + side
+      const d = c + 1
+      faces[f++] = a
+      faces[f++] = b
+      faces[f++] = d
+      faces[f++] = a
+      faces[f++] = d
+      faces[f++] = c
+    }
+  }
+  return { objectId: 'perf-mesh', vertices, faces, normals: null, closed: false, byteLength: 0 }
 }

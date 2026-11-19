@@ -194,7 +194,7 @@ test('hole labels declutter with zoom and can be switched off; visibility hides 
 
 test('performance probe: 500 holes / 100 000 intervals while orbiting', async ({ page }) => {
   test.setTimeout(600_000)
-  await page.goto('/?mock=perf&theme=dark')
+  await page.goto('/?mock=perf&tris=0&theme=dark')
   await page.waitForFunction(() => Object.keys(window.__bakumine?.store.getState().objects ?? {}).length >= 1)
   await settle(page, 5)
   const traces = (await bm(page, (h) => h.buffers())).find((b) => b.name === 'drillhole-traces')

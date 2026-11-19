@@ -320,6 +320,28 @@ input {
   font: inherit;
 }
 
+.control output {
+  flex: none;
+  width: 30px;
+  text-align: right;
+  color: var(--text);
+}
+
+.control > span.control-inline {
+  flex: 1;
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.control-inline input {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
 .control-check > span {
   width: auto;
 }

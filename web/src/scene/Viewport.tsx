@@ -190,8 +190,12 @@ export function Viewport({ mode }: { mode: SceneMode }) {
       {/* `flat`: no tone mapping, so data colours on screen match their legend exactly. */}
       <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true }} data-testid="scene-canvas">
         <color attach="background" args={[colors.background]} />
-        <ambientLight intensity={1.5} />
-        <directionalLight position={[-0.5, -0.8, 1]} intensity={1.9} />
+        {/* Key light from the west and above, a weak fill from the opposite side, and
+            enough ambient that faces turned away keep their colour: surfaces show their
+            form from every standard view, including the iso view the scene opens in. */}
+        <ambientLight intensity={1.0} />
+        <directionalLight position={[-1, -0.15, 0.75]} intensity={2.3} />
+        <directionalLight position={[0.7, 0.9, 0.25]} intensity={0.55} />
         <CameraRig />
         <ReferenceGrid />
         <SceneContent>

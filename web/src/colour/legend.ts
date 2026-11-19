@@ -136,6 +136,17 @@ export function roundNice(value: number, direction: 'up' | 'down'): number {
   return Number((rounded * unit).toPrecision(12))
 }
 
+/**
+ * `[min, max]` widened to round numbers on a step of half the span's power of ten:
+ * 1172.4 .. 1232.4 -> 1170 .. 1235. Null when the input is not a range.
+ */
+export function niceRange(min: number, max: number): { min: number; max: number } | null {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !(max > min)) return null
+  const step = Math.pow(10, Math.floor(Math.log10(max - min))) / 2
+  const clean = (v: number) => Number(v.toPrecision(12))
+  return { min: clean(Math.floor(min / step + 1e-9) * step), max: clean(Math.ceil(max / step - 1e-9) * step) }
+}
+
 /** A sane range from user input: finite, and max above min. Null when unusable. */
 export function sanitiseRange(min: number, max: number): { min: number; max: number } | null {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return null

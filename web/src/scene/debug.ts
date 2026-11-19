@@ -58,6 +58,8 @@ export interface DebugHandle {
    * batch closed by a pixel read-back that waits for the GPU).
    */
   measureOrbit: (frames?: number, stepDegrees?: number) => Promise<OrbitTiming>
+  /** Renders and counts the canvas pixels within `tolerance` (0..255 per channel) of a colour. */
+  countPixels: (hex: string, tolerance?: number) => number
   /** Client (page) pixel position of a world point, or null when it is not in view. */
   worldToClient: (world: Vec3) => { x: number; y: number } | null
   /** WebGL renderer string and the draw calls / triangles of the last frame. */
@@ -162,6 +164,23 @@ export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void 
         renderMeanMs: mean(renders),
         renderMaxMs: renders[renders.length - 1] ?? 0,
       }
+    },
+    countPixels: (hex, tolerance = 24) => {
+      render()
+      const context = gl.getContext()
+      const width = context.drawingBufferWidth
+      const height = context.drawingBufferHeight
+      const pixels = new Uint8Array(width * height * 4)
+      context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixels)
+      const n = parseInt(hex.slice(1), 16)
+      const r = (n >> 16) & 255
+      const g = (n >> 8) & 255
+      const b = n & 255
+      let count = 0
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (Math.abs(pixels[i] - r) <= tolerance && Math.abs(pixels[i + 1] - g) <= tolerance && Math.abs(pixels[i + 2] - b) <= tolerance) count++
+      }
+      return count
     },
     worldToClient: (world) => {
       const camera = view.camera

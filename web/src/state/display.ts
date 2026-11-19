@@ -7,6 +7,12 @@
  */
 import { create } from 'zustand'
 import type { AttributeInfo } from '../api/client'
+import {
+  clampOpacity,
+  defaultElevationSettings,
+  defaultMeshDisplay,
+  type MeshDisplay,
+} from '../meshes/display'
 import { DEFAULT_STEPS, roundNice, sanitiseRange, type LegendSpec, type NumericSettings } from '../colour/legend'
 
 /** "table/name": identifies an attribute of a drillhole object. */
@@ -76,8 +82,12 @@ export interface LegendEntry {
   onReset?: () => void
 }
 
+/** A change to a mesh's display; `elevation: undefined` resets its elevation range. */
+export type MeshPatch = Partial<Omit<MeshDisplay, 'closed' | 'zRange'>>
+
 export interface DisplayState {
   drillholes: Record<string, DrillholeDisplay>
+  meshes: Record<string, MeshDisplay>
   hover: HoverInfo | null
   selection: HoleDetails | null
   legends: Record<string, LegendEntry>
@@ -89,6 +99,10 @@ export interface DisplayState {
   setNumericSettings: (id: string, key: string, patch: Partial<NumericSettings>) => void
   resetNumericSettings: (id: string, key: string) => void
   setShowLabels: (id: string, show: boolean) => void
+  /** Declares a mesh; keeps the user's choices when it is registered again. */
+  registerMesh: (id: string, closed: boolean, zRange: readonly [number, number]) => void
+  unregisterMesh: (id: string) => void
+  setMesh: (id: string, patch: MeshPatch) => void
   setHover: (hover: HoverInfo | null) => void
   setSelection: (selection: HoleDetails | null) => void
   setLegend: (id: string, entry: LegendEntry | null) => void
@@ -118,6 +132,7 @@ function sameAttributes(a: AttributeInfo[], b: AttributeInfo[]): boolean {
 
 export const useDisplay = create<DisplayState>()((set) => ({
   drillholes: {},
+  meshes: {},
   hover: null,
   selection: null,
   legends: {},
@@ -183,6 +198,39 @@ export const useDisplay = create<DisplayState>()((set) => ({
     set((s) => {
       const d = s.drillholes[id]
       return d ? { drillholes: { ...s.drillholes, [id]: { ...d, showLabels } } } : s
+    }),
+  registerMesh: (id, closed, zRange) =>
+    set((s) => {
+      const previous = s.meshes[id]
+      if (previous) {
+        return { meshes: { ...s.meshes, [id]: { ...previous, closed, zRange: [zRange[0], zRange[1]] } } }
+      }
+      const sameKind = Object.values(s.meshes).filter((m) => m.closed === closed).length
+      return { meshes: { ...s.meshes, [id]: defaultMeshDisplay(closed, zRange, sameKind) } }
+    }),
+  unregisterMesh: (id) =>
+    set((s) => {
+      if (!(id in s.meshes)) return s
+      const meshes = { ...s.meshes }
+      delete meshes[id]
+      return { meshes }
+    }),
+  setMesh: (id, patch) =>
+    set((s) => {
+      const current = s.meshes[id]
+      if (!current) return s
+      const next: MeshDisplay = { ...current, ...patch, elevation: current.elevation }
+      next.opacity = clampOpacity(next.opacity)
+      if (!/^#[0-9a-f]{6}$/i.test(next.color)) next.color = current.color
+      if ('elevation' in patch) {
+        if (patch.elevation === undefined) {
+          next.elevation = { ...defaultElevationSettings(current.zRange), mode: current.elevation.mode }
+        } else {
+          const range = sanitiseRange(patch.elevation.min, patch.elevation.max)
+          if (range) next.elevation = { ...patch.elevation, ...range }
+        }
+      }
+      return { meshes: { ...s.meshes, [id]: next } }
     }),
   setHover: (hover) => set((s) => (s.hover === null && hover === null ? s : { hover })),
   setSelection: (selection) => set({ selection }),
