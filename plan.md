@@ -111,9 +111,9 @@ Read `research.md` §2–§4.
 
 Read `research.md` §5.
 
-- [ ] **P2.T1 Mesh core.** Vertex/face arrays, weld duplicates, edge map, normals, bounding boxes, BVH or uniform-grid triangle index. *Accept:* unit tests on cube, tetrahedron.
-- [ ] **P2.T2 Mesh validation.** Closed, manifold, consistent orientation, degenerate/duplicate faces, self-intersection; auto-fix orientation. *Accept:* each defect injected into a cube is detected; results agree with `trimesh` on 20 random meshes.
-- [ ] **P2.T3 Volume, area, centroid.** *Accept:* cube, sphere (within tessellation error), torus; equals `trimesh` to 1e-9 relative.
+- [x] **P2.T1 Mesh core.** Vertex/face arrays, weld duplicates, edge map, normals, bounding boxes, BVH or uniform-grid triangle index. *Accept:* unit tests on cube, tetrahedron.
+- [x] **P2.T2 Mesh validation.** Closed, manifold, consistent orientation, degenerate/duplicate faces, self-intersection; auto-fix orientation. *Accept:* each defect injected into a cube is detected; results agree with `trimesh` on 20 random meshes.
+- [x] **P2.T3 Volume, area, centroid.** *Accept:* cube, sphere (within tessellation error), torus; equals `trimesh` to 1e-9 relative.
 - [ ] **P2.T4 DTM from points and strings.** Delaunay in plan, breaklines honoured, optional boundary string, `z_at(x, y)` batch query. *Accept:* plane and paraboloid reproduced; breakline edges present in output; 1M-point query < 2 s.
 - [ ] **P2.T5 Point-in-solid, batch.** Ray casting with column acceleration for regular grids; robust on edges/vertices. *Accept:* matches `trimesh.contains` on 1M random points for 5 shapes including a concave one and one with a hole; 10M grid centroids < 20 s.
 - [ ] **P2.T6 Solid from sections.** Triangulate between consecutive closed strings (shortest-diagonal stitching), end caps, simple bifurcation; output passes P2.T2. *Accept:* slices of a known ellipsoid rebuild to within 2% volume; synthetic deposit sections rebuild to a valid solid.
@@ -237,6 +237,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-19 16:08  P0.T4  77bee15  Babbitt Cu-Ni (399 holes, from MIT-licensed pygslib repo); `make check` green. Quirks: units are feet, dip is POSITIVE down, 70 holes have a sentinel survey at depth 90000, no geology table. Upstream (NRRI TR-2003/21) has no explicit licence: fine for local testing, confirm before redistributing.
 2026-11-19 16:20  P1.T3  db13542  desurvey (min curvature / balanced / tangent). Matches wellpathpy to 1e-6 on 50 holes; orchestrator's own quarter-circle check: 1e-9 m. Runs on Babbitt. API: `desurvey(collar, survey, method=, dip_convention=) -> HoleTraces`, `.xyz_at(hole_id, depths)`, `.stations()`.
 2026-11-19 16:35  P0.T3  9a859c8  `bakumine synth`; default dataset in data/synthetic/default (80 holes, 22 476 assays, truth blocks 10x10x5 m, true ore volume 2 055 405 m3, 5.86 Mt @ 2.01 g/t). Orchestrator checks: trimesh says watertight, volume -0.06% of truth; merged desurvey reproduces truth sample XYZ to 5e-7 m. Schemas are listed in truth.json `files`. Phase 0 complete.
+2026-11-19 16:52  P2.T1-T3  180aad2  `Mesh` (immutable), `TriangleGridXY`, `TriangleBVH`, `validate()`, `fix_orientation()`, volume/area/centroid; agrees with trimesh to 1e-9. Orchestrator check: synthetic ore solid validates, volume -0.057% of truth. Indexes return AABB candidates only; exact ray tests belong to P2.T4/T5. Import from modules, not the package `__init__`.
 
 ### Blockers
 
