@@ -101,7 +101,7 @@ Read `research.md` §2–§4.
 
 - [ ] **P1.T1 Table import + column mapping.** Read collar/survey/assay/geology from CSV/XLSX with a user column map; unit and coordinate-order options; store as Parquet. *Accept:* synthetic and public datasets import; Y/X swap option tested.
 - [ ] **P1.T2 Validation report.** All checks listed in `research.md` §2.5, returned as structured errors/warnings per hole. *Accept:* a deliberately corrupted dataset triggers each check exactly once.
-- [ ] **P1.T3 Desurvey.** Minimum curvature (default), balanced tangential, tangent; dip sign convention selectable (Surpac negative-down default); `xyz_at(hole, depth)` with arc interpolation; straight extension past the last station. *Accept:* vertical hole exact; straight inclined hole exact; quarter-circle hole within 1 mm of the analytic arc; results match an independent implementation (e.g. `wellpathpy`) to 1e-6 m.
+- [x] **P1.T3 Desurvey.** Minimum curvature (default), balanced tangential, tangent; dip sign convention selectable (Surpac negative-down default); `xyz_at(hole, depth)` with arc interpolation; straight extension past the last station. *Accept:* vertical hole exact; straight inclined hole exact; quarter-circle hole within 1 mm of the analytic arc; results match an independent implementation (e.g. `wellpathpy`) to 1e-6 m.
 - [ ] **P1.T4 Interval merge.** Combine assay and geology intervals into one segment table per hole (split at every boundary). *Accept:* total length preserved; property test with random intervals.
 - [ ] **P1.T5 Compositing.** Downhole fixed length; by bench; within-domain (by geology code or by solid, once P2.T6 exists); best-fit option; min-length rule; optional density weighting; NaN handling. *Accept:* metal accumulation (Σ grade × length) conserved to 1e-9 per hole; hand-worked example matches; no composite crosses a domain boundary in domain mode.
 - [ ] **P1.T6 Grade capping** as a compositing/estimation pre-step. *Accept:* unit test.
@@ -235,6 +235,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 
 2026-11-19 16:01  P0.T1  12214e3  skeleton; `make check` green (re-run by orchestrator). Vite uses 5174 if 5173 is taken. CLI subcommands register via `bakumine.cli.register`.
 2026-11-19 16:08  P0.T4  77bee15  Babbitt Cu-Ni (399 holes, from MIT-licensed pygslib repo); `make check` green. Quirks: units are feet, dip is POSITIVE down, 70 holes have a sentinel survey at depth 90000, no geology table. Upstream (NRRI TR-2003/21) has no explicit licence: fine for local testing, confirm before redistributing.
+2026-11-19 16:20  P1.T3  db13542  desurvey (min curvature / balanced / tangent). Matches wellpathpy to 1e-6 on 50 holes; orchestrator's own quarter-circle check: 1e-9 m. Runs on Babbitt. API: `desurvey(collar, survey, method=, dip_convention=) -> HoleTraces`, `.xyz_at(hole_id, depths)`, `.stations()`.
 
 ### Blockers
 
