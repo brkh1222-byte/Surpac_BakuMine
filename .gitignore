@@ -21,6 +21,7 @@ web/dist/
 data/synthetic/*
 data/reference/*
 !data/**/.gitkeep
+!data/synthetic/default/
 
 # Editors / OS
 .DS_Store
