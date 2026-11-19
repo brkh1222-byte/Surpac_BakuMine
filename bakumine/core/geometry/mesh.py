@@ -227,6 +227,62 @@ class Mesh:
         np.divide(acc, length, out=out, where=length > 0)
         return _as_readonly(out)
 
+    # ---------------------------------------------------------------- measures
+
+    @cached_property
+    def area(self) -> float:
+        """Total surface area (sum of face areas)."""
+        return float(self.face_areas.sum())
+
+    @cached_property
+    def _signed_tetrahedra(self) -> tuple[np.ndarray, np.ndarray]:
+        """Six times the signed volume of the tetrahedron (local origin, face),
+        and the sum of the three corners of each face in local coordinates."""
+        tri = self.triangles - self.local_origin
+        six_volume = np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2]))
+        return six_volume, tri.sum(axis=1)
+
+    @cached_property
+    def signed_volume(self) -> float:
+        """Enclosed volume by the divergence theorem (research.md section 5.5).
+
+        ``V = (1/6) * sum over faces of  a . (b x c)``, with the corners taken
+        relative to :attr:`local_origin` so that nothing is lost to
+        cancellation at UTM-sized coordinates. Positive for outward winding,
+        negative for inward. Meaningful only for a closed, consistently wound
+        mesh (check with :meth:`validate`); nothing is checked here.
+        """
+        return float(self._signed_tetrahedra[0].sum() / 6.0)
+
+    @property
+    def volume(self) -> float:
+        """Absolute enclosed volume; see :attr:`signed_volume`."""
+        return abs(self.signed_volume)
+
+    @cached_property
+    def centroid(self) -> np.ndarray:
+        """(3,) centre of volume of the enclosed solid (uniform density).
+
+        Volume-weighted mean of the centroids of the signed tetrahedra. The
+        same conditions as :attr:`signed_volume` apply. Raises ValueError if
+        the enclosed volume is zero (for example an open or empty mesh).
+        """
+        six_volume, corner_sum = self._signed_tetrahedra
+        total = six_volume.sum()
+        if total == 0.0:
+            raise ValueError("mesh encloses zero volume; the volume centroid is undefined")
+        local = (six_volume[:, None] * corner_sum).sum(axis=0) / (4.0 * total)
+        return _as_readonly(local + self.local_origin)
+
+    @cached_property
+    def area_centroid(self) -> np.ndarray:
+        """(3,) area-weighted centroid of the surface (works for open meshes)."""
+        total = self.face_areas.sum()
+        if total == 0.0:
+            raise ValueError("mesh has zero area; the area centroid is undefined")
+        local = (self.face_areas[:, None] * self._signed_tetrahedra[1]).sum(axis=0) / (3.0 * total)
+        return _as_readonly(local + self.local_origin)
+
     # ---------------------------------------------------------------- topology
 
     @cached_property
