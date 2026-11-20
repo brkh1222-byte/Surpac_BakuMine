@@ -1,5 +1,6 @@
 import { retryFailed } from '../api/useResource'
 import type { SceneMode } from '../scene/Viewport'
+import { ClassifyPanel } from './ops/ClassifyPanel'
 import { CompositePanel } from './ops/CompositePanel'
 import { EstimatePanel } from './ops/EstimatePanel'
 import { ImportPanel } from './ops/ImportPanel'
@@ -120,6 +121,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <CompositePanel />
           <ModelPanel />
           <EstimatePanel />
+          <ClassifyPanel />
           <JobLogPanel />
         </>
       )}
