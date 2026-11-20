@@ -17,7 +17,8 @@ Steps, each usable on its own:
 2. :func:`fit_field` - exact (or smoothed) RBF interpolation in the *isotropic
    space* of an :class:`~bakumine.core.estimation.rotation.Ellipsoid`, i.e.
    after rotating into the anisotropy axes and stretching the short axes.
-   :func:`estimate_anisotropy` proposes the ellipsoid from the data.
+   :func:`estimate_intercept_anisotropy` proposes the ellipsoid from the
+   intercepts (one point per intercept, so that it does not follow the drilling).
 3. Evaluation on a regular grid aligned with the anisotropy axes, in bounded
    chunks, optionally clipped by a topography DTM and by a maximum distance
    from the nearest hole.
@@ -81,6 +82,7 @@ __all__ = [
     "ImplicitField",
     "ImplicitResult",
     "estimate_anisotropy",
+    "estimate_intercept_anisotropy",
     "extract_constraints",
     "fit_field",
     "implicit_solid",
@@ -426,8 +428,11 @@ def estimate_anisotropy(
     standard deviation along an axis is ``semi-axis / sqrt(5)``, so the ratios
     are those of the body and ``major_radius`` is set to ``sqrt(5) * sd``.
 
-    Used with the in-domain constraint points this is a serviceable default
-    for a single tabular or lens-shaped body. It under-estimates the
+    Do not feed it the sample points along drillholes: each intercept is a line
+    of points down the hole, so the largest spread can be the drilling
+    direction (:func:`estimate_intercept_anisotropy` is the estimator for
+    drillhole intercepts). For points spread through the body it is a
+    serviceable default for a single tabular or lens-shaped body. It under-estimates the
     major/minor ratio when the body is curved (the sag adds to the variance
     across it) and is meaningless for a folded or multi-limbed domain: supply
     the anisotropy in those cases.
@@ -456,6 +461,115 @@ def estimate_anisotropy(
         semi_major_ratio=max(semi_ratio, 1.0),
         minor_ratio=max(minor_ratio, 1.0),
     )
+
+
+#: an automatic major axis closer than this to the mean hole direction is suspect
+DRILLING_ALIGNMENT_DEG = 20.0
+
+
+def _axis_angle(a: np.ndarray, b: np.ndarray) -> float:
+    """Angle in degrees between two axes (lines, not arrows)."""
+    c = abs(float(a @ b)) / float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.degrees(np.arccos(min(1.0, c))))
+
+
+def _mean_axis(directions: np.ndarray) -> np.ndarray:
+    """Mean direction of a set of axes: principal eigenvector of sum(d d^T)."""
+    d = directions / np.linalg.norm(directions, axis=1)[:, None]
+    return np.linalg.eigh(d.T @ d)[1][:, 2]
+
+
+def estimate_intercept_anisotropy(
+    top, bottom, *, max_ratio: float = 20.0, min_intercepts: int = 4
+) -> tuple[Ellipsoid, dict[str, Any]]:
+    """Orientation and ratios of a body from its drillhole intercepts.
+
+    ``top`` and ``bottom`` are the (n, 3) entry and exit points of the in-domain
+    intercepts. Each intercept contributes **one point, its midpoint**. This is what
+    makes the estimate independent of the drilling direction: a principal-component
+    analysis of all the sample points along the holes (:func:`estimate_anisotropy`)
+    sees every intercept as a line of points, so with long intercepts on few holes the
+    largest spread is down the holes and the "major axis" is the drilling direction.
+    The midpoints of a tabular body lie on its mid-surface whatever the angle of the
+    holes.
+
+    * Axes: principal components of the midpoints; the direction of least spread is the
+      pole of the body (minor axis).
+    * Ratios: the standard deviations of the midpoints along the major and semi-major
+      axes, and across the body ``sqrt(sd_minor^2 + mean(t^2) / 8)`` where ``t`` is the
+      true thickness of an intercept (its length times the cosine of the angle between
+      hole and pole). The constant is exact for an ellipsoid drilled evenly over its
+      footprint (midpoint sd = half-axis / 2; mean squared thickness = 2 c^2), so the
+      ratios are those of the half-axes. ``major_radius`` is twice the major sd. Ratios
+      are limited to ``[1, max_ratio]``.
+
+    Returns the ellipsoid and a dict: ``method``, ``n_intercepts``, ``hole_angle_deg``
+    (angle between the major axis and the mean hole direction of the intercepts),
+    ``thickness`` (mean true thickness) and ``warnings`` (list of text). Warnings are
+    given when the major axis is within :data:`DRILLING_ALIGNMENT_DEG` of the mean hole
+    direction and when the body is thicker than the drilled area is wide (the plane of
+    the midpoints then says little about the body).
+
+    Raises ``ValueError`` with fewer than ``min_intercepts`` intercepts or when the
+    midpoints lie on one line (a single hole, or one fence of holes with equal
+    intercepts): the plane is not determined, supply the orientation.
+    """
+    a = np.asarray(top, dtype=np.float64).reshape(-1, 3)
+    b = np.asarray(bottom, dtype=np.float64).reshape(-1, 3)
+    if a.shape != b.shape:
+        raise ValueError("top and bottom must have the same shape")
+    ok = np.isfinite(a).all(axis=1) & np.isfinite(b).all(axis=1)
+    a, b = a[ok], b[ok]
+    if len(a) < min_intercepts:
+        raise ValueError(
+            f"need at least {min_intercepts} intercepts to estimate an anisotropy, got {len(a)}"
+        )
+    mid = 0.5 * (a + b)
+    q = mid - mid.mean(axis=0)
+    lam, vec = np.linalg.eigh(q.T @ q / len(q))  # ascending
+    sd = np.sqrt(np.maximum(lam, 0.0))
+    if not sd[2] > 0.0 or sd[1] < 0.02 * sd[2]:
+        raise ValueError(
+            "the intercept midpoints lie on one line: the plane of the body is not "
+            "determined by the drilling"
+        )
+    major, semi, pole = vec[:, 2], vec[:, 1], vec[:, 0]
+    along = b - a
+    length = np.linalg.norm(along, axis=1)
+    true_thickness = np.abs(along @ pole)
+    across = float(np.sqrt(sd[0] ** 2 + float(np.mean(true_thickness**2)) / 8.0))
+    floor = sd[2] / max_ratio
+    ellipsoid = Ellipsoid.from_axes(
+        major,
+        semi,
+        major_radius=float(2.0 * sd[2]),
+        semi_major_ratio=max(float(sd[2] / max(sd[1], floor)), 1.0),
+        minor_ratio=max(float(sd[2] / max(across, floor)), 1.0),
+    )
+    notes: list[str] = []
+    drilled = length > 0.0
+    hole_angle = float("nan")
+    if drilled.any():
+        hole_angle = _axis_angle(major, _mean_axis(along[drilled]))
+        if hole_angle < DRILLING_ALIGNMENT_DEG:
+            notes.append(
+                f"the automatic major axis is {hole_angle:.0f} degrees from the mean hole "
+                "direction: it may follow the drilling, not the body. Check it or give "
+                "the orientation."
+            )
+    if across > sd[1]:
+        notes.append(
+            "the intercepts are thicker than the drilled area is wide: the automatic "
+            "orientation is poorly determined. Give the orientation."
+        )
+    info = {
+        "method": "intercept midpoints",
+        "n_intercepts": len(mid),
+        "hole_angle_deg": hole_angle,
+        "thickness": float(true_thickness.mean()),
+        "warnings": notes,
+    }
+    return ellipsoid, info
 
 
 # --------------------------------------------------------------------------
@@ -837,10 +951,15 @@ def implicit_solid(
         categorical column and the target code (or a collection of codes).
     traces : desurveyed holes; default ``source.desurvey()``.
     anisotropy : an ``Ellipsoid`` (orientation and ratios; the radius is not
-        used), ``"auto"`` (default: :func:`estimate_anisotropy` of the
-        in-domain points) or ``None`` (isotropic). The most important
+        used), ``"auto"`` (default: :func:`estimate_intercept_anisotropy`,
+        one point per in-domain intercept, so the estimate does not follow
+        the drilling direction) or ``None`` (isotropic). The most important
         parameter for a thin or elongated body: supply it when the
-        orientation is known.
+        orientation is known. ``"auto"`` warns, and lists the warnings in
+        ``diagnostics["anisotropy_warnings"]``, when its major axis is within
+        20 degrees of the mean hole direction or when the intercepts are too
+        few or too long to fix the plane; with fewer than four intercepts or
+        midpoints on one line the solid is built isotropic.
     resolution : grid cell size across the minor axis, in metres. Default: an
         eighth of the median in-domain intercept length. Coarsened
         automatically (with a warning) if the grid would exceed ``max_nodes``.
@@ -895,15 +1014,26 @@ def implicit_solid(
     t1 = time.perf_counter()
 
     # anisotropy ---------------------------------------------------------
+    anisotropy_info: dict[str, Any] = {"method": "given", "warnings": []}
     if isinstance(anisotropy, str):
         if anisotropy != "auto":
             raise ValueError("anisotropy must be an Ellipsoid, 'auto' or None")
         source_name = "auto"
-        if int(domain.sum()) >= 4:
-            ellipsoid = estimate_anisotropy(constraints.xyz[domain])
-        else:
+        runs = constraints.intercepts.query("state > 0")
+        run_ids = runs["hole_id"].to_numpy(dtype=object)
+        top, _ = traces.xyz_at(run_ids, runs["depth_from"].to_numpy())
+        bottom, _ = traces.xyz_at(run_ids, runs["depth_to"].to_numpy())
+        try:
+            ellipsoid, anisotropy_info = estimate_intercept_anisotropy(top, bottom)
+        except ValueError as exc:
             ellipsoid = None
-            source_name = "none (too few in-domain points)"
+            source_name = "none (auto failed)"
+            anisotropy_info = {
+                "method": "none",
+                "warnings": [f"no automatic anisotropy: {exc}. The solid is isotropic."],
+            }
+        for note in anisotropy_info["warnings"]:
+            warnings.warn(note, stacklevel=2)
     elif anisotropy is None:
         ellipsoid, source_name = None, "none"
     elif isinstance(anisotropy, Ellipsoid):
@@ -1043,6 +1173,9 @@ def implicit_solid(
         "neighbors": fitted.neighbors,
         "anisotropy_source": source_name,
         "anisotropy": None if ellipsoid is None else ellipsoid.to_dict(),
+        "anisotropy_method": anisotropy_info["method"],
+        "anisotropy_hole_angle_deg": anisotropy_info.get("hole_angle_deg"),
+        "anisotropy_warnings": list(anisotropy_info["warnings"]),
         "contact_residual_max": contact_max,
         "contact_residual_rms": contact_rms,
         "constraint_residual_max": float(np.abs(all_residual).max()),

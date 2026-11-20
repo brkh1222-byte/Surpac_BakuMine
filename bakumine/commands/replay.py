@@ -11,9 +11,9 @@ thing and runs them into a new project:
     code         bakumine blockmodel code --steps WORK/....json [--subblock] [--merge]
     estimate     bakumine estimate --plan WORK/....json
     report       bakumine blockmodel report --out WORK/....csv
-    surface_from_points / import_mesh
-                 bakumine surface from-points | surface import --out WORK/....obj
-                 + project add (:data:`bakumine.commands.geometry.REPLAY`)
+    surface_from_points / import_mesh / implicit_solid
+                 bakumine surface from-points | surface import | solid implicit --out
+                 WORK/....obj + project add (:data:`bakumine.commands.geometry.REPLAY`)
 
 Objects a job reads that no earlier job made (solids, DTMs added to the project by hand)
 are copied from the source project with ``bakumine project add``; solids and DTMs are
@@ -280,9 +280,10 @@ _MAPPERS["classify"] = _classify  # bakumine classify --params WORK/....json
 
 
 def _more_mappers() -> None:
-    from bakumine.commands import geometry
+    from bakumine.commands import geometry, solid
 
     _MAPPERS.update(geometry.REPLAY)  # surface_from_points, import_mesh
+    _MAPPERS.update(solid.REPLAY)  # implicit_solid
 
 
 _more_mappers()

@@ -59,10 +59,11 @@ def _register_builtin() -> None:
     for name, (help_text, configure) in blockmodel.COMMANDS.items():
         register(name, help_text, configure)
 
-    from bakumine.commands import geometry
+    from bakumine.commands import geometry, solid
 
-    for name, (help_text, configure) in geometry.COMMANDS.items():
-        register(name, help_text, configure)
+    for module in (geometry, solid):
+        for name, (help_text, configure) in module.COMMANDS.items():
+            register(name, help_text, configure)
 
     from bakumine.commands import estimate
 

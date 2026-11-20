@@ -46,6 +46,7 @@ const OPERATION_LABELS: Record<string, string> = {
   composite: 'Composite',
   surface_from_points: 'Surface from points',
   import_mesh: 'Import surface / solid',
+  implicit_solid: 'Implicit solid',
   create_model: 'Create model',
   code: 'Code model',
   estimate: 'Estimate',

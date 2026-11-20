@@ -3,6 +3,7 @@ import type { SceneMode } from '../scene/Viewport'
 import { ClassifyPanel } from './ops/ClassifyPanel'
 import { CompositePanel } from './ops/CompositePanel'
 import { EstimatePanel } from './ops/EstimatePanel'
+import { ImplicitSolidPanel } from './ops/ImplicitSolidPanel'
 import { ImportPanel } from './ops/ImportPanel'
 import { InterceptsPanel } from './ops/InterceptsPanel'
 import { SurfacePanel } from './ops/SurfacePanel'
@@ -121,6 +122,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <InterceptsPanel />
           <CompositePanel />
           <SurfacePanel />
+          <ImplicitSolidPanel />
           <ModelPanel />
           <EstimatePanel />
           <ClassifyPanel />

@@ -1,6 +1,7 @@
 /**
- * Surfaces and solids through the dialogs: a topography from the drillhole collars and a
- * solid imported from a file. Each must appear in the object tree.
+ * Surfaces and solids through the dialogs: a topography from the drillhole collars, an
+ * implicit solid from the logged geology (rock = ORE) clipped by it, and a solid imported
+ * from a file. Each must appear in the object tree.
  *
  * Runs on the workflow project (own API, see playwright.config.ts) after workflow.spec.ts
  * (file order), whose drillhole database it uses. When the project has none - the spec run
@@ -83,12 +84,13 @@ async function openPanel(page: Page, id: string) {
   await expect(tid(page, `${id}-toggle`)).toHaveAttribute('aria-expanded', 'true')
 }
 
-test('topography from collars and a mesh import through the panels', async ({ page, request }) => {
+test('topography from collars, implicit solid from the geology and a mesh import through the panels', async ({ page, request }) => {
   const db = await drillholes(request)
   const before = await objects(request)
   const databases = before.filter((o) => o.kind === 'database')
   const stamp = Date.now().toString(36)
   const topoName = `Collar topo ${stamp}`
+  const solidName = `Implicit ORE ${stamp}`
   const importName = `Wireframe ${stamp}`
 
   await page.goto('/?theme=dark&blocks=off')
@@ -110,7 +112,38 @@ test('topography from collars and a mesh import through the panels', async ({ pa
   await expect(built).toContainText('boundary points at the elevation of the nearest data point')
   await expect(tid(page, 'tree-surfaces')).toContainText(topoName)
 
-  expect((await objects(request)).some((o) => o.kind === 'dtm' && o.name === topoName)).toBeTruthy()
+  const topo = (await objects(request)).find((o) => o.kind === 'dtm' && o.name === topoName)
+  expect(topo).toBeTruthy()
+
+  // ---- implicit solid ------------------------------------------------------------------
+  await openPanel(page, 'implicit')
+  if (databases.length > 1) await tid(page, 'implicit-db').selectOption(db)
+  await tid(page, 'implicit-table').selectOption('geology')
+  await tid(page, 'implicit-column').selectOption('rock')
+  await tid(page, 'implicit-codes').fill('ORE')
+  // the dialog asks for the orientation: nothing is assumed
+  await expect(tid(page, 'implicit-mode')).toHaveValue('')
+  await tid(page, 'implicit-run').click()
+  await expect(tid(page, 'implicit-error')).toContainText('orientation')
+  await tid(page, 'implicit-mode').selectOption('plane')
+  await tid(page, 'implicit-dip').fill('56')
+  await tid(page, 'implicit-dip-azimuth').fill('310')
+  await tid(page, 'implicit-pitch').fill('20')
+  await expect(tid(page, 'implicit-plane-hint')).toContainText('minor 130/34')
+  await tid(page, 'implicit-ratios').fill('16:9:1')
+  await tid(page, 'implicit-extrapolation').fill('60')
+  await tid(page, 'implicit-topography').selectOption(topo!.id)
+  await tid(page, 'implicit-name').fill(solidName)
+  await tid(page, 'implicit-run').click()
+  const result = tid(page, 'implicit-result')
+  await expect(result).toHaveAttribute('data-valid', 'true', { timeout: 120_000 })
+  await expect(tid(page, 'implicit-volume')).toContainText('valid solid')
+  await expect(tid(page, 'implicit-anisotropy')).toContainText('Anisotropy (user): plane dips 56 towards 310')
+  const volume = Number(((await tid(page, 'implicit-volume').textContent()) ?? '').match(/volume ([\d,]+) m³/)?.[1].replace(/,/g, ''))
+  const truth = JSON.parse(readFileSync(path.join(SYNTH, 'truth.json'), 'utf8')) as { solid: { volume_m3: number } }
+  console.log(`implicit ORE solid ${volume} m3 (true lens ${Math.round(truth.solid.volume_m3)} m3)`)
+  expect(Math.abs(volume / truth.solid.volume_m3 - 1)).toBeLessThan(0.15)
+  await expect(tid(page, 'tree-solids')).toContainText(solidName)
 
   // ---- import a solid file -------------------------------------------------------------
   await tid(page, 'mesh-import-file').setInputFiles(path.join(SYNTH, 'ore_solid.obj'))
@@ -122,11 +155,11 @@ test('topography from collars and a mesh import through the panels', async ({ pa
 
   // both new objects are drawn: the scene loaded their meshes
   await expect(tid(page, 'tree-surfaces').getByLabel(`Show ${topoName}`)).toBeChecked()
-  await expect(tid(page, 'tree-solids').getByLabel(`Show ${importName}`)).toBeChecked()
+  await expect(tid(page, 'tree-solids').getByLabel(`Show ${solidName}`)).toBeChecked()
   await page.locator('[data-testid="load-status"][data-status="ready"]').waitFor({ timeout: 60_000 })
 
   // ---- job log -------------------------------------------------------------------------
   await openPanel(page, 'joblog')
   await expect(tid(page, 'joblog-job-0')).toHaveAttribute('data-operation', 'import_mesh')
-  await expect(tid(page, 'joblog-job-1')).toHaveAttribute('data-operation', 'surface_from_points')
+  await expect(tid(page, 'joblog-job-1')).toHaveAttribute('data-operation', 'implicit_solid')
 })
