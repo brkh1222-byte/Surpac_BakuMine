@@ -184,7 +184,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [ ] ~~CUT: no inputs~~ **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
 - [x] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
 - [ ] **P7.T5 Review.** `/code-review high` and `/security-review` on the full diff; fix confirmed findings. *Accept:* no open important findings.
-- [ ] **P7.T6 User guide + one-command start.** `README.md` with install, `make dev`, and a walkthrough of the synthetic project with screenshots. *Accept:* a fresh clone reaches the 3D model by following the README only.
+- [x] **P7.T6 User guide + one-command start.** `README.md` with install, `make dev`, and a walkthrough of the synthetic project with screenshots. *Accept:* a fresh clone reaches the 3D model by following the README only.
 - [ ] **P7.T7 Honest status report.** `STATUS.md`: what works, what is verified against which reference, what is provisional, what is not done. *Accept:* every unticked box and every **[verify]** item in `research.md` is listed.
 
 ---
@@ -273,6 +273,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 17:20  P7.T5 (part 1)  51ecbab..1c5ae17  Core review: 10 confirmed bugs fixed with failing-first tests (project path traversal + concurrent registry loss, block CSV missing-token clash, assay column silently read as text, DXF 2D polyline z, int64 overflow, round() extremes, .str header). Estimation core: read only, no bug found. Gate A code-review part done.
 2026-11-20 17:20  P5.T7  de539db a4afe36  Section digitising: draw/edit/snap strings on sections, save (.str), build solid. 5 synthetic sections -> valid watertight solid, volume -0.76 %. Orchestrator: after merging all, make check 1348 + vitest 136 green, make e2e 56 passed.
 2026-11-20 17:50  P6.T7  acbf049  Job log (jobs.jsonl, append+fsync), undo via column/folder snapshots (last 5, checksum-guarded), `bakumine project replay|export-log|export-geometry`, Job log panel. Replay of synthetic chain into a fresh project: bit-identical model; undo after code and estimate bit-identical. Orchestrator: make check 1356 + vitest 140 green. Limits: constraint-JSON report filters and non-default import options not replayable.
+2026-11-20 18:10  P7.T6  b73947d  README (install, make dev, browser + CLI walkthroughs, project folders, Babbitt, formats, testing), 5 screenshots via `make screenshots`, Makefile API_PORT. Fresh clone verified by agent (make install, make dev, API + viewer, gate script). Orchestrator: make check 1356 + vitest 140 green; looked at 01-scene-3d.png.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
