@@ -580,6 +580,19 @@ def import_table(
             continue
         parsed = _parse_numeric(cells, text_tokens, sentinels, options.below_detection)
         if parsed.unparseable.any() and target not in options.numeric_columns:
+            # A mostly numeric column with a few odd cells (">10", "IS") becomes text, and
+            # compositing / estimation then skip it: say so instead of dropping it silently.
+            n_bad = int(parsed.unparseable.sum())
+            n_numbers = int(np.isfinite(parsed.values).sum()) + parsed.below_detection
+            if n_numbers > n_bad:
+                note(
+                    target,
+                    "numeric_column_read_as_text",
+                    n_bad,
+                    examples=sorted(set(cells[parsed.unparseable].str.strip()))[:5],
+                    hint="list the column in numeric_columns to read it as numbers "
+                    "(those cells become NaN)",
+                )
             out[target] = _parse_text(cells, text_tokens)
             continue
         note(

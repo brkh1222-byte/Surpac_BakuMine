@@ -397,6 +397,19 @@ def test_missing_tokens_are_user_configurable():
     ]  # fmt: skip
 
 
+def test_mostly_numeric_column_read_as_text_is_noted():
+    """P7.T5 regression: one odd assay cell used to turn the column to text silently."""
+    table, notes = import_table(_assay(["1.5", ">10", "2", "0.3"]), "interval", ASSAY_MAP)
+    assert table["au"].dtype == "str"
+    found = [n for n in notes if n["kind"] == "numeric_column_read_as_text"]
+    assert len(found) == 1
+    assert found[0]["column"] == "au" and found[0]["count"] == 1
+    assert found[0]["examples"] == [">10"]
+    # a genuine text column is not flagged
+    _, notes = import_table(_assay(["1"] * 3, ["GRANITE", "ORE", "12"]), "interval", ASSAY_MAP)
+    assert not [n for n in notes if n["kind"] == "numeric_column_read_as_text"]
+
+
 def test_numeric_sentinels_do_not_touch_coordinates_or_angles():
     collar = pd.DataFrame([["A", "-99", "-999", "-9999", "NA"]],
                           columns=["HOLE", "EAST", "NORTH", "RL", "EOH"])  # fmt: skip
