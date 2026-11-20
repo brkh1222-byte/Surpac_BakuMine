@@ -83,7 +83,7 @@ def _register_builtin() -> None:
     from bakumine.commands import classify
 
     for name, (help_text, configure) in classify.COMMANDS.items():
-
+        register(name, help_text, configure)
 
     from bakumine.commands import extract
 
