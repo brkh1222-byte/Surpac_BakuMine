@@ -258,6 +258,15 @@ _MAPPERS = {
 }
 
 
+def _intercepts(e: dict[str, Any]) -> list[dict[str, Any]]:
+    from bakumine.commands.intercepts import replay
+
+    return replay(e)
+
+
+_MAPPERS["intercepts"] = _intercepts  # bakumine intercepts --params WORK/....json
+
+
 def replay_steps(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """CLI steps that redo the finished, not undone jobs of a log, in order."""
     undone = joblog.undone_ids(entries)

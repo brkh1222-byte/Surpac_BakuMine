@@ -5,6 +5,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from bakumine import __version__
 from bakumine.api.guard import RequestGuard
+from bakumine.api.ops_intercepts import router as intercepts_router
 from bakumine.api.routes_digitise import router as digitise_router
 from bakumine.api.routes_ops import router as ops_router
 from bakumine.api.routes_report import router as report_router
@@ -20,6 +21,7 @@ app.include_router(scene_router)
 app.include_router(report_router)
 app.include_router(digitise_router)
 app.include_router(ops_router)
+app.include_router(intercepts_router)
 
 
 @app.get("/api/health")
