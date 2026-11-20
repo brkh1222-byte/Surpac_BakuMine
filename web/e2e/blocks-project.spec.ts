@@ -4,9 +4,10 @@
  * AIR / WASTE / ORE and the grade `au` exists in the ORE blocks alone, strictly inside the
  * model; below the topography there are more blocks than are sent in full (lod = shell).
  *
- * Coloured by grade, nothing at all used to be drawn of this model: only the outer shell
- * of the selection was sent, no shell block has a grade, and blocks without a value are
- * hidden.
+ * Two things used to go wrong with exactly this model:
+ *  - it opened as a solid box coloured by density (no display hints in project mode);
+ *  - coloured by grade, nothing at all was drawn: only the outer shell of the selection
+ *    was sent, no shell block has a grade, and blocks without a value are hidden.
  */
 import { expect, test, type Page } from '@playwright/test'
 import { bm, settle } from './helpers'
@@ -34,6 +35,7 @@ async function serverMeta(page: Page, query: string): Promise<Meta> {
   return (JSON.parse(body.subarray(12, 12 + body.readUInt32LE(8)).toString('utf8')) as { meta: Meta }).meta
 }
 
+const where = (expression: string) => `where=${encodeURIComponent(JSON.stringify({ type: 'attribute', expression }))}`
 const summary = (page: Page) => page.getByTestId(`block-summary-${ID}`)
 
 async function counts(page: Page) {
@@ -94,6 +96,65 @@ async function blockPixels(page: Page, limit = 400): Promise<{ inView: number; c
     [ID, limit] as const,
   )
 }
+
+test('a project model opens on its estimated grade, without the air, with no clicks', async ({ page }) => {
+  const requests: string[] = []
+  page.on('request', (r) => {
+    const url = new URL(r.url())
+    if (url.pathname === HREF) requests.push(url.search)
+  })
+  await open(page)
+
+  // Defaults from the model itself: coloured by the estimated grade, AIR left out.
+  await expect(page.getByTestId(`colour-by-${ID}`)).toHaveValue('au')
+  await expect(page.getByTestId(`missing-${ID}`)).toHaveValue('hidden')
+  const legend = page.getByTestId('legend').filter({ hasText: 'Gate model' })
+  await expect(legend.getByTestId('legend-title')).toContainText('au')
+  const filter = await bm(page, (h, id) => h.blockStore.getState().models[id].filter, ID)
+  expect(filter.conditions).toHaveLength(1)
+  expect(filter.conditions[0]).toMatchObject({ kind: 'category', attribute: 'rock', enabled: true })
+  expect([...(filter.conditions[0] as { values: string[] }).values].sort()).toEqual(['ORE', 'WASTE'])
+  await expect(page.getByTestId('filter-a-cat-AIR')).not.toBeChecked()
+  await expect(page.getByTestId('filter-a-cat-ORE')).toBeChecked()
+
+  // The solid the model was coded with does not hide it: it opens unticked.
+  await expect(page.getByRole('checkbox', { name: 'Show Gate model', exact: true })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Show Ore solid', exact: true })).not.toBeChecked()
+
+  // Counts: selected = everything but the air (more than is sent in full); with a grade =
+  // the ORE blocks; and every one of those is drawn, the interior of the model.
+  const ore = await serverMeta(page, `lod=full&${where('rock == "ORE"')}`)
+  const ground = await serverMeta(page, `lod=full&${where('rock != "AIR"')}`)
+  const c = await counts(page)
+  expect(ground.n_selected).toBeGreaterThan(AUTO_SHELL)
+  expect(c.total).toBe(ground.n_total)
+  expect(c.selected).toBe(ground.n_selected)
+  expect(c.valued).toBe(ore.n_selected)
+  expect(c.shown).toBe(ore.n_selected)
+  expect(c.shown).toBeGreaterThan(10_000)
+  await expect(summary(page)).toContainText('with au')
+  await expect(page.getByTestId(`filter-status-${ID}`)).toContainText('with au')
+  // The request asked for the blocks that have a grade.
+  expect(requests.length).toBeGreaterThan(0)
+  expect(new URLSearchParams(requests[requests.length - 1]).get('present')).toBe('au')
+
+  const drawn = await bm(page, (h, id) => h.blocks()[id], ID)
+  expect(drawn.count).toBe(ore.n_selected)
+  expect(drawn.attribute).toBe('au')
+  // ... and they are on screen, in the colours of the grade ramp.
+  const pixels = await blockPixels(page)
+  expect(pixels.inView).toBeGreaterThan(100)
+  expect(pixels.coloured).toBeGreaterThan(0.6 * pixels.inView)
+  expect(pixels.colours).toBeGreaterThan(10)
+  await page.screenshot({ path: `${OUT}/project-opens-on-grade.png` })
+
+  // (First click of the test.) Ticked, the solid is see-through: the blocks stay in view.
+  await page.getByRole('checkbox', { name: 'Show Ore solid', exact: true }).check()
+  await expect(page.getByTestId('mode-ore-solid')).toHaveValue('transparent')
+  const through = await blockPixels(page)
+  expect(through.coloured).toBeGreaterThan(0.6 * through.inView)
+  await page.screenshot({ path: `${OUT}/project-opens-on-grade-with-solid.png` })
+})
 
 test('the whole model coloured by grade draws the blocks that have one', async ({ page }) => {
   await open(page)

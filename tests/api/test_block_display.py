@@ -1,7 +1,9 @@
 """What the viewer draws of a block model: blocks without a value of the colour attribute
-(``present``)."""
+(``present``) and the defaults a project model opens with (``display`` hints)."""
 
 from __future__ import annotations
+
+import json
 
 import numpy as np
 import pytest
@@ -13,6 +15,7 @@ from bakumine.api.blocks import (
     BlockData,
     BlockQueryError,
     block_payload,
+    default_display,
     exposed_blocks,
     select_blocks,
 )
@@ -206,7 +209,7 @@ def test_payload_and_endpoint_take_present(tmp_path):
         app.dependency_overrides.clear()
 
 
-# ---------------------------------------------------------------------- project
+# ---------------------------------------------------------------------- first view
 
 
 def _project_client(tmp_path, model: BlockModel) -> tuple[TestClient, Project]:
@@ -227,3 +230,78 @@ def _project_client(tmp_path, model: BlockModel) -> tuple[TestClient, Project]:
     app.dependency_overrides[get_scene_source] = lambda: source
     payload_cache.clear()
     return TestClient(app), project
+
+
+def test_project_model_opens_on_the_estimated_grade_without_air(tmp_path):
+    model = ore_model(max_depth=1)
+    client, _ = _project_client(tmp_path, model)
+    try:
+        manifest = client.get("/api/v1/scene").json()
+        entry = next(o for o in manifest["objects"] if o["kind"] == "blocks")
+        assert entry["display"] == {
+            "color_by": "au",
+            "category_filter": {"attribute": "rock", "values": ["WASTE", "ORE"]},
+        }
+        assert client.get("/api/v1/scene/objects/model/blocks/info").json()["display"] == (
+            entry["display"]
+        )
+        # The solids of the project are the model's constraint geometry: the viewer opens
+        # those unticked and see-through (web/src/scene/ProjectScene.tsx).
+        assert entry["constraint_geometry"]["solids"] == [{"id": "ore-solid", "name": "Ore solid"}]
+
+        # What the viewer then asks for is on screen: the ORE blocks, each with a grade.
+        hint = entry["display"]["category_filter"]
+        where = " or ".join(f'{hint["attribute"]} == {json.dumps(v)}' for v in hint["values"])
+        response = client.get(
+            "/api/v1/scene/objects/model/blocks",
+            params={
+                "attributes": "au",
+                "where": json.dumps({"type": "attribute", "expression": where}),
+                "present": "au",
+            },
+        )
+        header, arrays = unpack_arrays(response.content)
+        ore = model.get("rock", decode=True) == "ORE"
+        np.testing.assert_array_equal(arrays["row"], np.flatnonzero(ore))
+        air = model.get("rock", decode=True) == "AIR"
+        assert header["meta"]["n_selected"] == (~air).sum() > header["meta"]["n_visible"]
+        assert header["meta"]["n_visible"] == ore.sum()
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_default_display_rules():
+    model = ore_model()
+    assert default_display(model)["color_by"] == "au"
+
+    # No diagnostics: the float attribute with the most missing values that is not a
+    # density (nor a diagnostic of another attribute, however empty).
+    plain = BlockModel(model.definition)
+    plain.add_attribute("density", "float")
+    plain.add_attribute("cu", "float")
+    plain.add_attribute("ag", "float")
+    plain.add_attribute("ag_kv", "float")
+    plain.add_attribute("empty", "float")
+    plain.add_attribute("lith", "category", categories=["air", "OX", "SULPH"])
+    k = plain.ijk()[:, 2]
+    plain.set("cu", 1.0, k < 6)
+    plain.set("ag", 5.0, k < 3)
+    plain.set("ag_kv", 0.2, k < 1)
+    assert default_display(plain) == {
+        "color_by": "ag",
+        "category_filter": {"attribute": "lith", "values": ["OX", "SULPH"]},
+    }
+
+    # Nothing grade-like: a category attribute; and no air, no filter.
+    coded = BlockModel(model.definition)
+    coded.add_attribute("density", "float", background=2.7)
+    coded.add_attribute("zone", "category", categories=["N", "S"])
+    assert default_display(coded) == {"color_by": "zone"}
+    only = BlockModel(model.definition)
+    only.add_attribute("density", "float", background=2.7)
+    assert default_display(only) == {"color_by": "density"}
+    assert default_display(BlockModel(model.definition)) == {}
+    # A category attribute that is all air is not filtered down to nothing.
+    sky = BlockModel(model.definition)
+    sky.add_attribute("rock", "category", categories=["AIR"])
+    assert "category_filter" not in default_display(sky)

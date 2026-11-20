@@ -371,6 +371,66 @@ def block_object_entry(data: BlockData) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------- first view
+
+#: Suffixes of the attributes an estimation run writes next to its estimate
+#: (``bakumine.core.estimation.block_estimation.OutputNames`` defaults).
+DIAGNOSTIC_SUFFIXES = ("_pass", "_ns", "_dist", "_ndist", "_kv", "_slope", "_ke")
+#: Float attributes that are not a grade: never the default colour while another exists.
+_NOT_A_GRADE = {"density", "dens", "sg", "bd", "bulk_density", "specific_gravity", "tonnage",
+                "tonnes", "volume"}  # fmt: skip
+#: Category values that mean "nothing here": left out of the first view.
+_AIR_LIKE = {"air", "sky", "atmosphere", "void", "above topo", "above_topo", "above topography"}
+
+
+def default_display(model: BlockModel) -> dict[str, Any]:
+    """How a model about which nothing else is known should open (``BlockData.display``).
+
+    ``color_by``: an estimated grade - a float attribute with diagnostics next to it
+    (``au`` with ``au_pass``, ...; of several, the first). Failing that, the float
+    attribute with the most missing values that is neither a density nor a diagnostic and
+    has a value somewhere (a grade exists in the ore only; a ready-made attribute is
+    filled everywhere). Failing that a category attribute, then anything.
+
+    ``category_filter``: when a category attribute has an air-like value ("AIR"), every
+    other category of it. Nothing else is filtered: a grade that most blocks lack needs
+    no filter, because blocks without a value of the colour attribute are not drawn
+    (``present`` in the module docstring).
+    """
+    names = model.attribute_names
+    kinds = {name: model.attribute(name).kind for name in names}
+
+    def diagnostic(name: str) -> bool:
+        return any(
+            name.endswith(suffix) and kinds.get(name[: -len(suffix)]) == "float"
+            for suffix in DIAGNOSTIC_SUFFIXES
+        )
+
+    floats = [n for n in names if kinds[n] == "float" and not diagnostic(n)]
+    valued = {n: model.n_blocks - int(model.is_missing(n).sum()) for n in floats}
+    floats = [n for n in floats if valued[n] > 0]
+    estimated = [n for n in floats if any(n + suffix in kinds for suffix in DIAGNOSTIC_SUFFIXES)]
+    grades = [n for n in floats if n.lower() not in _NOT_A_GRADE]
+    categories = [n for n in names if kinds[n] == "category"]
+    display: dict[str, Any] = {}
+    if estimated:
+        display["color_by"] = estimated[0]
+    elif grades:
+        display["color_by"] = min(grades, key=lambda n: valued[n])  # first of equals
+    elif categories:
+        display["color_by"] = categories[0]
+    elif names:
+        display["color_by"] = floats[0] if floats else names[0]
+    for name in categories:
+        values = [str(c) for c in model.attribute(name).categories]
+        kept = [v for v in values if v.strip().lower() not in _AIR_LIKE]
+        # (The filter travels in the request URL: not for a dictionary of hundreds.)
+        if kept and len(kept) < len(values) and len(kept) <= 64:
+            display["category_filter"] = {"attribute": name, "values": kept}
+            break
+    return display
+
+
 # ---------------------------------------------------------------------- selection
 
 

@@ -3,7 +3,11 @@
 Database objects become drillhole objects, ``dtm`` objects surfaces, ``solid`` objects
 solids and ``model`` objects block models. Composites, strings and constraints are in the
 project but not drawn. Block models resolve the project's solids and DTMs by object id in
-constraints. Data are loaded on first use and kept until the folder changes.
+constraints, and open the way :func:`bakumine.api.blocks.default_display` reads them:
+coloured by the estimated grade, without the air. The project's solids are all listed as
+the model's constraint geometry, so the viewer opens them unticked and see-through: an
+opaque ore solid would hide the blocks inside it. Data are loaded on first use and kept
+until the folder changes.
 """
 
 from __future__ import annotations
@@ -107,7 +111,7 @@ class ProjectSceneSource:
         path = self._path(object_id, "model")
 
         def build() -> BlockData:
-            from bakumine.api.blocks import BlockData
+            from bakumine.api.blocks import BlockData, default_display
             from bakumine.core.blockmodel.constraints import DictResolver
             from bakumine.core.blockmodel.storage import load_model
             from bakumine.core.geometry.dtm import DTM
@@ -115,14 +119,16 @@ class ProjectSceneSource:
             project = self._project()
             solids = {o.id: (o.name, self.mesh(o.id)) for o in project.list("solid")}
             dtms = {o.id: (o.name, self.mesh(o.id)) for o in project.list("dtm")}
+            model = load_model(path)
             return BlockData(
-                load_model(path),
+                model,
                 DictResolver(
                     dtms={k: DTM(m) for k, (_, m) in dtms.items()},
                     solids={k: m for k, (_, m) in solids.items()},
                 ),
                 solids={k: n for k, (n, _) in solids.items()},
                 surfaces={k: n for k, (n, _) in dtms.items()},
+                display=default_display(model),
             )
 
         return self._cached("blocks", object_id, build)  # type: ignore[no-any-return]
