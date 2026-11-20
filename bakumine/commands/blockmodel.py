@@ -1,4 +1,4 @@
-"""Block model subcommands: ``bakumine blockmodel info | export-csv | import-csv``.
+"""Block model subcommands: ``bakumine blockmodel info | export-csv | import-csv | report``.
 
 A MODEL is a folder written by :func:`bakumine.core.blockmodel.storage.save_model`
 (``model.json`` + ``blocks.parquet``). Heavy imports happen inside the handlers so
@@ -13,10 +13,11 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-HELP = "Block model: info, CSV export / import"
+HELP = "Block model: info, CSV export / import, volume-tonnes-grade report"
 HELP_INFO = "Show the definition and attributes of a saved block model (reads the header only)"
 HELP_EXPORT = "Export blocks to a block model CSV (centroid, size, attributes per block)"
 HELP_IMPORT = "Import a block model CSV as a new model, or into an existing one"
+HELP_REPORT = "Report volume, tonnes, grade and metal, grouped by attribute, bench and cut-off"
 
 Handler = Callable[[argparse.Namespace], int]
 
@@ -205,12 +206,86 @@ def run_import(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------- report
+
+
+def configure_report(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("model", help="block model folder")
+    parser.add_argument("--where", metavar="EXPR",
+                        help="only blocks for which EXPR is true, e.g. 'z < 1000'")  # fmt: skip
+    parser.add_argument("--group-by", "-g", action="append", metavar="NAMES",
+                        help="category / integer attributes to group by")  # fmt: skip
+    parser.add_argument("--cutoffs", metavar="VALUES",
+                        help="grade cut-offs, comma-separated (grade >= cut-off)")  # fmt: skip
+    parser.add_argument("--cutoff-attribute", metavar="NAME",
+                        help="grade the cut-offs apply to (default: first --grade)")  # fmt: skip
+    parser.add_argument("--grade", action="append", metavar="NAME[:UNIT]",
+                        help="grade attribute(s), comma-separated; UNIT g/t, ppm or %% sets "
+                             "the metal columns (default: the attribute's unit)")  # fmt: skip
+    parser.add_argument("--density", metavar="NAME|VALUE",
+                        help="density attribute, or a constant in t/m3")  # fmt: skip
+    parser.add_argument("--partial", metavar="NAME",
+                        help="attribute with the fraction (0..1) of each block")  # fmt: skip
+    parser.add_argument("--bench-height", type=float, metavar="H",
+                        help="group by benches of this height (by block centroid)")  # fmt: skip
+    parser.add_argument("--bench-reference", type=float, default=0.0, metavar="Z",
+                        help="elevation of a bench floor (default 0)")  # fmt: skip
+    parser.add_argument("--out", metavar="CSV", help="also write the report to this CSV file")
+    parser.set_defaults(func=_guarded(run_report))
+
+
+def run_report(args: argparse.Namespace) -> int:
+    from bakumine.core.blockmodel.storage import load_model
+    from bakumine.core.report import format_table, report, to_csv
+
+    grades: list[str] = []
+    units: dict[str, str] = {}
+    for item in _names(args.grade) or []:
+        name, sep, unit = item.partition(":")
+        grades.append(name)
+        if sep:
+            units[name] = unit
+    density: str | float | None = args.density
+    if density is not None:
+        try:
+            density = float(density)
+        except ValueError:
+            pass
+    cutoffs = None
+    if args.cutoffs:
+        try:
+            cutoffs = [float(v) for v in args.cutoffs.split(",") if v.strip()]
+        except ValueError:
+            raise CommandError(f"--cutoffs expects numbers, got {args.cutoffs!r}") from None
+    model = load_model(args.model)
+    table = report(
+        model,
+        constraint=_where(args.where),
+        group_by=_names(args.group_by) or (),
+        cutoffs=cutoffs,
+        cutoff_attribute=args.cutoff_attribute,
+        grade_attributes=grades,
+        density=density,
+        partial=args.partial,
+        bench_height=args.bench_height,
+        bench_reference=args.bench_reference,
+        units=units,
+    )
+    print(format_table(table))
+    for note in table.attrs["notes"]:
+        print(f"note: {note}")
+    if args.out:
+        _wrote(to_csv(table, args.out), f"{len(table)} rows")
+    return 0
+
+
 # ------------------------------------------------------------------- registry
 
 SUBCOMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None]]] = {
     "info": (HELP_INFO, configure_info),
     "export-csv": (HELP_EXPORT, configure_export),
     "import-csv": (HELP_IMPORT, configure_import),
+    "report": (HELP_REPORT, configure_report),
 }
 
 

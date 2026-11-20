@@ -145,3 +145,59 @@ def test_errors_are_one_line_and_exit_code_2(saved, capsys, tmp_path):
     assert code == 2 and "not a block model definition" in err
     code, out, err = run(capsys, "blockmodel")
     assert code == 0 and "export-csv" in out
+
+
+# --------------------------------------------------------------------- report
+
+
+def test_report_reproduces_the_truth_totals(saved, capsys, tmp_path):
+    path, model = saved
+    out_csv = tmp_path / "ore.csv"
+    code, out, err = run(
+        capsys, "blockmodel", "report", path, "--density", 2.85, "--partial", "ore_fraction",
+        "--grade", "au_ore", "--out", out_csv,
+    )  # fmt: skip
+    assert code == 0, err
+    lines = out.splitlines()
+    assert lines[0].split() == ["blocks", "volume", "tonnes", "volume_without_density",
+                                "au_ore_grade", "au_ore_metal_g", "au_ore_metal_oz",
+                                "au_ore_unestimated_tonnes"]  # fmt: skip
+    assert lines[2].split()[:4] == ["170,352", "2,055,344", "5,857,730", "0"]
+    assert "note: constant density 2.85 t/m3" in out and f"wrote {out_csv} (1 rows)" in out
+    table = pd.read_csv(out_csv)
+    truth = json.loads((SYNTH / "truth.json").read_text())["totals"]
+    # tolerances and the reasons for them: tests/report/test_report.py
+    assert table["tonnes"][0] == pytest.approx(truth["ore_tonnes"], rel=5e-5)
+    assert table["au_ore_grade"][0] == pytest.approx(truth["ore_mean_grade_g_t"], rel=0.015)
+    assert table["au_ore_metal_g"][0] == pytest.approx(truth["ore_metal_g"], rel=0.015)
+
+
+def test_report_groups_cutoffs_benches_and_where(saved, capsys, tmp_path):
+    from bakumine.core.blockmodel import AttributeConstraint
+    from bakumine.core.report import report
+
+    path, model = saved
+    out_csv = tmp_path / "gt.csv"
+    code, out, err = run(
+        capsys, "blockmodel", "report", path, "--where", "z < 1100", "--group-by", "rock",
+        "--cutoffs", "0.5,1,2", "--grade", "au:g/t", "--density", "density",
+        "--bench-height", 100, "--bench-reference", 800, "--out", out_csv,
+    )  # fmt: skip
+    assert code == 0, err
+    assert "note: benches of 100 m from elevation 800" in out and "TOTAL" in out
+    table = pd.read_csv(out_csv)
+    expected = report(
+        model, constraint=AttributeConstraint("z < 1100"), group_by="rock",
+        cutoffs=[0.5, 1.0, 2.0], grade_attributes="au", density="density", bench_height=100.0,
+        bench_reference=800.0,
+    )  # fmt: skip
+    assert list(table.columns) == list(expected.columns) and len(table) == len(expected)
+    for column in ("blocks", "tonnes", "au_grade", "au_metal_oz", "cutoff", "bench_from"):
+        assert np.allclose(table[column], expected[column], rtol=1e-12, equal_nan=True), column
+    assert table["bench_to"].max() == 1100.0 and set(table["rock"].dropna()) <= {"ORE", "WASTE",
+                                                                                 "AIR"}  # fmt: skip
+    code, out, err = run(capsys, "blockmodel", "report", path, "--grade", "au")
+    assert code == 2 and "give the density" in err
+    code, out, err = run(capsys, "blockmodel", "report", path, "--cutoffs", "a,b",
+                         "--density", 2.7)  # fmt: skip
+    assert code == 2 and "--cutoffs expects numbers" in err
