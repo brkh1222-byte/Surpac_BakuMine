@@ -548,6 +548,24 @@ def test_expression_engine_is_usable_without_a_model():
     assert seen == ["a"]  # each name looked up once
 
 
+# ---- P7.T5 regression: float values just outside the int64 range are refused
+@pytest.mark.parametrize(
+    ("dtype", "bad", "good"),
+    [
+        ("int64", [2.0**63], [-(2.0**63), 2.0**62]),
+        ("int64", [-(2.0**63) * 1.0000001], [0.0]),
+        ("int32", [2.0**31], [-(2.0**31), 2.0**31 - 1]),
+        ("int64", np.array([2**63], dtype=np.uint64), np.array([2**63 - 1], dtype=np.uint64)),
+    ],
+)
+def test_int_attribute_range_is_exact(dtype, bad, good):
+    attr = Attribute("n", "int", dtype=dtype)
+    with pytest.raises(ValueError, match="does not fit"):
+        attr.to_stored(np.asarray(bad))
+    stored = attr.to_stored(np.asarray(good))
+    np.testing.assert_array_equal(stored, np.asarray(good).astype(dtype))
+
+
 # ---- P7.T5 regression: round() with extreme digits
 @pytest.mark.parametrize(
     ("source", "expected"),

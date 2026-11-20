@@ -243,7 +243,13 @@ class Attribute:
                         "values must be whole finite numbers"
                     )
             info = np.iinfo(self.dtype)
-            if arr.size and (arr.min() < info.min or arr.max() > info.max):
+            if arr.dtype.kind == "f":
+                # exact bounds: float(info.max) rounds up to 2**(bits-1) for int64
+                limit = 2.0 ** (info.bits - 1)
+                outside = arr.size and (arr.min() < -limit or arr.max() >= limit)
+            else:
+                outside = arr.size and (arr.min() < info.min or arr.max() > info.max)
+            if outside:
                 raise ValueError(f"attribute {self.name!r}: value does not fit in {self.dtype}")
         return arr.astype(self.dtype)
 
