@@ -150,7 +150,7 @@ Read `research.md` §7. This phase decides whether the product is credible; it g
 - [x] **P4.T7 Multi-pass estimation per domain.** Run a list of passes under a constraint, composites filtered by domain, fill only unestimated blocks, store pass number. *Accept:* no block uses samples from another domain; pass attribute consistent.
 - [x] **P4.T8 Experimental variogram (minimal).** Directional, lag/tolerance parameters, output table + a least-squares auto-fit to seed kriging parameters. No UI beyond a simple chart. *Accept:* recovers the synthetic field's range within 20% and nugget ratio within 0.1.
 - [x] **P4.T9 Validation tools.** Swath table (blocks vs composites along X/Y/Z), global mean comparison vs NN, leave-one-out cross-validation. *Accept:* run on synthetic; OK beats IDW beats NN in RMSE against truth, and this is asserted in a test.
-- [ ] **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
+- [ ] ~~CUT~~ **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
 
 **Gate B:** full synthetic run. Estimated model vs truth: OK correlation with true block grades > 0.75 inside the ore domain; global tonnes and metal within 5% of truth; all P4 reference comparisons green.
 
@@ -164,7 +164,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [x] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
 - [x] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
 - [x] **P5.T6 Section tools.** Clipping plane at any orientation with thickness (slab), step forward/back, section view locks camera normal to plane; drillholes, mesh outlines and blocks all clip together. *Accept:* screenshot test on synthetic section matches expected composition.
-- [ ] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
+- [ ] ~~CUT~~ **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
 - [x] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
 
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
@@ -181,7 +181,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 
 - [ ] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
 - [ ] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
-- [ ] **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
+- [ ] ~~CUT: no inputs~~ **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
 - [ ] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
 - [ ] **P7.T5 Review.** `/code-review high` and `/security-review` on the full diff; fix confirmed findings. *Accept:* no open important findings.
 - [ ] **P7.T6 User guide + one-command start.** `README.md` with install, `make dev`, and a walkthrough of the synthetic project with screenshots. *Accept:* a fresh clone reaches the 3D model by following the README only.
@@ -261,6 +261,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 12:45  P3.T8/T9  8b5027b 1edb102  Parquet+JSON model folder (5.6M blocks: save 0.84 s, load 0.46 s, lossless), block CSV (provisional Surpac-like layout, 9 unverified assumptions), report + `bakumine blockmodel` CLI. Truth totals: tonnes -3e-5, grade/metal -1.1 % (synth block grid vs truth.json node averaging; cause not verified).
 2026-11-20 12:50  fix  51b319a  Full make check after merges: 1 hypothesis failure in desurvey property test (180-degree dogleg; test measure invalid for documented fallback). Test fixed; code unchanged. 1246 tests pass.
 2026-11-20 13:20  P5.T8/T4/T5  b366734 efed50d 58c5a8b  Blocks endpoint (BKMA, no coords on wire, 2-16 B/block), instanced blocks layer with section caps and picking, constraint filter panel (UI counts = server = Python masks). Shell LOD: 2M model first view 16 ms, orbit 2 ms/frame; all 2M as instances 26 fps (plan said 30: NOT met for lod=full). Rotated model on screen and opacity<1 not inspected. Orchestrator: make check 1276 + 118 vitest green after merge; e2e (54) run by agent only.
+2026-11-20 13:40  scope  --  Token budget: cut P4.T10 (stretch), P5.T7, P6.T7 undo (job log kept if cheap), P7.T3 (no Surpac inputs supplied). Remaining tasks run 2 agents at a time, Sonnet for routine work, targeted tests while working + one make check at the end.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
