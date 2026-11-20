@@ -337,3 +337,35 @@ def test_source_options_are_checked(two_files, capsys):
         "drilling.csv:length-unit=yards", "--dry-run",
     )  # fmt: skip
     assert code == 2 and "length_unit must be one of" in err
+
+
+def test_axis_order_per_file_when_only_one_file_has_longitude_and_latitude(tmp_path):
+    from test_import_collars import kruger_utm
+
+    lon = np.array([15.10, 15.12, 15.14, 15.16])
+    lat = np.array([47.00, 47.01, 47.02, 47.03])
+    names = [f"SYN-{i:02d}" for i in range(1, 5)]
+    utm = np.array([kruger_utm(a, b, 33) for a, b in zip(lon, lat, strict=True)]).round(2)
+    # a report table (X = northing), a plain table, and a table in degrees
+    pd.DataFrame({"Hole": names[:2], "X": utm[:2, 1], "Y": utm[:2, 0], "RL": 300.0}).to_csv(
+        tmp_path / "report.csv", index=False
+    )
+    pd.DataFrame({"Hole": names[1:3], "East": utm[1:3, 0], "North": utm[1:3, 1],
+                  "Azimuth": 0.0, "Dip": -90.0, "Depth": 40.0}).to_csv(
+        tmp_path / "plain.csv", index=False
+    )  # fmt: skip
+    pd.DataFrame({"Hole": names, "Longitude": lon, "Latitude": lat, "RL": 300.0,
+                  "Azimuth": 0.0, "Dip": -90.0, "Depth": 40.0}).to_csv(
+        tmp_path / "degrees.csv", index=False
+    )  # fmt: skip
+    recipe = make_recipe(
+        {"collar": [{"file": "report.csv"}, {"file": "plain.csv"}, {"file": "degrees.csv"}]},
+        {"coordinate_order": "auto"},
+    )
+    db = run_recipe(recipe, tmp_path)
+    assert db.collar["hole_id"].tolist() == names
+    np.testing.assert_allclose(db.collar[["x", "y"]], utm, atol=0.02)  # the last from degrees
+    orders = [e["coordinate_order"] for e in db.metadata.reports["sources"]["collar"]]
+    assert orders == ["yxz", "xyz", "xyz"]
+    assert db.metadata.crs == "EPSG:32633"
+    assert db.metadata.reports["conflicts"]["collar"]["conflicts"] == 0

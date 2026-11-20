@@ -108,4 +108,18 @@ test('a multi-sheet workbook and a DMS collar table import through the panel', a
   const db = summary.objects.find((o) => o.kind === 'database' && o.name === 'shapes')
   expect(db?.tables?.assay.rows).toBe(expected.assay_rows)
   expect(db?.tables?.assay.attributes).toEqual(expect.arrayContaining(['au', 'ag', 'sample_id']))
+
+  // again for two holes only; the collar file states its own dip convention
+  await expect(tid(page, 'import-own-collar')).toBeVisible()
+  await tid(page, 'import-own-dip-collar').selectOption('positive_down')
+  await tid(page, 'import-include-holes').fill('SYN-0[1-3], NOPE*')
+  await tid(page, 'import-exclude-holes').fill('syn-03')
+  await tid(page, 'import-name').fill('two holes')
+  await tid(page, 'import-run').click()
+  await expect(tid(page, 'import-summary')).toContainText('“two holes”: 2 holes, 0 errors', { timeout: 60_000 })
+  await expect(tid(page, 'import-hole-filter')).toContainText(`collar 2 of ${expected.holes} rows`)
+  await expect(tid(page, 'import-hole-filter')).toContainText('matched no hole: NOPE*')
+  await expect(tid(page, 'import-tables')).toContainText('Dip positive down')
+  await expect(tid(page, 'import-recipe')).toContainText('"dip_convention": "positive_down"')
+  await expect(tid(page, 'import-recipe')).toContainText('"exclude"')
 })

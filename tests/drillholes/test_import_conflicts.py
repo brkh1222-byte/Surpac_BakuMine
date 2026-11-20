@@ -144,3 +144,22 @@ def test_merge_settings_are_checked():
     assert make_recipe(old["tables"], merge=old["merge"])["merge"]["ignore_columns"] == [
         "sample_id"
     ]
+
+
+def test_row_numbers_of_two_files_are_not_conflicts(tmp_path):
+    from bakumine.core.drillholes.recipe import is_row_number_column
+
+    assert all(is_row_number_column(n) for n in ("№", "No", "No.", "Д/д", "д_д", "п/п", "#", "N"))
+    assert not any(is_row_number_column(n) for n in ("Nb", "Note", "au", "sample_id", "x", ""))
+    names = ["SYN-01", "SYN-02", "SYN-03"]
+    first = pd.DataFrame({"№": [1, 2, 3], "Hole": names, "East": [1.0, 2.0, 3.0],
+                          "North": [4.0, 5.0, 6.0], "RL": [7.0, 8.0, 9.0]})  # fmt: skip
+    second = pd.DataFrame({"№": [7, 8, 9], "Hole": names, "East": [1.0, 2.0, 3.5],
+                           "North": [4.0, 5.0, 6.0], "Azimuth": 0.0, "Dip": -90.0,
+                           "Depth": 30.0})  # fmt: skip
+    first.to_csv(tmp_path / "a.csv", index=False)
+    second.to_csv(tmp_path / "b.csv", index=False)
+    db = run_recipe(make_recipe({"collar": [{"file": "a.csv"}, {"file": "b.csv"}]}), tmp_path)
+    report = db.metadata.reports["conflicts"]["collar"]
+    assert report["conflicts"] == 1 and report["by_column"] == {"x": 1}
+    assert report["informational"] == {"№": 3}

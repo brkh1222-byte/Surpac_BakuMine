@@ -59,7 +59,8 @@ cells that differ by more than ``tolerance`` (numbers) or at all (text) are repo
 conflicts. So a hole may take its coordinates from one file and azimuth, dip and depth
 from another. Columns named in ``ignore_columns`` (default: the sample id, which every
 laboratory file spells its own way) are merged the same way but their differences are
-informational: counted apart, not conflicts. The report (``reports["conflicts"][table]``)
+informational: counted apart, not conflicts; so are those of a row-number column (``№``,
+``No``, ``Д/д``) that was kept. The report (``reports["conflicts"][table]``)
 counts the conflicts per column and lists the first; every difference is in the
 database's ``conflicts_<table>.csv``. Two intervals of different sources are the same
 interval when their ``from`` is equal and their ``to`` differs by less than ``tolerance``.
@@ -163,6 +164,15 @@ _KEYS: dict[str, tuple[str, ...]] = {
 _MAX_LISTED = 200
 _MERGE_KEYS = frozenset({"precedence", "tolerance", "ignore_columns", "duplicate_intervals"})
 DUPLICATE_RULES: tuple[str, ...] = ("keep_first", "mean", "error")
+#: headers of a row-number column, without spaces and punctuation
+_ROW_NUMBER_NAMES = frozenset({"№", "#", "no", "n", "nn", "num", "дд", "пп", "№пп", "nпп"})
+
+
+def is_row_number_column(name: object) -> bool:
+    """``№``, ``No``, ``Д/д``, ``п/п`` ...: the running number of a table's rows, which
+    says nothing about the hole (every file counts its own rows)."""
+    text = "".join(c for c in str(name).casefold() if c.isalnum() or c in "№#")
+    return text in _ROW_NUMBER_NAMES
 _TUPLE_OPTIONS = ("missing_tokens", "text_columns", "numeric_columns")
 
 
@@ -748,7 +758,7 @@ class _SourceOptions:
         self, name: str, table: pd.DataFrame, rows: list[np.ndarray],
         entries: list[dict[str, Any]], labels: Sequence[str], metadata: DrillholeMetadata,
     ) -> pd.DataFrame:  # fmt: skip
-        from .coordinates import reproject, resolve_collar_coordinates
+        from .coordinates import _geographic, reproject, resolve_collar_coordinates
 
         own = self.own[name]
         chosen = any(k in o for o in own for k in ("coordinate_order", "crs", "geographic_crs"))
@@ -769,6 +779,13 @@ class _SourceOptions:
             order = options.coordinate_order if options.coordinate_order != "auto" else "xyz"
             full = "crs" in mine or "geographic_crs" in mine
             if len(part):
+                # longitude / latitude columns that only another file fills are not this
+                # file's: it has none
+                degrees = _geographic(part)
+                if degrees is not None and not (
+                    np.isfinite(degrees[0]) & np.isfinite(degrees[1])
+                ).any():
+                    part = part.drop(columns=[c for c in GEOGRAPHIC_COLUMNS if c in part.columns])
                 resolved, order = resolve_collar_coordinates(part, options, scratch)
                 if full:
                     part = resolved
@@ -936,7 +953,10 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                 precedence=recipe["merge"]["precedence"],
                 tolerance=recipe["merge"]["tolerance"],
                 labels=labels,
-                ignore=recipe["merge"]["ignore_columns"],
+                ignore=[
+                    *recipe["merge"]["ignore_columns"],
+                    *(c for c in table.columns if is_row_number_column(c)),
+                ],
                 listing=differences,
             )
             reports["conflicts"][name] = merged
