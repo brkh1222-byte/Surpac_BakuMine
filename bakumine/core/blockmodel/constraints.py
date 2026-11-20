@@ -1277,10 +1277,31 @@ class BlockIdConstraint(Constraint):
 # --------------------------------------------------------------------------
 
 
+#: deepest nesting of objects / lists in a constraint document (and / or / not trees);
+#: deeper documents would exhaust the interpreter's stack when built or evaluated
+MAX_DOCUMENT_DEPTH = 64
+
+
+def _document_depth(data: Any, limit: int) -> int:
+    """Nesting depth of dicts / lists, counted iteratively; stops past ``limit``."""
+    deepest, stack = 0, [(data, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, Mapping | list | tuple):
+            deepest = max(deepest, depth)
+            if deepest > limit:
+                return deepest
+            children = item.values() if isinstance(item, Mapping) else item
+            stack.extend((child, depth + 1) for child in children)
+    return deepest
+
+
 def constraint_from_dict(data: Mapping[str, Any]) -> Constraint:
     """Rebuild a constraint from :meth:`Constraint.to_dict` output."""
     if not isinstance(data, Mapping) or "type" not in data:
         raise ConstraintError("a constraint must be an object with a 'type'")
+    if _document_depth(data, MAX_DOCUMENT_DEPTH) > MAX_DOCUMENT_DEPTH:
+        raise ConstraintError(f"a constraint is nested deeper than {MAX_DOCUMENT_DEPTH} levels")
     try:
         cls = _TYPES[data["type"]]
     except (KeyError, TypeError):

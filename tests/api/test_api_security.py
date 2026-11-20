@@ -97,6 +97,57 @@ def test_uploads_are_limited_in_size(project, monkeypatch):
     assert r.status_code == 200, r.text
 
 
+# ---------------------------------------------------------------------- 400, not 500
+
+
+def _model(client: TestClient) -> str:
+    r = client.post(
+        "/api/v1/ops/models",
+        json={"origin": [0, 0, 0], "size": [10, 10, 10], "shape": [3, 3, 3], "name": "m"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _deep_not(depth: int) -> dict:
+    doc: dict = {"type": "attribute", "expression": "1 > 0"}
+    for _ in range(depth):
+        doc = {"type": "not", "child": doc}
+    return doc
+
+
+def test_malformed_requests_are_client_errors(project):
+    import json
+
+    client, _ = project
+    client = TestClient(app, raise_server_exceptions=False)
+    model = _model(client)
+    ops = "/api/v1/ops"
+    bad = [
+        client.post(f"{ops}/models", json={"origin": [0, 0, 0], "size": [1, 1, 1],
+                                           "shape": ["inf", 2, 2]}),
+        client.post(f"{ops}/estimate", json={"model": model, "composites": "c", "plan": [1]}),
+        client.post(f"{ops}/estimate", json={"model": model, "composites": "c",
+                                             "plan": {"attribute": "a", "passes": "ab"}}),
+        client.post(f"{ops}/import", json={"maps": "x"}),
+        client.post(f"{ops}/import", json={"options": [1]}),
+        client.post(f"{ops}/models/{model}/code",
+                    json={"steps": [{"attribute": "a", "value": 1, "constraint": _deep_not(900)}]}),
+        client.post(f"/api/v1/scene/objects/{model}/report",
+                    json={"where": json.dumps(_deep_not(900))}),
+        client.get(f"/api/v1/scene/objects/{model}/blocks",
+                   params={"where": '{"type": ' + "[" * 3000 + "]" * 3000 + "}"}),
+    ]  # fmt: skip
+    assert [r.status_code for r in bad] == [400] * len(bad), [r.text for r in bad]
+    r = client.get(f"/api/v1/scene/objects/{model}/blocks/detail", params={"block_id": "9" * 40})
+    assert r.status_code == 404
+    # a reasonable depth still works
+    r = client.post(
+        f"/api/v1/scene/objects/{model}/report", json={"where": json.dumps(_deep_not(40))}
+    )
+    assert r.status_code == 200, r.text
+
+
 # ---------------------------------------------------------------------- request guard
 
 

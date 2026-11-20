@@ -370,6 +370,8 @@ def parse_constraint(text: str | None, what: str = "where") -> Constraint | None
         if text.startswith("{"):
             try:
                 document = json.loads(text)
+            except RecursionError:
+                raise BlockQueryError(f"{what}: JSON is nested too deeply") from None
             except ValueError as exc:
                 raise BlockQueryError(f"{what}: not valid JSON ({exc})") from None
             return constraint_from_dict(document)

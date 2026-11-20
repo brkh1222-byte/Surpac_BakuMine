@@ -821,3 +821,21 @@ def test_box_classification_exact_cases_and_errors():
     with pytest.raises(ValueError):
         bench.classify_boxes(d, lo[:, :2], hi[:, :2])
     assert bench.classify_boxes(d, lo[:0], hi[:0]).shape == (0,)
+
+
+def test_constraint_documents_nested_too_deeply_are_refused():
+    """A deep and/or/not tree would exhaust the stack (RecursionError) when built."""
+    from bakumine.core.blockmodel.constraints import MAX_DOCUMENT_DEPTH
+
+    def deep(n: int) -> dict:
+        doc: dict = {"type": "attribute", "expression": "1 > 0"}
+        for _ in range(n):
+            doc = {"type": "not", "child": doc}
+        return doc
+
+    assert isinstance(constraint_from_dict(deep(MAX_DOCUMENT_DEPTH - 2)), Not)
+    for n in (MAX_DOCUMENT_DEPTH + 1, 5000):
+        with pytest.raises(ConstraintError, match="nested deeper"):
+            constraint_from_dict(deep(n))
+    wide = {"type": "and", "children": [deep(3)] * 2000}
+    assert isinstance(constraint_from_dict(wide), And)

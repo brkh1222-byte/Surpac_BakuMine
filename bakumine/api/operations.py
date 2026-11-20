@@ -203,6 +203,8 @@ def _import(
     )
     from bakumine.core.drillholes.validate import validate
 
+    if not isinstance(maps or {}, dict) or not isinstance(options or {}, dict):
+        raise OperationError("maps and options must be objects")
     maps = dict(maps or {})
     uploads = (
         {p.stem: p for p in (folder / UPLOADS).glob("*.*")} if (folder / UPLOADS).is_dir() else {}
@@ -581,7 +583,7 @@ def _create(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict
             rec.entry["outputs"] = [obj.to_dict()]
     except OperationError:
         raise
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, OverflowError) as exc:
         raise _fail(exc) from None
     d = definition
     return {
@@ -759,7 +761,8 @@ def build_plan(spec: dict[str, Any]) -> Any:
         return EstimationPlan(attribute, [domain], value_column=spec.get("value_column") or None)
     except OperationError:
         raise
-    except (ValueError, KeyError, TypeError) as exc:
+    # AttributeError: a list or a number where the plan has an object (``.get``)
+    except (ValueError, KeyError, TypeError, OverflowError, AttributeError) as exc:
         raise _fail(exc) from None
 
 

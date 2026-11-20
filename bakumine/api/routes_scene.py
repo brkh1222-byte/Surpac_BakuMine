@@ -239,6 +239,8 @@ def get_block_detail(
             row = int(data.model.rows_of([int(block_id)])[0])  # type: ignore[arg-type]
         except ValueError:
             raise HTTPException(400, "block_id must be an integer") from None
+        except OverflowError:  # beyond int64: no such block
+            raise HTTPException(404, f"block model {object_id!r} has no such block") from None
     try:
         details = block_details(data, row)
     except KeyError:
