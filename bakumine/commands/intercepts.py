@@ -32,6 +32,8 @@ _OPTIONS = (
     "ore_code",
     "waste_code",
     "code_column",
+    "mode",
+    "window",
 )
 
 
@@ -41,6 +43,18 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--grade", required=True, help="grade column")
     parser.add_argument("--params", metavar="JSON", help="parameter file (options override it)")
     parser.add_argument("--cutoff", type=float, help="cut-off grade (ore is grade >= cut-off)")
+    parser.add_argument(
+        "--mode",
+        choices=("strict", "average", "moving-average"),
+        help="how runs are built (default: strict). strict: every part of a run measured "
+        "from either end meets the cut-off. average: the run starts and ends on ore and "
+        "its grade including the internal waste meets the cut-off. moving-average: "
+        "samples whose mean grade over --window metres meets the cut-off "
+        "(--max-internal-waste is not used)",
+    )
+    parser.add_argument(
+        "--window", type=float, metavar="M", help="window of --mode moving-average, metres"
+    )
     parser.add_argument("--min-thickness", type=float, help="minimum thickness (default: 0)")
     parser.add_argument(
         "--max-internal-waste", type=float, help="longest internal waste stretch (default: 0)"
@@ -105,7 +119,8 @@ def params_from_args(args: argparse.Namespace) -> Any:
 def format_summary(summary: dict[str, Any]) -> str:
     grade = "-" if summary["mean_grade"] is None else f"{summary['mean_grade']:.4g}"
     return (
-        f"{summary['grade']} >= {summary['cutoff']:g}: {summary['n_intercepts']} intercepts "
+        f"{summary['grade']} >= {summary['cutoff']:g} ({summary.get('mode', 'strict')}): "
+        f"{summary['n_intercepts']} intercepts "
         f"(+{summary['n_including']} including) in {summary['n_holes_mineralised']} of "
         f"{summary['n_holes']} holes, {summary['mineralised_length']:.2f} m at {grade}, "
         f"{summary['grade_x_m']:.4g} grade x m; other coded length {summary['waste_length']:.2f} m"

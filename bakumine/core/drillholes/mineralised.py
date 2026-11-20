@@ -19,6 +19,9 @@ bridged: it adds length but no grade and no metal.
 
 Runs (cut-off and internal waste)
 ---------------------------------
+How runs are built is chosen with ``mode``: ``"strict"`` (the default, described first),
+``"average"`` or ``"moving-average"`` (section "Other modes" below).
+
 With ``e_i = (g_i - cutoff) * l_i`` the *excess* of a sample (0 for a gap) and ``E`` the sum
 of excesses, runs are built down the hole (collar to toe) within one piece:
 
@@ -41,6 +44,43 @@ its length-weighted grade including the internal waste is ``>= cutoff``, and so 
 grade of every part of it measured from either end -- there is no waste at the edges that
 the rest of the run would have to carry. The procedure is greedy down-hole: it does not
 search for the grouping with the most metal.
+
+Other modes
+-----------
+The strict rule lets no part of a run fall below the cut-off when measured from either
+end. Common practice is looser; two documented alternatives:
+
+``mode = "average"``
+    A run is accepted when it **starts and ends on an ore sample** and its length-weighted
+    grade **including the internal waste** is ``>= cutoff`` (``E(run) >= 0``), with every
+    internal waste stretch ``<= max_internal_waste`` and the total internal waste
+    ``<= max_total_waste`` (when given), measured as in step 2. Down the hole: a run starts
+    at the first ore sample that is not in a run and is the **longest** run from there
+    that meets these conditions; the search goes on behind its last sample. Unlike
+    ``"strict"`` a low-grade edge may be carried by the rest of the run, and a run may pass
+    a point where its grade so far is below the cut-off when the ore further down brings
+    it back.
+
+    Example (``cutoff 0.2, max_internal_waste 2``, 1 m samples from 0 m):
+    ``0.25, 0.1, 0.1, 1.0, 0.05``. Strict: ``E(0-1) + E(1-3) = 0.05 - 0.2 < 0``, so two
+    runs, 0-1 m and 3-4 m (2 m). Average: 0-4 m has ``E = 0.05 - 0.2 + 0.8 >= 0``: one
+    run of 4 m at ``(0.25 + 0.1 + 0.1 + 1.0) / 4 = 0.3625``.
+
+``mode = "moving-average"`` (needs ``window``, a length in metres)
+    Each sample gets the length-weighted mean grade of the assayed length within
+    ``window / 2`` up and down the hole from its middle (the window is cut at the ends of
+    the piece; gaps carry no grade and no weight). A sample is mineralised when that mean
+    is ``>= cutoff``; a run is a maximal stretch of such samples (gaps between two of them
+    are bridged). With 1 m samples and ``window = 3`` this is the three-sample moving
+    average. ``max_internal_waste`` and ``max_total_waste`` are **not used**: the window
+    decides how much waste is carried. A run may start or end on a waste sample next to
+    high grade, and its own grade is not guaranteed to reach the cut-off.
+
+    Example (``cutoff 0.2, window 3``, 1 m samples from 0 m): ``0.05, 0.1, 0.9, 0.1,
+    0.05, 0.05``. Means: ``0.075`` (window cut at 0 m), ``0.35, 0.3667, 0.35, 0.0667,
+    0.05``. One run 1-4 m, 3 m at ``1.1 / 3 = 0.3667``; strict and average give 2-3 m.
+
+The thickness rules, "including" sub-intercepts and the outputs are the same in all modes.
 
 Thickness
 ---------
@@ -101,6 +141,7 @@ from bakumine.core.drillholes.desurvey import HoleTraces
 
 __all__ = [
     "INTERCEPT_COLUMNS",
+    "MODES",
     "InterceptParams",
     "MineralisedResult",
     "body_normal",
@@ -108,6 +149,7 @@ __all__ = [
 ]
 
 FORMAT_VERSION = 1
+MODES = ("strict", "average", "moving-average")
 _ORE, _WASTE, _GAP = 0, 1, 2
 #: absolute tolerance on depths and lengths (the same order as the compositing one)
 _TOL = 1e-9
@@ -137,6 +179,8 @@ class InterceptParams:
     """Rules of :func:`mineralised_intervals`; see the module docstring.
 
     cutoff : grade a sample needs to be ore (``>=``).
+    mode : ``"strict"`` (default), ``"average"`` or ``"moving-average"``: how runs are built.
+    window : length in metres of the moving average (``mode = "moving-average"`` only).
     min_thickness : smallest accepted thickness (0 = any).
     max_internal_waste : longest single stretch of internal waste (0 = none allowed).
     max_total_waste : largest total internal waste of one run, or None (no limit).
@@ -163,8 +207,12 @@ class InterceptParams:
     ore_code: str = "MIN"
     waste_code: str = "WASTE"
     code_column: str = "code"
+    mode: str = "strict"
+    window: float | None = None
 
     def __post_init__(self) -> None:
+        if self.mode not in MODES:
+            raise ValueError(f"mode must be one of {', '.join(MODES)}, got {self.mode!r}")
         def number(name: str, *, optional: bool = False, minimum: float | None = 0.0) -> None:
             value = getattr(self, name)
             if value is None and optional:
@@ -185,6 +233,12 @@ class InterceptParams:
         number("including_min_thickness", optional=True)
         number("body_dip", optional=True, minimum=None)
         number("body_dip_azimuth", optional=True, minimum=None)
+        number("window", optional=True)
+        if self.mode == "moving-average":
+            if self.window is None or not self.window > 0:
+                raise ValueError("mode moving-average needs a window length in metres (> 0)")
+        elif self.window is not None:
+            raise ValueError("window is used by mode moving-average only")
         if (self.body_dip is None) != (self.body_dip_azimuth is None):
             raise ValueError("give both body_dip and body_dip_azimuth, or neither")
         cutoffs = self.including_cutoffs
@@ -262,6 +316,7 @@ class MineralisedResult:
         return {
             "grade": self.grade,
             "cutoff": self.params.cutoff,
+            "mode": self.params.mode,
             "n_holes": int(self.intervals["hole_id"].nunique()),
             "n_holes_mineralised": int(main["hole_id"].nunique()),
             "n_intercepts": int(len(main)),
@@ -389,6 +444,110 @@ def _build_runs(
         runs.append(_Run(start, end))
         i = j
     return runs
+
+
+def _build_runs_average(
+    length: np.ndarray,
+    grade: np.ndarray,
+    assayed: np.ndarray,
+    cutoff: float,
+    max_internal_waste: float,
+    max_total_waste: float | None,
+) -> list[_Run]:
+    """``mode = "average"``: from each start the longest run whose grade makes the cut-off."""
+    n = len(length)
+    kind = np.where(~assayed, _GAP, np.where(grade >= cutoff, _ORE, _WASTE))
+    excess = np.where(assayed, (np.where(assayed, grade, 0.0) - cutoff) * length, 0.0)
+    slack = _TOL * (1.0 + abs(cutoff))
+    runs: list[_Run] = []
+    i = 0
+    while i < n:
+        if kind[i] != _ORE:
+            i += 1
+            continue
+        end = i
+        total, waste_total = 0.0, 0.0
+        j = i
+        while True:
+            while j < n and kind[j] == _ORE:  # an ore stretch: a possible end of the run
+                total += float(excess[j])
+                j += 1
+            if total >= -slack:
+                end = j - 1
+            k = j
+            while k < n and kind[k] != _ORE:
+                k += 1
+            if k >= n:
+                break
+            waste = float(length[j:k].sum()) if (kind[j:k] == _WASTE).any() else 0.0
+            if waste > max_internal_waste + _TOL:
+                break
+            if max_total_waste is not None and waste_total + waste > max_total_waste + _TOL:
+                break
+            total += float(excess[j:k].sum())
+            waste_total += waste
+            j = k
+        runs.append(_Run(i, end))
+        i = end + 1
+    return runs
+
+
+def _build_runs_moving_average(
+    frm: np.ndarray,
+    to: np.ndarray,
+    grade: np.ndarray,
+    assayed: np.ndarray,
+    cutoff: float,
+    window: float,
+) -> list[_Run]:
+    """``mode = "moving-average"``: samples whose windowed mean grade makes the cut-off."""
+    n = len(frm)
+    half = 0.5 * window
+    slack = _TOL * (1.0 + abs(cutoff))
+    flagged = np.zeros(n, dtype=bool)
+    rows = np.flatnonzero(assayed)
+    a_frm, a_to, a_grade = frm[rows], to[rows], grade[rows]
+    for i in rows:
+        middle = 0.5 * (frm[i] + to[i])
+        overlap = np.minimum(a_to, middle + half) - np.maximum(a_frm, middle - half)
+        overlap = np.where(overlap > _TOL, overlap, 0.0)
+        covered = float(overlap.sum())
+        above = a_grade[overlap > 0.0] >= cutoff
+        if above.all() or not above.any():  # exact: no rounding of the mean decides
+            flagged[i] = bool(above.all()) and covered > 0.0
+        else:
+            flagged[i] = float((a_grade * overlap).sum()) / covered >= cutoff - slack
+    runs: list[_Run] = []
+    i = 0
+    while i < n:
+        if not flagged[i]:
+            i += 1
+            continue
+        end = j = i
+        while j + 1 < n and (flagged[j + 1] or not assayed[j + 1]):
+            j += 1
+            if flagged[j]:
+                end = j
+        runs.append(_Run(i, end))
+        i = end + 1
+    return runs
+
+
+def _runs_of(
+    frm: np.ndarray,
+    to: np.ndarray,
+    grade: np.ndarray,
+    assayed: np.ndarray,
+    cutoff: float,
+    params: InterceptParams,
+) -> list[_Run]:
+    """The runs of one piece under ``params.mode`` with the cut-off ``cutoff``."""
+    if params.mode == "moving-average":
+        return _build_runs_moving_average(frm, to, grade, assayed, cutoff, params.window)  # type: ignore[arg-type]
+    build = _build_runs_average if params.mode == "average" else _build_runs
+    return build(
+        to - frm, grade, assayed, cutoff, params.max_internal_waste, params.max_total_waste
+    )
 
 
 def _accept(
@@ -529,12 +688,8 @@ def mineralised_intervals(
         frm_all, to_all, g_all = (group[c].to_numpy() for c in ("f", "t", "g"))
         factor_at = None if normal is None else _thickness_factor(traces, normal, hole)
         for frm, to, g, assayed in _pieces(frm_all, to_all, g_all, params.gap_tolerance, hole):
-            length = to - frm
             runs = _accept(
-                _build_runs(
-                    length, g, assayed, params.cutoff,
-                    params.max_internal_waste, params.max_total_waste,
-                ),
+                _runs_of(frm, to, g, assayed, params.cutoff, params),
                 frm, to, g, assayed, params.cutoff, params.min_thickness,
                 params.accumulation_rule, factor_at,
             )  # fmt: skip
@@ -553,10 +708,7 @@ def mineralised_intervals(
                 sl = slice(run.start, run.end + 1)
                 for higher in params.including_cutoffs:
                     inner = _accept(
-                        _build_runs(
-                            length[sl], g[sl], assayed[sl], higher,
-                            params.max_internal_waste, params.max_total_waste,
-                        ),
+                        _runs_of(frm[sl], to[sl], g[sl], assayed[sl], higher, params),
                         frm[sl], to[sl], g[sl], assayed[sl], higher, inner_min,
                         params.accumulation_rule, factor_at,
                     )  # fmt: skip

@@ -28,7 +28,18 @@ export interface InterceptsForm {
   /** name of the interval table to store; blank = do not store */
   saveAs: string
   overwrite: boolean
+  /** how runs are built; blank or absent = "strict" */
+  mode?: string
+  /** window of the moving average, metres (mode "moving-average" only) */
+  window?: string
 }
+
+/** Run-building modes of the server (bakumine/core/drillholes/mineralised.py). */
+export const INTERCEPT_MODES = [
+  { value: 'strict', label: 'Strict: every part of a run meets the cut-off' },
+  { value: 'average', label: 'Average: the run as a whole meets the cut-off' },
+  { value: 'moving-average', label: 'Moving average over a window' },
+]
 
 export interface InterceptRow {
   hole_id: string
@@ -102,6 +113,14 @@ export function buildInterceptsRequest(f: InterceptsForm): Record<string, unknow
   }
   if ((f.bodyDip.trim() === '') !== (f.bodyDipAzimuth.trim() === '')) return 'True thickness needs both the dip and the dip azimuth of the body'
   if (f.accumulationRule) params.accumulation_rule = true
+  const mode = f.mode || 'strict'
+  if (!INTERCEPT_MODES.some((m) => m.value === mode)) return 'Mode: strict, average or moving-average'
+  if (mode !== 'strict') params.mode = mode
+  if (mode === 'moving-average') {
+    const window = Number((f.window ?? '').trim())
+    if (!(f.window ?? '').trim() || !(window > 0)) return 'Window: the length of the moving average in metres'
+    params.window = window
+  }
   if (f.including.trim()) {
     const cutoffs = nums(f.including)
     if (!cutoffs || cutoffs.some((c) => c <= (params.cutoff as number))) return 'Including: cut-offs above the main cut-off'

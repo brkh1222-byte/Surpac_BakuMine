@@ -105,3 +105,16 @@ describe('describeIntercept', () => {
     expect(describeIntercept({ ...row, level: 'including' })).toBe('incl. 34.0–41.5 m: 7.5 m @ 1.82 (13.7 g×m)')
   })
 })
+
+describe('run-building modes', () => {
+  it('sends the mode and the window only when they are not the default', () => {
+    const params = (extra: Partial<InterceptsForm>) => (buildInterceptsRequest({ ...form, ...extra }) as { params: Record<string, unknown> }).params
+    expect(params({ mode: 'strict' })).not.toHaveProperty('mode')
+    expect(params({ mode: 'average', window: '3' })).toMatchObject({ mode: 'average' })
+    expect(params({ mode: 'average', window: '3' })).not.toHaveProperty('window')
+    expect(params({ mode: 'moving-average', window: ' 3 ' })).toMatchObject({ mode: 'moving-average', window: 3 })
+    expect(buildInterceptsRequest({ ...form, mode: 'moving-average' })).toMatch(/Window/)
+    expect(buildInterceptsRequest({ ...form, mode: 'moving-average', window: '0' })).toMatch(/Window/)
+    expect(buildInterceptsRequest({ ...form, mode: 'loose' })).toMatch(/Mode/)
+  })
+})

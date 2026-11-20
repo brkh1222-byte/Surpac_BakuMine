@@ -204,3 +204,25 @@ def test_bad_requests_are_400_and_logged(api, flagged):
     assert post({"database": db, "grade": "au", "params": {"cutoff": 1}}).status_code == 200
     after = load_database(Project.open(folder).path_of(db)).intervals["mineralised"]
     pd.testing.assert_frame_equal(before, after)
+
+
+def test_modes_through_the_endpoint(api, flagged):
+    """The looser modes are requested with params.mode (and window); no table is stored."""
+    client, _, db = api
+    base = {"cutoff": 0.5, "min_thickness": 2.0, "max_internal_waste": 2.0}
+
+    def length(params):
+        body = {"database": db, "table": "assay", "grade": "au", "params": params}
+        r = client.post("/api/v1/ops/intercepts", json=body)
+        assert r.status_code == 200, r.text
+        assert r.json()["mode"] == params.get("mode", "strict")
+        return r.json()["mineralised_length"]
+
+    strict = length(base)
+    average = length({**base, "mode": "average"})
+    moving = length({**base, "mode": "moving-average", "window": 6.0})
+    assert 0 < strict <= average and moving > 0
+    bad = client.post("/api/v1/ops/intercepts",
+                      json={"database": db, "grade": "au",
+                            "params": {**base, "mode": "moving-average"}})  # fmt: skip
+    assert bad.status_code == 400 and "window" in bad.json()["detail"]

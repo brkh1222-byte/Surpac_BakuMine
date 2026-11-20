@@ -5,7 +5,7 @@
  */
 import { useState } from 'react'
 import { ofKind, useOps } from '../../ops/api'
-import { buildInterceptsRequest, describeIntercept, runIntercepts, type InterceptsResult } from '../../ops/intercepts'
+import { INTERCEPT_MODES, buildInterceptsRequest, describeIntercept, runIntercepts, type InterceptsResult } from '../../ops/intercepts'
 import { Check, Error, Panel, Select, Text, message, opts } from './common'
 
 const SHOWN = 200
@@ -19,6 +19,8 @@ export function InterceptsPanel() {
   const [cutoff, setCutoff] = useState('0.2')
   const [minThickness, setMinThickness] = useState('2')
   const [maxInternalWaste, setMaxInternalWaste] = useState('2')
+  const [mode, setMode] = useState('strict')
+  const [window, setWindow] = useState('3')
   const [maxTotalWaste, setMaxTotalWaste] = useState('')
   const [accumulationRule, setAccumulationRule] = useState(false)
   const [gapTolerance, setGapTolerance] = useState('0')
@@ -43,7 +45,7 @@ export function InterceptsPanel() {
   const run = async () => {
     const body = buildInterceptsRequest({
       database: db?.id ?? '', table: assayTable, grade: gradeColumn, cutoff, minThickness, maxInternalWaste, maxTotalWaste,
-      accumulationRule, gapTolerance, topCut, including, includingMinThickness, bodyDip, bodyDipAzimuth, saveAs, overwrite,
+      accumulationRule, gapTolerance, topCut, including, includingMinThickness, bodyDip, bodyDipAzimuth, saveAs, overwrite, mode, window,
     })
     if (typeof body === 'string') return setError(body)
     setBusy(true)
@@ -67,8 +69,14 @@ export function InterceptsPanel() {
       <Select label="Grade" id="intercepts-grade" value={gradeColumn} onChange={setGrade} options={opts(grades)} />
       <Text label="Cut-off (≥)" id="intercepts-cutoff" value={cutoff} onChange={setCutoff} />
       <Text label="Min thickness (m)" id="intercepts-min-thickness" value={minThickness} onChange={setMinThickness} />
-      <Text label="Internal waste (m)" id="intercepts-waste" value={maxInternalWaste} onChange={setMaxInternalWaste} />
-      <Text label="Total waste (m)" id="intercepts-total-waste" value={maxTotalWaste} onChange={setMaxTotalWaste} placeholder="no limit" />
+      <Select label="Runs" id="intercepts-mode" value={mode} onChange={setMode} options={INTERCEPT_MODES} />
+      {mode === 'moving-average' && <Text label="Window (m)" id="intercepts-window" value={window} onChange={setWindow} />}
+      {mode !== 'moving-average' && (
+        <>
+          <Text label="Internal waste (m)" id="intercepts-waste" value={maxInternalWaste} onChange={setMaxInternalWaste} />
+          <Text label="Total waste (m)" id="intercepts-total-waste" value={maxTotalWaste} onChange={setMaxTotalWaste} placeholder="no limit" />
+        </>
+      )}
       <Check label="Accept thin runs by grade × thickness" id="intercepts-accumulation" checked={accumulationRule} onChange={setAccumulationRule} />
       <Text label="Bridge gaps ≤ (m)" id="intercepts-gap" value={gapTolerance} onChange={setGapTolerance} />
       <Text label="Top cut" id="intercepts-top-cut" value={topCut} onChange={setTopCut} placeholder="none" />
