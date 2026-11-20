@@ -116,7 +116,7 @@ def test_manifest_lists_demo_objects(client, demo):
     assert manifest["api_version"] == 1
     assert manifest["project"]["id"] == "demo"
     objects = {o["id"]: o for o in manifest["objects"]}
-    assert set(objects) == {"topo", "ore-solid", "drillholes"}
+    assert set(objects) == {"topo", "ore-solid", "drillholes", "block-model"}
     assert objects["topo"]["category"] == "surfaces" and objects["topo"]["kind"] == "mesh"
     assert objects["ore-solid"]["category"] == "solids"
     assert objects["drillholes"]["category"] == "drillholes"
@@ -354,6 +354,9 @@ def test_etag_revalidation_and_gzip(client):
 
 def test_demo_payloads_are_fast_and_compact(capsys):
     """Cold start (CSV import + desurvey + mesh load) to all payloads in under 2 s."""
+    # The block model's contact tests are JIT-compiled on first use in a process; that
+    # one-off cost is not what this test measures (tests/api/test_blocks_api.py times blocks).
+    DemoSceneSource(DEMO).blocks("block-model")
     start = time.perf_counter()
     source = DemoSceneSource(DEMO)
     manifest = scene_manifest(source)

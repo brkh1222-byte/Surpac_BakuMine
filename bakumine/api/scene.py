@@ -1,7 +1,7 @@
 """Scene sources: where the viewer's objects come from.
 
 A :class:`SceneSource` lists drawable objects and hands out the core data behind them
-(a drillhole database with its desurveyed traces, a triangle mesh). The endpoints in
+(a drillhole database with its desurveyed traces, a triangle mesh, a block model). The endpoints in
 ``routes_scene`` turn that into the manifest and the binary payloads; they know nothing
 about folders or files. Today the only source is :class:`DemoSceneSource`, built from the
 synthetic benchmark deposit. The project system (P6.T1) replaces it by implementing the
@@ -16,7 +16,7 @@ import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import numpy as np
 
@@ -29,6 +29,9 @@ from bakumine.core.drillholes.importer import (
     suggest_column_map,
 )
 from bakumine.core.geometry.mesh import Mesh
+
+if TYPE_CHECKING:
+    from bakumine.api.blocks import BlockData
 
 Category = Literal["drillholes", "surfaces", "solids", "blockModels"]
 Kind = Literal["drillholes", "mesh", "blocks"]
@@ -80,6 +83,10 @@ class SceneSource(Protocol):
         """Raises ``KeyError`` when ``object_id`` is not a mesh object."""
         ...
 
+    def blocks(self, object_id: str) -> BlockData:
+        """Raises ``KeyError`` when ``object_id`` is not a block model."""
+        ...
+
 
 class EmptySceneSource:
     """A project with nothing in it (no demo data on disk)."""
@@ -97,13 +104,18 @@ class EmptySceneSource:
     def mesh(self, object_id: str) -> Mesh:
         raise KeyError(object_id)
 
+    def blocks(self, object_id: str) -> BlockData:
+        raise KeyError(object_id)
+
 
 class DemoSceneSource:
     """The synthetic benchmark deposit (``bakumine synth`` output) as a scene.
 
     Objects: ``drillholes`` (collar/survey/assay/geology CSVs, imported with
     ``import_drillholes`` and desurveyed by minimum curvature), ``topo`` (open DTM) and
-    ``ore-solid`` (closed solid). Everything is loaded on first use and kept in memory.
+    ``ore-solid`` (closed solid) and ``block-model``: the truth grid as a block model,
+    sub-blocked two levels along the ore contact (``bakumine.api.blocks``). Everything is
+    loaded on first use and kept in memory.
     """
 
     project_id = "demo"
@@ -114,12 +126,15 @@ class DemoSceneSource:
         "ore-solid": ("Ore solid", "solids", "ore_solid"),
     }
     _CSV = ("collar", "survey", "assay", "geology")
+    _BLOCKS = ("block-model", "Demo block model")
+    _BLOCK_FILES = ("truth_blocks.parquet", "truth.json")
 
     def __init__(self, folder: str | Path = DEMO_FOLDER) -> None:
         self.folder = Path(folder)
         self._lock = threading.Lock()
         self._drillholes: DrillholeData | None = None
         self._meshes: dict[str, Mesh] = {}
+        self._blocks: BlockData | None = None
 
     # ------------------------------------------------------------------ what exists
 
@@ -133,7 +148,11 @@ class DemoSceneSource:
         files = [self.folder / f"{name}.csv" for name in self._CSV]
         for _, _, stem in self._MESHES.values():
             files.extend(self._mesh_files(stem))
+        files.extend(self.folder / name for name in self._BLOCK_FILES)
         return [f for f in files if f.is_file()]
+
+    def _has_blocks(self) -> bool:
+        return all((self.folder / name).is_file() for name in self._BLOCK_FILES)
 
     @property
     def version(self) -> str:
@@ -150,6 +169,8 @@ class DemoSceneSource:
                 out.append(ObjectInfo(object_id, name, category, "mesh"))  # type: ignore[arg-type]
         if self._has_drillholes():
             out.append(ObjectInfo("drillholes", "Drillholes", "drillholes", "drillholes"))
+        if self._has_blocks():
+            out.append(ObjectInfo(*self._BLOCKS, "blockModels", "blocks"))
         return out
 
     # ------------------------------------------------------------------ data
@@ -196,6 +217,34 @@ class DemoSceneSource:
             if object_id not in self._meshes:
                 self._meshes[object_id] = Mesh(np.load(vertices), np.load(faces))
             return self._meshes[object_id]
+
+
+    def blocks(self, object_id: str) -> BlockData:
+        if object_id != self._BLOCKS[0] or not self._has_blocks():
+            raise KeyError(object_id)
+        from bakumine.api.blocks import BlockData, build_demo_block_model
+        from bakumine.core.blockmodel.constraints import DictResolver
+        from bakumine.core.geometry.dtm import DTM
+
+        def mesh_or_none(name: str) -> Mesh | None:
+            try:
+                return self.mesh(name)
+            except KeyError:
+                return None
+
+        solid, topo = mesh_or_none("ore-solid"), mesh_or_none("topo")
+        with self._lock:
+            if self._blocks is None:
+                model = build_demo_block_model(self.folder, solid, topo)
+                solids = {"ore-solid": solid} if solid is not None else {}
+                dtms = {"topo": DTM(topo)} if topo is not None else {}
+                self._blocks = BlockData(
+                    model,
+                    DictResolver(dtms=dtms, solids=solids),
+                    solids={k: self._MESHES[k][0] for k in solids},
+                    surfaces={k: self._MESHES[k][0] for k in dtms},
+                )
+            return self._blocks
 
 
 # ---------------------------------------------------------------------- active source

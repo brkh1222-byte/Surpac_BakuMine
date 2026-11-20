@@ -4,6 +4,7 @@
  *   fetchManifest()                -> SceneManifest         (JSON)
  *   fetchDrillholes(object, table) -> DrillholeSet          (BKMA)
  *   fetchMesh(object)              -> MeshData              (BKMA)
+ *   fetchBlocks(object, query)     -> BlockSet              (BKMA; api/blocks.ts)
  *
  * Every coordinate array is WORLD float64 (x = east, y = north, z = up, metres), flat
  * xyz triples. Layers turn them into float32 with `worldToScene`; nothing here does.
@@ -137,7 +138,7 @@ export class ApiError extends Error {
 
 type FetchFn = typeof fetch
 
-async function request(url: string, signal: AbortSignal | undefined, fetchFn: FetchFn): Promise<Response> {
+export async function request(url: string, signal: AbortSignal | undefined, fetchFn: FetchFn): Promise<Response> {
   let response: Response
   try {
     response = await fetchFn(url, { signal })
@@ -164,7 +165,7 @@ async function request(url: string, signal: AbortSignal | undefined, fetchFn: Fe
   return response
 }
 
-async function requestBkma(url: string, kind: string, signal: AbortSignal | undefined, fetchFn: FetchFn) {
+export async function requestBkma(url: string, kind: string, signal: AbortSignal | undefined, fetchFn: FetchFn) {
   const response = await request(url, signal, fetchFn)
   try {
     const payload = decodeBkma(await response.arrayBuffer())
@@ -186,7 +187,7 @@ export async function fetchManifest(signal?: AbortSignal, fetchFn: FetchFn = fet
   return manifest as SceneManifest
 }
 
-function stringList(value: unknown, what: string): string[] {
+export function stringList(value: unknown, what: string): string[] {
   if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
     throw new BkmaError(`${what} is not a list of strings`)
   }
@@ -261,7 +262,7 @@ export function decodeMesh(payload: BkmaPayload): MeshData {
   }
 }
 
-function wrapDecode<T>(url: string, decode: () => T): T {
+export function wrapDecode<T>(url: string, decode: () => T): T {
   try {
     return decode()
   } catch (error) {

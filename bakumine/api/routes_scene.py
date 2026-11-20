@@ -4,10 +4,17 @@
     GET /api/v1/scene/objects/{id}/drillholes           BKMA; ?table=<interval table>
                                                               &tolerance=<metres>
     GET /api/v1/scene/objects/{id}/mesh                 BKMA; ?normals=1
+    GET /api/v1/scene/objects/{id}/blocks               BKMA; ?attributes=a,b
+                                                              &where=<constraint>
+                                                              &lod=auto|full|shell
+                                                              &clip=<constraint>
+    GET /api/v1/scene/objects/{id}/blocks/info          JSON: the object's manifest entry
+    GET /api/v1/scene/objects/{id}/blocks/detail        JSON: one block; ?row= or ?block_id=
 
-Block models will follow the same scheme (``.../objects/{id}/blocks`` with attribute and
-level-of-detail query parameters); the manifest's ``kind`` and ``href`` of each object
-tell the client which endpoint to call.
+The manifest's ``kind`` and ``href`` of each object tell the client which endpoint to
+call. Block payloads, selection (``where``), level of detail (``lod``) and the section
+slab (``clip``) are described in :mod:`bakumine.api.blocks`. Besides the objects of the
+scene, ``perf-<n>`` is a generated dense model of about n blocks (performance probe).
 
 Binary responses carry a strong ``ETag`` and ``Cache-Control: private, no-cache``: the
 browser keeps the payload and revalidates it with ``If-None-Match`` (304 when unchanged).
@@ -26,6 +33,16 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from bakumine.api.binary import MEDIA_TYPE
+from bakumine.api.blocks import (
+    BlockData,
+    BlockQueryError,
+    block_details,
+    block_object_entry,
+    block_payload,
+    parse_attributes,
+    parse_constraint,
+    synthetic_block_data,
+)
 from bakumine.api.payloads import (
     DEFAULT_TOLERANCE,
     drillhole_payload,
@@ -132,3 +149,98 @@ def get_mesh(
         lambda: mesh_payload(mesh, object_id, normals),
     )
     return _binary(request, payload, etag)
+
+
+# ---------------------------------------------------------------------- blocks
+
+
+def _block_data(source: SceneSource, object_id: str) -> BlockData:
+    try:
+        synthetic = synthetic_block_data(object_id)
+    except BlockQueryError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if synthetic is not None:
+        return synthetic
+    blocks = getattr(source, "blocks", None)
+    try:
+        if blocks is None:
+            raise KeyError(object_id)
+        return blocks(object_id)
+    except KeyError:
+        raise HTTPException(404, f"no block model {object_id!r}") from None
+
+
+@router.get("/scene/objects/{object_id}/blocks")
+def get_blocks(
+    object_id: str,
+    request: Request,
+    source: Source,
+    attributes: Annotated[str | None, Query(description="comma-separated attributes")] = None,
+    where: Annotated[
+        str | None, Query(description="constraint JSON or an attribute expression")
+    ] = None,
+    lod: Annotated[str, Query(description="auto, full or shell")] = "auto",
+    clip: Annotated[
+        str | None, Query(description="constraint that limits what is sent (section slab)")
+    ] = None,
+) -> Response:
+    data = _block_data(source, object_id)
+
+    def build() -> bytes:
+        return block_payload(
+            data,
+            object_id,
+            parse_attributes(data.model, attributes),
+            parse_constraint(where),
+            lod,
+            parse_constraint(clip, "clip"),
+        )
+
+    try:
+        payload, etag = payload_cache.get(
+            _cache_key(source, "blocks", object_id, id(data), attributes, where, lod, clip), build
+        )
+    except BlockQueryError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return _binary(request, payload, etag)
+
+
+@router.get("/scene/objects/{object_id}/blocks/info")
+def get_block_info(object_id: str, source: Source, response: Response) -> dict[str, Any]:
+    """The manifest entry of a block model (also for ``perf-<n>`` models)."""
+    data = _block_data(source, object_id)
+    response.headers["Cache-Control"] = CACHE_CONTROL
+    name = next((o.name for o in source.objects() if o.id == object_id), object_id)
+    return {
+        "id": object_id,
+        "name": name,
+        "category": "blockModels",
+        "kind": "blocks",
+        "href": f"/api/v1/scene/objects/{object_id}/blocks",
+        **block_object_entry(data),
+    }
+
+
+@router.get("/scene/objects/{object_id}/blocks/detail")
+def get_block_detail(
+    object_id: str,
+    source: Source,
+    response: Response,
+    row: Annotated[int | None, Query(ge=0, description="row in the block table")] = None,
+    block_id: Annotated[str | None, Query(description="BlockModel.block_ids value")] = None,
+) -> dict[str, Any]:
+    """All attributes, ijk, centroid, size and level of one block."""
+    data = _block_data(source, object_id)
+    if (row is None) == (block_id is None):
+        raise HTTPException(400, "give exactly one of row and block_id")
+    if row is None:
+        try:
+            row = int(data.model.rows_of([int(block_id)])[0])  # type: ignore[arg-type]
+        except ValueError:
+            raise HTTPException(400, "block_id must be an integer") from None
+    try:
+        details = block_details(data, row)
+    except KeyError:
+        raise HTTPException(404, f"block model {object_id!r} has no such block") from None
+    response.headers["Cache-Control"] = CACHE_CONTROL
+    return details

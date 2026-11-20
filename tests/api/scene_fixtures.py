@@ -117,6 +117,9 @@ class TinySceneSource:
             raise KeyError(object_id)
         return self._mesh
 
+    def blocks(self, object_id: str):
+        raise KeyError(object_id)
+
 
 def _plain(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
     """Arrays as nested lists; NaN becomes null (JSON has no NaN)."""

@@ -35,6 +35,9 @@ Mesh payload (``kind = "mesh"``)::
     normals        f4 (V, 3)    area-weighted unit vertex normals; only with ?normals=1
 
     meta = {object_id, n_vertices, n_faces, closed, coordinates}
+
+Block payload (``kind = "blocks"``): see :mod:`bakumine.api.blocks`. It carries no
+coordinates at all: the client rebuilds them from the model definition.
 """
 
 from __future__ import annotations
@@ -283,8 +286,11 @@ def _object_entry(source: SceneSource, info: ObjectInfo) -> dict[str, Any]:
             "faces": int(mesh.n_faces),
             "closed": bool(mesh.is_closed),
         }
-    else:  # pragma: no cover - blocks arrive with P5.T4
-        raise NotImplementedError(info.kind)
+    else:
+        from bakumine.api.blocks import block_object_entry
+
+        entry["href"] = f"{base}/blocks"
+        entry.update(block_object_entry(source.blocks(info.id)))
     return entry
 
 
