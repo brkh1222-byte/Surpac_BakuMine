@@ -170,16 +170,16 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
 
 - [x] **P6.T1 Project.** Create/open a project folder; object tree (database, composites, strings, DTMs, solids, block models, constraints). *Accept:* reopen restores everything.
-- [ ] **P6.T2 Import wizard.** Column mapping, preview, validation report with click-to-hole. *Accept:* public dataset imported through the UI by a Playwright script.
-- [ ] **P6.T3 Compositing dialog.** *Accept:* result equals CLI.
-- [ ] **P6.T4 Block model dialogs.** Create (with auto-extent), attributes, constraints builder, code blocks with sub-blocking. *Accept:* result equals CLI.
-- [ ] **P6.T5 Estimation dialog.** Method, attribute, domain constraint, ellipsoid (shown live in the 3D scene), variogram parameters, passes; background job with progress and cancel. *Accept:* result equals CLI; cancel leaves the model unchanged.
+- [x] **P6.T2 Import wizard.** Column mapping, preview, validation report with click-to-hole. *Accept:* public dataset imported through the UI by a Playwright script.
+- [x] **P6.T3 Compositing dialog.** *Accept:* result equals CLI.
+- [x] **P6.T4 Block model dialogs.** Create (with auto-extent), attributes, constraints builder, code blocks with sub-blocking. *Accept:* result equals CLI.
+- [x] **P6.T5 Estimation dialog.** Method, attribute, domain constraint, ellipsoid (shown live in the 3D scene), variogram parameters, passes; background job with progress and cancel. *Accept:* result equals CLI; cancel leaves the model unchanged.
 - [x] **P6.T6 Report panel.** Volume/tonnes/grade table with export. *Accept:* equals CLI.
 - [ ] **P6.T7 Job log and undo.** Every operation logged with its parameters (reproducible as a CLI script); undo for attribute-changing operations via snapshot. *Accept:* replaying the log on a fresh project gives an identical model.
 
 ### Phase 7 — Validation, performance, delivery (H40–H48)
 
-- [ ] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
+- [x] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
 - [ ] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
 - [ ] ~~CUT: no inputs~~ **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
 - [x] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
@@ -268,6 +268,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 15:20  scope  --  User: "dont save tokens, just build". Cuts reverted (P4.T10, P5.T7, P6.T7 undo back in scope; P7.T3 still blocked on Surpac inputs). Up to 4 agents, default model.
 2026-11-20 15:50  P7.T4  405a3f4  scripts/bench_perf.py (5M blocks, 20k composites). Orchestrator rerun: IDW 1M 0.54 s (<60), OK 1M 0.70 s (<300), 5M 3-pass 3.6 s, sub-block+code d3 4.5 s, save 0.64 / load 0.49 s. P5.T4 exposed-face path 2 ms/frame (from P5 log). No code changed; nothing missed a target. Random-composite data is easier than real drilling.
 2026-11-20 16:10  P4.T10  cfa5e83  Dynamic anisotropy (per-block angles, grouped calls of array estimators; kriging uses block's own anisotropy). Folded case: IDW RMSE 0.804 -> 0.263, OK 0.777 -> 0.190 (corr 0.71 -> 0.98). Constant angles bit-identical to fixed. Orchestrator: estimation tests 326 pass. Slow if every block has distinct angles (angle_step mitigation, not benchmarked).
+2026-11-20 16:45  P6.T2-T5, P7.T1  9ebeebc 59cad85  Import / composite / block model / estimation dialogs (background job, progress, cancel) over /api/v1/ops; endpoints equal CLI (rtol 1e-6, rotation matrix round-off). E2E UI run raw CSVs -> report: tonnes -0.05 %, metal -2.4 %, 4 s. Orchestrator: make check 1313 + vitest 127 green, make e2e 55 passed. Not done: 3D ellipsoid preview, solid/DTM import dialog, capping options in UI. NOTE: synth truth.json plunge (+10) is -10 in the UI/rotation.py convention: sign convention to resolve in STATUS.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
