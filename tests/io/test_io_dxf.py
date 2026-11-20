@@ -282,6 +282,24 @@ def test_hand_written_dxf_parses(tmp_path):
     ]
 
 
+@pytest.mark.parametrize(
+    ("poly_z", "vertex_z", "expected"),
+    [("100.0", "0.0", 100.0), ("100.0", None, 100.0), (None, "7.0", 7.0), (None, None, 0.0)],
+)
+def test_2d_polyline_uses_polyline_elevation_over_vertex_z(poly_z, vertex_z, expected):
+    """P7.T5 regression: R12 writers put 30 = 0.0 on 2D vertices; the elevation is on
+    the POLYLINE record and must win."""
+    head = ["0", "POLYLINE", "8", "C100", "66", "1", "10", "0.0", "20", "0.0"]
+    head += ["30", poly_z] if poly_z else []
+    pairs = ["0", "SECTION", "2", "ENTITIES", *head, "70", "0"]
+    for x, y in (("1.0", "2.0"), ("3.0", "4.0")):
+        pairs += ["0", "VERTEX", "8", "C100", "10", x, "20", y]
+        pairs += ["30", vertex_z] if vertex_z else []
+    pairs += ["0", "SEQEND", "0", "ENDSEC", "0", "EOF"]
+    doc = parse_dxf("\n".join(pairs))
+    assert doc.strings["C100"][0].points[:, 2].tolist() == [expected, expected]
+
+
 def test_3dface_quad_is_split_into_two_triangles():
     doc = parse_dxf(HAND)
     pit = doc.meshes["PIT"]

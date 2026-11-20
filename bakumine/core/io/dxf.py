@@ -299,7 +299,10 @@ def _read_polyline(fields: _Fields, vertices: list[_Fields], col: _Collector) ->
     pts = []
     for v in vertices:
         x, y, z = v.point()
-        if not is_3d and not v.has(30):
+        # 2D polyline: the elevation is the POLYLINE's group 30; the vertices' own z is
+        # not meaningful (R12 writers emit 30 = 0.0 there). It is used only when the
+        # POLYLINE record carries no elevation at all.
+        if not is_3d and (fields.has(30) or not v.has(30)):
             z = elevation
         if v.num(42, 0.0) != 0.0:
             col.doc.notes["bulge ignored (arc read as chord)"] += 1
