@@ -21,7 +21,8 @@ the project's job log, so the same import can be run again on updated files with
 
 ``file``                path, relative to the recipe's base folder unless absolute.
 ``sheets``              workbook sheets to stack: a name, a 0-based index, a wildcard
-                        (``"DH*"``) or a list; default the first sheet.
+                        (``"DH*"``) or a list; default the first sheet. Ignored for a
+                        CSV file, so that a table can mix a CSV and a workbook.
 ``exclude_sheets``      names / wildcards left out of the selection.
 ``header_row``          spreadsheet row of the header (1 = first row, 0 = no header);
                         default: found by the known column names.

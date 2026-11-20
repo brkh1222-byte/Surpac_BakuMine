@@ -91,7 +91,8 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     files = parser.add_argument_group(
         "source files",
         "CSV, XLSX or XLS. A table option given more than once merges the files into one "
-        "table (the first file wins where they disagree; conflicts are reported).",
+        "table (the first file wins where they disagree; conflicts are reported). What "
+        "differs from file to file is said with --source-option.",
     )
     files.add_argument("--collar", action="append", help="collar table")
     files.add_argument(
@@ -107,6 +108,16 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         action="append",
         metavar="NAME=FILE",
         help="any other interval table, stored under NAME (repeatable)",
+    )
+    files.add_argument(
+        "--source-option",
+        action="append",
+        metavar="FILE:KEY=VALUE",
+        help="how ONE source file is read, where it differs from the other files of its "
+        "table (repeatable; one KEY=VALUE each). FILE is the path as given to --collar, "
+        "--assay ... or just its file name. Keys: " + SOURCE_OPTION_HELP + ". Example: "
+        "--collar drilling.csv --collar gis.xlsx --source-option gis.xlsx:sheet=Summary "
+        "--source-option gis.xlsx:header-row=2",
     )
     files.add_argument(
         "--recipe",
@@ -142,7 +153,9 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         action="append",
         metavar="TABLE=SHEETS",
         help="workbook sheets of a table: names, 0-based indexes or wildcards, comma "
-        "separated ('assay=DH*' stacks one sheet per hole; default: the first sheet)",
+        "separated ('assay=DH*' stacks one sheet per hole; default: the first sheet). "
+        "Applies to every workbook of the table (CSV files have no sheets); for one file: "
+        "--source-option FILE:sheet=...",
     )
     shape.add_argument(
         "--header-row",
@@ -285,7 +298,9 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=_guarded(run_import))
 
 
-def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
+def _read_map_file(path: Path, flat: bool = False) -> dict:
+    """``{table: {source column: canonical name}}`` of a --map file; ``flat``: the column
+    map of one source, ``{source column: canonical name}``."""
     if not path.is_file():
         raise CommandError(f"column map file not found: {path}")
     if path.suffix.lower() == ".toml":
@@ -294,9 +309,93 @@ def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
         document = json.loads(path.read_text(encoding="utf-8"))
     else:
         raise CommandError(f"column map file must be .json or .toml, got {path.name}")
+    if flat:
+        if not isinstance(document, dict) or any(isinstance(v, dict) for v in document.values()):
+            raise CommandError(f"{path}: expected {{source column: canonical name}}")
+        return {str(k): str(v) for k, v in document.items()}
     if not isinstance(document, dict) or not all(isinstance(v, dict) for v in document.values()):
         raise CommandError(f"{path}: expected {{table: {{source column: canonical name}}}}")
     return {str(t): {str(k): str(v) for k, v in m.items()} for t, m in document.items()}
+
+
+#: --source-option keys that say how a file is laid out -> the key of a recipe source
+_SOURCE_LAYOUT_KEYS = {
+    "sheet": "sheets",
+    "sheets": "sheets",
+    "exclude-sheets": "exclude_sheets",
+    "header-row": "header_row",
+    "header-rows": "header_rows",
+    "hole-from-sheet": "hole_id_from_sheet",
+    "map": "map",
+}
+#: --source-option keys that are import options of one file -> the ImportOptions field
+_SOURCE_VALUE_KEYS: dict[str, str] = {}
+SOURCE_OPTION_HELP = (
+    "sheet (names, indexes or wildcards, comma separated), exclude-sheets, header-row, "
+    "header-rows, hole-from-sheet (yes / no), map (a JSON or TOML file: {source column: "
+    "canonical name})"
+)
+
+
+def _truth(text: str, what: str) -> bool:
+    if text.strip().casefold() in ("1", "yes", "y", "true", "on"):
+        return True
+    if text.strip().casefold() in ("0", "no", "n", "false", "off"):
+        return False
+    raise CommandError(f"{what} expects yes or no, got {text!r}")
+
+
+def _source_options(
+    items: list[str] | None, files: dict[str, list[Path]]
+) -> dict[tuple[str, int], dict]:
+    """``--source-option FILE:KEY=VALUE`` -> ``{(table, index of the file): source keys}``."""
+    import re
+
+    keys = {**_SOURCE_LAYOUT_KEYS, **_SOURCE_VALUE_KEYS}
+    names = "|".join(map(re.escape, keys))
+    pattern = re.compile(rf"^(?P<file>.+?):(?P<key>{names})=(?P<value>.*)$")
+    given = [(table, i, path) for table, paths in files.items() for i, path in enumerate(paths)]
+    out: dict[tuple[str, int], dict] = {}
+    for item in items or []:
+        match = pattern.match(item)
+        if match is None or not match.group("value").strip():
+            raise CommandError(
+                f"--source-option expects FILE:KEY=VALUE with KEY one of {sorted(keys)}, "
+                f"got {item!r}"
+            )
+        name, key, value = match.group("file"), match.group("key"), match.group("value").strip()
+        found = [(t, i) for t, i, p in given if str(p) == name or p == Path(name)]
+        found = found or [(t, i) for t, i, p in given if p.name == name]
+        if not found:
+            raise CommandError(
+                f"--source-option names {name!r}, which is not one of the source files "
+                f"({', '.join(str(p) for _, _, p in given)})"
+            )
+        for where in found:  # one file may feed two tables: the option is the file's
+            source = out.setdefault(where, {})
+            if key in _SOURCE_VALUE_KEYS:
+                field = _SOURCE_VALUE_KEYS[key]
+                if field in source.setdefault("options", {}):
+                    raise CommandError(f"--source-option gives {name}:{key} twice")
+                source["options"][field] = value
+                continue
+            field = _SOURCE_LAYOUT_KEYS[key]
+            if field in source:
+                raise CommandError(f"--source-option gives {name}:{key} twice")
+            if field in ("sheets", "exclude_sheets"):
+                source[field] = _sheet_list(value)
+                if field == "exclude_sheets":
+                    source[field] = [str(s) for s in source[field]]
+            elif field in ("header_row", "header_rows"):
+                if not value.isdigit():
+                    raise CommandError(f"--source-option {name}:{key} expects a number")
+                source[field] = int(value)
+            elif field == "hole_id_from_sheet":
+                source[field] = _truth(value, f"--source-option {name}:{key}")
+            else:  # map: a file with one table's column map
+                document = _read_map_file(Path(value), flat=True)
+                source[field] = document
+    return out
 
 
 def _hole_list(items: list[str] | None, option: str) -> list[str]:
@@ -381,14 +480,16 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
         numeric_columns=tuple(args.numeric_column),
         delimiter=args.delimiter,
     )
+    per_file = _source_options(args.source_option, files)
     tables: dict[str, list[dict]] = {}
     origin: dict[str, str] = {}
     for name, paths in files.items():
-        if name not in maps and not args.auto:
+        own = [per_file.get((name, i), {}) for i in range(len(paths))]
+        if name not in maps and not args.auto and not all("map" in o for o in own):
             raise CommandError(f"the column map has no table {name!r} (add it or use --auto)")
         origin[name] = "map file" if name in maps else "auto"
         tables[name] = []
-        for path in paths:
+        for path, mine in zip(paths, own, strict=True):
             source: dict = {"file": str(path)}
             for key, values in per_table.items():
                 if name in values:
@@ -397,6 +498,9 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
                 source["map"] = maps[name]
             if name in args.hole_from_sheet:
                 source["hole_id_from_sheet"] = True
+            source.update(mine)  # what --source-option says of this file wins
+            if not source.get("hole_id_from_sheet"):
+                source.pop("hole_id_from_sheet", None)
             if name not in ("collar", "survey"):
                 if name in args.sample_depth:
                     source["sample_depth"] = {"length": args.sample_length}
@@ -539,7 +643,10 @@ def run_import(args: argparse.Namespace) -> int:
     for name, sources in db.metadata.recipe["tables"].items():
         for source in sources:
             pairs = ", ".join(f"{s}->{t}" for s, t in source.get("map", {}).items())
-            print(f"  {name} ({origin.get(name, 'auto')}): {pairs}")
+            how = origin.get(name, "auto")
+            if len(sources) > 1:  # say which file
+                how += f", {Path(str(source['file'])).name}"
+            print(f"  {name} ({how}): {pairs}")
     print(
         f"holes {db.collar['hole_id'].nunique()}, survey stations {len(db.survey)}, "
         + ", ".join(f"{name} intervals {len(table)}" for name, table in db.intervals.items())

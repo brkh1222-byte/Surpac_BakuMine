@@ -648,7 +648,10 @@ def prepare_source(
         if count:
             notes.append({"table": name, "column": column, "kind": what, "count": count, **extra})
 
-    chosen = select_sheets(list(grids), spec.get("sheets"), spec.get("exclude_sheets"))
+    if list(grids) == [""]:  # a CSV file has no sheets: a table-wide choice passes it by
+        chosen = [""]
+    else:
+        chosen = select_sheets(list(grids), spec.get("sheets"), spec.get("exclude_sheets"))
     if not chosen:
         raise ValueError(f"{name}: no sheet selected")
     frames, sheet_info = [], []
