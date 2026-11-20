@@ -175,7 +175,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [x] **P6.T4 Block model dialogs.** Create (with auto-extent), attributes, constraints builder, code blocks with sub-blocking. *Accept:* result equals CLI.
 - [x] **P6.T5 Estimation dialog.** Method, attribute, domain constraint, ellipsoid (shown live in the 3D scene), variogram parameters, passes; background job with progress and cancel. *Accept:* result equals CLI; cancel leaves the model unchanged.
 - [x] **P6.T6 Report panel.** Volume/tonnes/grade table with export. *Accept:* equals CLI.
-- [ ] **P6.T7 Job log and undo.** Every operation logged with its parameters (reproducible as a CLI script); undo for attribute-changing operations via snapshot. *Accept:* replaying the log on a fresh project gives an identical model.
+- [x] **P6.T7 Job log and undo.** Every operation logged with its parameters (reproducible as a CLI script); undo for attribute-changing operations via snapshot. *Accept:* replaying the log on a fresh project gives an identical model.
 
 ### Phase 7 — Validation, performance, delivery (H40–H48)
 
@@ -272,6 +272,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 17:20  P7.T2  b008a6f  Babbitt rework: footwall contact + sampled-column domain, basal/upper zones, 99.5 pct caps, fitted variograms (R2 0.89/0.88), 50x50x15 m blocks. Orchestrator rerun: OK vs NN +2.3 %, OK vs declustered +3.3 % (basal +4.4 %), swath corr x 0.84 / y 0.91 / z 0.96, LOHO xval corr 0.39. Domain is inferred from grades/gaps, not logged geology; density 2.9 assumed.
 2026-11-20 17:20  P7.T5 (part 1)  51ecbab..1c5ae17  Core review: 10 confirmed bugs fixed with failing-first tests (project path traversal + concurrent registry loss, block CSV missing-token clash, assay column silently read as text, DXF 2D polyline z, int64 overflow, round() extremes, .str header). Estimation core: read only, no bug found. Gate A code-review part done.
 2026-11-20 17:20  P5.T7  de539db a4afe36  Section digitising: draw/edit/snap strings on sections, save (.str), build solid. 5 synthetic sections -> valid watertight solid, volume -0.76 %. Orchestrator: after merging all, make check 1348 + vitest 136 green, make e2e 56 passed.
+2026-11-20 17:50  P6.T7  acbf049  Job log (jobs.jsonl, append+fsync), undo via column/folder snapshots (last 5, checksum-guarded), `bakumine project replay|export-log|export-geometry`, Job log panel. Replay of synthetic chain into a fresh project: bit-identical model; undo after code and estimate bit-identical. Orchestrator: make check 1356 + vitest 140 green. Limits: constraint-JSON report filters and non-default import options not replayable.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
