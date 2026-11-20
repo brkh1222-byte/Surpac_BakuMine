@@ -12,11 +12,20 @@
 ``path`` in the registry is relative to the project folder and always uses ``/``. Adding
 an object copies the file or folder into the project, byte for byte, so data read back are
 identical to what went in. ``project.json`` is written atomically (temporary file, fsync,
-rename).
+rename) under an exclusive lock on ``.project.lock``; every change re-reads the
+registry inside the lock first, so two handles (processes) adding objects do not lose each
+other's entries.
+
+Registry paths and object ids are checked: a path must be relative, use only plain
+components (no ``..``) and lie in its kind's subfolder; an id must be a plain token
+(letters, digits, ``_``, ``-``, ``.``, not starting with ``.``). A ``project.json`` that
+breaks these rules is reported as damaged instead of being followed outside the folder.
 """
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -27,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_FILE = "project.json"
+LOCK_FILE = ".project.lock"
 FORMAT_VERSION = 1
 
 #: kind -> subfolder
@@ -55,6 +65,33 @@ class ProjectObject:
 
     def to_dict(self) -> dict[str, str]:
         return {"id": self.id, "kind": self.kind, "name": self.name, "path": self.path}
+
+
+_ID = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*\Z")
+_PART = re.compile(r"[^/\\\x00]+\Z")
+
+
+def _check_id(object_id: str) -> str:
+    if not isinstance(object_id, str) or not _ID.match(object_id) or ".." in object_id:
+        raise ProjectError(
+            f"invalid object id {object_id!r}: use letters, digits, '_', '-' and '.' only"
+        )
+    return object_id
+
+
+def _check_object(obj: ProjectObject) -> ProjectObject:
+    """Reject registry entries whose id or path could reach outside the project."""
+    _check_id(obj.id)
+    if obj.kind not in KIND_FOLDERS:
+        raise ProjectError(f"unknown kind {obj.kind!r}")
+    parts = obj.path.split("/") if isinstance(obj.path, str) else []
+    if (
+        len(parts) < 2
+        or parts[0] != KIND_FOLDERS[obj.kind]
+        or any(p in ("", ".", "..") or not _PART.match(p) for p in parts)
+    ):
+        raise ProjectError(f"object {obj.id!r} has an invalid path {obj.path!r}")
+    return obj
 
 
 def _slug(text: str) -> str:
@@ -92,13 +129,35 @@ class Project:
         try:
             doc = json.loads(file.read_text(encoding="utf-8"))
             version = doc["version"]
-            objects = [ProjectObject(**o) for o in doc["objects"]]
             name = str(doc["name"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ProjectError(f"{file} is damaged: {exc}") from None
         if version != FORMAT_VERSION:
             raise ProjectError(f"unsupported project version {version!r}")
-        return cls(folder, name, objects)
+        return cls(folder, name, cls._read_objects(file, doc))
+
+    @staticmethod
+    def _read_objects(file: Path, doc: Any = None) -> list[ProjectObject]:
+        try:
+            if doc is None:
+                doc = json.loads(file.read_text(encoding="utf-8"))
+            objects = [_check_object(ProjectObject(**o)) for o in doc["objects"]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProjectError(f"{file} is damaged: {exc}") from None
+        return objects
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """Exclusive lock on the registry; reloads the objects from disk on entry."""
+        with open(self.folder / LOCK_FILE, "a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                file = self.folder / PROJECT_FILE
+                if file.is_file():
+                    self._objects = self._read_objects(file)
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     # ------------------------------------------------------------ objects
 
@@ -114,6 +173,7 @@ class Project:
     def path_of(self, obj: ProjectObject | str) -> Path:
         if isinstance(obj, str):
             obj = self.get(obj)
+        _check_object(obj)
         return self.folder.joinpath(*obj.path.split("/"))
 
     def add(
@@ -125,32 +185,37 @@ class Project:
         source = Path(source)
         if not source.exists():
             raise FileNotFoundError(f"{source} does not exist")
+        if object_id is not None:
+            _check_id(object_id)
         stem = source.stem if source.is_file() else source.name
         name = name or stem
-        object_id = object_id or self._unique_id(_slug(name))
-        if any(o.id == object_id for o in self._objects):
-            raise ProjectError(f"object id {object_id!r} already exists")
         suffix = source.suffix if source.is_file() else ""
-        relative = f"{KIND_FOLDERS[kind]}/{source.name}"
-        if any(o.path == relative for o in self._objects) or self.folder.joinpath(
-            *relative.split("/")
-        ).exists():
-            relative = f"{KIND_FOLDERS[kind]}/{stem}-{object_id}{suffix}"
-        target = self.folder.joinpath(*relative.split("/"))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if source.is_dir():
-            shutil.copytree(source, target)
-        else:
-            shutil.copy2(source, target)
-        obj = ProjectObject(object_id, kind, name, relative)
-        self._objects.append(obj)
-        self._save()
+        with self._locked():
+            object_id = object_id or self._unique_id(_slug(name))
+            if any(o.id == object_id for o in self._objects):
+                raise ProjectError(f"object id {object_id!r} already exists")
+            relative = f"{KIND_FOLDERS[kind]}/{source.name}"
+            if (
+                any(o.path == relative for o in self._objects)
+                or self.folder.joinpath(*relative.split("/")).exists()
+            ):
+                relative = f"{KIND_FOLDERS[kind]}/{stem}-{object_id}{suffix}"
+            obj = _check_object(ProjectObject(object_id, kind, name, relative))
+            target = self.folder.joinpath(*relative.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                shutil.copy2(source, target)
+            self._objects.append(obj)
+            self._save()
         return obj
 
     def remove(self, object_id: str, *, delete_files: bool = True) -> ProjectObject:
-        obj = self.get(object_id)
-        self._objects.remove(obj)
-        self._save()
+        with self._locked():
+            obj = self.get(object_id)
+            self._objects.remove(obj)
+            self._save()
         if delete_files:
             path = self.path_of(obj)
             if path.is_dir():
