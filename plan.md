@@ -150,7 +150,7 @@ Read `research.md` §7. This phase decides whether the product is credible; it g
 - [x] **P4.T7 Multi-pass estimation per domain.** Run a list of passes under a constraint, composites filtered by domain, fill only unestimated blocks, store pass number. *Accept:* no block uses samples from another domain; pass attribute consistent.
 - [x] **P4.T8 Experimental variogram (minimal).** Directional, lag/tolerance parameters, output table + a least-squares auto-fit to seed kriging parameters. No UI beyond a simple chart. *Accept:* recovers the synthetic field's range within 20% and nugget ratio within 0.1.
 - [x] **P4.T9 Validation tools.** Swath table (blocks vs composites along X/Y/Z), global mean comparison vs NN, leave-one-out cross-validation. *Accept:* run on synthetic; OK beats IDW beats NN in RMSE against truth, and this is asserted in a test.
-- [ ] **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
+- [x] **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
 
 **Gate B:** full synthetic run. Estimated model vs truth: OK correlation with true block grades > 0.75 inside the ore domain; global tonnes and metal within 5% of truth; all P4 reference comparisons green.
 
@@ -267,6 +267,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 15:00  P7.T2 (partial)  d1459d6  scripts/run_babbitt.py: ft->m, 3.048 m composites, 100x100x20 m model, manual variogram (auto-fit R2 0.12 rejected), OK 3 passes. Global mean OK vs NN +7.8 % (target 5 %: NOT met; NN biased by hole-end picks), swath corr x 0.33 / y 0.58 / z 0.89, LOHO xval corr 0.29. Test asserts 10 % + 2 of 3 swaths. Left UNTICKED. No domain wireframe, density 2.9 assumed.
 2026-11-20 15:20  scope  --  User: "dont save tokens, just build". Cuts reverted (P4.T10, P5.T7, P6.T7 undo back in scope; P7.T3 still blocked on Surpac inputs). Up to 4 agents, default model.
 2026-11-20 15:50  P7.T4  405a3f4  scripts/bench_perf.py (5M blocks, 20k composites). Orchestrator rerun: IDW 1M 0.54 s (<60), OK 1M 0.70 s (<300), 5M 3-pass 3.6 s, sub-block+code d3 4.5 s, save 0.64 / load 0.49 s. P5.T4 exposed-face path 2 ms/frame (from P5 log). No code changed; nothing missed a target. Random-composite data is easier than real drilling.
+2026-11-20 16:10  P4.T10  cfa5e83  Dynamic anisotropy (per-block angles, grouped calls of array estimators; kriging uses block's own anisotropy). Folded case: IDW RMSE 0.804 -> 0.263, OK 0.777 -> 0.190 (corr 0.71 -> 0.98). Constant angles bit-identical to fixed. Orchestrator: estimation tests 326 pass. Slow if every block has distinct angles (angle_step mitigation, not benchmarked).
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
