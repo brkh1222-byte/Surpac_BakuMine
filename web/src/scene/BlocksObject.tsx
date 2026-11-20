@@ -3,17 +3,29 @@
  * blocks of the current filter / colour attribute / level of detail, and mounts the
  * layer. Used by the project scene (manifest objects of kind "blocks") and by the
  * performance scene (generated `perf-<n>` models).
+ *
+ * Sections and the level of detail: a large selection arrives as its exposed shell only
+ * (bakumine/api/blocks.py). That is right for the 3D view and wrong for a section, which
+ * would cut a hollow body. So while the scene is clipped to a section slab and the
+ * server answered with a shell, the blocks are requested again with the slab as the
+ * `clip` constraint: everything selected inside the slab, interior included. When the
+ * whole selection is loaded anyway (`lod: full`), the GPU clipping planes do it alone.
  */
-import { useLayoutEffect, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BlockManifestObject, BlockQuery } from '../api/blocks'
-import { useBlockSet } from '../api/useBlocks'
+import { BLOCK_DEBOUNCE_MS, useBlockSet } from '../api/useBlocks'
+import { slabConstraint } from '../blocks/filter'
 import { parseDefinition } from '../blocks/structure'
 import { useBlocks } from '../state/blocks'
+import { useSection } from '../state/section'
 import type { Bounds } from '../state/store'
 import { BlocksLayer } from './BlocksLayer'
 import { useLayerObject, type LayerObject } from './layers'
 
 const NO_BOUNDS: Bounds = { min: [0, 0, 0], max: [0, 0, 0] }
+/** A section step should not wait as long as a slider being dragged. */
+const SLAB_DEBOUNCE_MS = 60
+
 function Placeholder({ object }: { object: LayerObject }) {
   useLayerObject(object)
   return null
@@ -36,17 +48,38 @@ export function BlocksObject({ object, ranges }: BlocksObjectProps) {
   }, [object, definition, ranges])
 
   const model = useBlocks((s) => s.models[object.id])
+  const clipping = useSection((s) => s.enabled && s.mode === 'clip')
+  const plane = useSection((s) => s.plane)
+  const back = useSection((s) => s.back)
+
   const colorBy = model?.colorBy ?? null
   const where = model?.where ?? null
   // Gaps between blocks, or see-through blocks, show the interior: no shell then.
   const lod = model && (model.shrink < 1 || model.opacity < 1) ? 'full' : 'auto'
+  // Whether the server last answered with less than the whole selection.
+  const [shell, setShell] = useState(false)
+  const needSlab = clipping && shell
+  const clip = useMemo(
+    // Blocks are cut at the plane itself (BlocksLayer): only the back of the slab is needed.
+    () => (needSlab ? JSON.stringify(slabConstraint(plane, { front: 0, back }, definition)) : null),
+    [needSlab, plane, back, definition],
+  )
   const query = useMemo<BlockQuery | null>(
-    () => (model ? { attributes: colorBy ? [colorBy] : [], where, lod, clip: null } : null),
+    () => (model ? { attributes: colorBy ? [colorBy] : [], where, lod, clip } : null),
     // `model` matters only as "registered".
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [!!model, colorBy, where, lod],
+    [!!model, colorBy, where, lod, clip],
   )
-  const loaded = useBlockSet(object, query)
+  // Only the slab moved: answer quickly.
+  const previous = useRef({ where, colorBy, lod })
+  const slabOnly = previous.current.where === where && previous.current.colorBy === colorBy && previous.current.lod === lod
+  useEffect(() => {
+    previous.current = { where, colorBy, lod }
+  }, [where, colorBy, lod])
+
+  const loaded = useBlockSet(object, query, slabOnly ? SLAB_DEBOUNCE_MS : BLOCK_DEBOUNCE_MS)
+  const partial = loaded ? loaded.set.lod === 'shell' || loaded.set.clipped : false
+  useEffect(() => setShell(partial), [partial])
 
   const layer = useMemo<LayerObject>(
     () => ({ id: object.id, name: object.name, category: object.category, bounds: object.bounds ?? NO_BOUNDS }),

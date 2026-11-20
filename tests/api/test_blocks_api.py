@@ -43,6 +43,7 @@ from bakumine.core.blockmodel.expressions import parse
 REPO = Path(__file__).resolve().parents[2]
 DEMO = REPO / "data" / "synthetic" / "default"
 BLOCKS = "/api/v1/scene/objects/block-model/blocks"
+FILTERS = REPO / "web" / "src" / "blocks" / "fixtures" / "filters.json"
 
 pytestmark = pytest.mark.skipif(
     not (DEMO / "truth_blocks.parquet").is_file(),
@@ -314,6 +315,48 @@ def test_rows_equal_the_python_mask_for_every_constraint(client, data, capsys):
         print("\n  blocks selected (server rows == constraint.mask):")
         for name, count in counts.items():
             print(f"    {name:22s} {count:>8,d}")
+
+
+def test_filter_panel_json_selects_the_python_mask(client, data, capsys):
+    """The viewer's filter panel -> JSON (web/src/blocks/filter.ts, checked by vitest
+    against the same file) -> server rows == the mask of the constraint written in Python."""
+    model = data.model
+    cases = {c["name"]: c for c in json.loads(FILTERS.read_text())["cases"]}
+    ore = AttributeConstraint('rock == "ORE"')
+    below = DtmConstraint("topo", "below")
+    python = {
+        "default-ore": ore,
+        "ore-and-grade": ore & AttributeConstraint("au > 1"),
+        "grade-range": AttributeConstraint("au >= 0.5 and au <= 2"),
+        "grade-open-range": AttributeConstraint("au >= 1.25"),
+        "two-categories": AttributeConstraint('not (rock == "AIR")'),
+        "spatial": SolidConstraint("ore-solid", "outside")
+        & below
+        & RangeConstraint.elevation(950.0, 1050.0)
+        & RangeConstraint(j=(20, 30)),
+        "combined": combine(
+            "a and (b or not c)",
+            {
+                "a": below,
+                "b": AttributeConstraint("au >= 2"),
+                "c": RangeConstraint(z=(None, 1100.0)),
+            },
+        ),
+        "expression-and-disabled": AttributeConstraint("au * density > 3")
+        & RangeConstraint(k=(30, None)),
+        "inside-solid": SolidConstraint("ore-solid"),
+    }
+    assert set(python) == set(cases)
+    lines = []
+    for name, constraint in python.items():
+        expected = np.flatnonzero(constraint.mask(model, data.resolver))
+        meta, arrays = fetch(client, where=json.dumps(cases[name]["constraint"]), lod="full")
+        np.testing.assert_array_equal(arrays["row"], expected, err_msg=name)
+        assert meta["n_selected"] == len(expected) > 0, name
+        lines.append(f"    {name:26s} {len(expected):>8,d}")
+    with capsys.disabled():
+        print("\n  filter panel JSON -> blocks (server rows == Python mask):")
+        print("\n".join(lines))
 
 
 def test_a_short_expression_is_an_attribute_constraint(client, data):

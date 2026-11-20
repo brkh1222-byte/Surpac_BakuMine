@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useBlocks } from '../state/blocks'
 import { useViewer } from '../state/store'
 import { blockQueryString, fetchBlocks, type BlockQuery, type BlockSet } from './blocks'
+import { useRetryGeneration } from './useResource'
 
 export const BLOCK_DEBOUNCE_MS = 220
 
@@ -31,6 +32,8 @@ function isAbort(error: unknown): boolean {
 export function useBlockSet(object: { id: string; name: string; href: string }, query: BlockQuery | null, debounceMs = BLOCK_DEBOUNCE_MS): LoadedBlocks | null {
   const [loaded, setLoaded] = useState<LoadedBlocks | null>(null)
   const first = useRef(true)
+  // The sidebar's "Retry" (after a failed load) sends the request again.
+  const retry = useRetryGeneration()
   const key = query ? blockQueryString(query) : null
   const { id, name, href } = object
 
@@ -79,7 +82,7 @@ export function useBlockSet(object: { id: string; name: string; href: string }, 
     }
     // `query` is identified by `key`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, name, href, key, debounceMs])
+  }, [id, name, href, key, debounceMs, retry])
 
   useEffect(() => () => useViewer.getState().setLoad(`blocks:${id}`, null), [id])
   return loaded

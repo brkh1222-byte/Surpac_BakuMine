@@ -1,0 +1,92 @@
+{
+ "note": "Filter panel states and the constraint JSON they must become. Read by web/src/blocks/filter.test.ts (filterToConstraint) and by tests/api/test_blocks_api.py (the server's rows for that JSON equal the mask of the same constraint built in Python).",
+ "cases": [
+  {
+   "name": "default-ore",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "category", "attribute": "rock", "values": ["ORE"]}
+   ]},
+   "constraint": {"type": "attribute", "expression": "rock == \"ORE\""}
+  },
+  {
+   "name": "ore-and-grade",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "category", "attribute": "rock", "values": ["ORE"]},
+    {"id": 2, "enabled": true, "kind": "numeric", "attribute": "au", "op": ">", "value": 1, "min": null, "max": null}
+   ]},
+   "constraint": {"type": "and", "children": [
+    {"type": "attribute", "expression": "rock == \"ORE\""},
+    {"type": "attribute", "expression": "au > 1"}
+   ]}
+  },
+  {
+   "name": "grade-range",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "numeric", "attribute": "au", "op": "between", "value": 0, "min": 0.5, "max": 2}
+   ]},
+   "constraint": {"type": "attribute", "expression": "0.5 <= au <= 2"}
+  },
+  {
+   "name": "grade-open-range",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "numeric", "attribute": "au", "op": "between", "value": 0, "min": 1.25, "max": null}
+   ]},
+   "constraint": {"type": "attribute", "expression": "au >= 1.25"}
+  },
+  {
+   "name": "two-categories",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "category", "attribute": "rock", "values": ["WASTE", "ORE"]}
+   ]},
+   "constraint": {"type": "attribute", "expression": "rock == \"WASTE\" or rock == \"ORE\""}
+  },
+  {
+   "name": "spatial",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "solid", "solid": "ore-solid", "side": "outside"},
+    {"id": 2, "enabled": true, "kind": "surface", "surface": "topo", "side": "below"},
+    {"id": 3, "enabled": true, "kind": "elevation", "min": 950, "max": 1050},
+    {"id": 4, "enabled": true, "kind": "index", "axis": "j", "min": 20, "max": 30}
+   ]},
+   "constraint": {"type": "and", "children": [
+    {"type": "solid", "solid": "ore-solid", "side": "outside"},
+    {"type": "dtm", "surface": "topo", "side": "below", "outside": false},
+    {"type": "range", "z": [950, 1050]},
+    {"type": "range", "j": [20, 30]}
+   ]}
+  },
+  {
+   "name": "combined",
+   "filter": {"combine": "a and (b or not c)", "conditions": [
+    {"id": 1, "enabled": true, "kind": "surface", "surface": "topo", "side": "below"},
+    {"id": 2, "enabled": true, "kind": "numeric", "attribute": "au", "op": ">=", "value": 2, "min": null, "max": null},
+    {"id": 3, "enabled": true, "kind": "elevation", "min": null, "max": 1100}
+   ]},
+   "constraint": {"type": "expression", "expression": "a and (b or not c)", "constraints": {
+    "a": {"type": "dtm", "surface": "topo", "side": "below", "outside": false},
+    "b": {"type": "attribute", "expression": "au >= 2"},
+    "c": {"type": "range", "z": [null, 1100]}
+   }}
+  },
+  {
+   "name": "expression-and-disabled",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": false, "kind": "category", "attribute": "rock", "values": ["ORE"]},
+    {"id": 2, "enabled": true, "kind": "expression", "text": "  au * density > 3 "},
+    {"id": 3, "enabled": true, "kind": "index", "axis": "k", "min": 30.4, "max": null},
+    {"id": 4, "enabled": true, "kind": "expression", "text": "   "}
+   ]},
+   "constraint": {"type": "and", "children": [
+    {"type": "attribute", "expression": "au * density > 3"},
+    {"type": "range", "k": [30, null]}
+   ]}
+  },
+  {
+   "name": "inside-solid",
+   "filter": {"combine": "", "conditions": [
+    {"id": 1, "enabled": true, "kind": "solid", "solid": "ore-solid", "side": "inside"}
+   ]},
+   "constraint": {"type": "solid", "solid": "ore-solid", "side": "inside"}
+  }
+ ]
+}

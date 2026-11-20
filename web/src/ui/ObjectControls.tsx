@@ -3,6 +3,7 @@ import { MESH_MODES, type MeshMode, type MeshShading } from '../meshes/display'
 import type { MissingDisplay } from '../blocks/colour'
 import { MIN_OPACITY, MIN_SHRINK, useBlocks } from '../state/blocks'
 import { attributeKey, useDisplay } from '../state/display'
+import { FilterPanel } from './FilterPanel'
 
 function DrillholeControls({ id }: { id: string }) {
   const display = useDisplay((s) => s.drillholes[id])
@@ -149,6 +150,7 @@ function BlockControls({ id }: { id: string }) {
         <input type="checkbox" data-testid={`edges-${id}`} checked={model.edges} onChange={(e) => setDisplay(id, { edges: e.target.checked })} />
         <span>Block edges</span>
       </label>
+      <FilterPanel id={id} />
     </div>
   )
 }

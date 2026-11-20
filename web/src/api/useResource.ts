@@ -57,6 +57,11 @@ export function clearResources(): void {
   bump()
 }
 
+/** Changes whenever `retryFailed` or `clearResources` runs: other loaders retry on it. */
+export function useRetryGeneration(): number {
+  return useSyncExternalStore(subscribe, () => generation, () => generation)
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
