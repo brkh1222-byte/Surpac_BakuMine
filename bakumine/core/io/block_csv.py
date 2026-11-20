@@ -349,8 +349,15 @@ def export_block_csv(
                     "missing-value token; choose another token"
                 )
             tables[spec.name] = np.array([*spec.categories, missing], dtype=object)
-        elif spec.kind == "float" and token_number is not None and np.isnan(column).any():
-            if (column == token_number).any():
+        elif token_number is not None:
+            # the reader turns the declared token into missing whether or not the
+            # column has NaNs, so any equal value (also after rounding) is lost
+            values = column.astype(np.float64)
+            places = per_attr[spec.name] if spec.kind == "float" else None
+            hit = values == token_number
+            if places is not None:
+                hit |= np.round(values, places) == np.round(token_number, places)
+            if hit.any():
                 raise BlockCsvError(
                     f"attribute {spec.name!r} contains the value {missing}, which is also the "
                     "missing-value token; choose another token"

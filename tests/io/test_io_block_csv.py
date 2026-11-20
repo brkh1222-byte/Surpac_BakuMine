@@ -667,3 +667,17 @@ def test_truth_grid_exported_and_reimported_gives_the_same_au_and_rock(tmp_path)
     # and the first data line is northing, easting, elevation of the first block
     line = (tmp_path / "truth.csv").read_text().splitlines()[3].split(",")
     assert [float(v) for v in line[:3]] == [5300255.0, 500405.0, 827.5]
+
+
+# ---- P7.T5 regression: a value equal to the missing token is refused even without NaNs
+@pytest.mark.parametrize(
+    ("kind", "values", "decimals"),
+    [("float", [-99.0, 1.5], None), ("int", [-99, 7], None), ("float", [-99.004, 1.5], 2)],
+)
+def test_export_refuses_value_equal_to_missing_token(tmp_path, kind, values, decimals):
+    model = BlockModel(BlockModelDefinition((0.0, 0.0, 0.0), (10.0, 10.0, 5.0), (2, 1, 1)))
+    model.add_attribute("v", kind)
+    model.set("v", np.array(values))
+    with pytest.raises(BlockCsvError, match="missing-value token"):
+        export_block_csv(model, tmp_path / "m.csv", missing="-99", decimals=decimals)
+    assert not (tmp_path / "m.csv").exists()
