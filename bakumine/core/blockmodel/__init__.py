@@ -2,6 +2,7 @@
 
 from bakumine.core.blockmodel.attributes import Attribute
 from bakumine.core.blockmodel.blocks import BlockModel, SplitResult
+from bakumine.core.blockmodel.coding import AssignResult, CodingStep, assign, code_model
 from bakumine.core.blockmodel.constraints import (
     And,
     AttributeConstraint,
@@ -67,3 +68,6 @@ __all__ += ["SubblockResult", "merge_uniform", "subblock_to_constraint"]
 
 # partial percentages (P3.T6)
 __all__ += ["assign_partial", "constraint_volume", "partial_fraction"]
+
+# assigning values / coding (P3.T7)
+__all__ += ["AssignResult", "CodingStep", "assign", "code_model"]
