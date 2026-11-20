@@ -814,3 +814,63 @@ def test_implicit_solid_argument_errors():
         keep_grid=True, min_component_volume=1.0,
     )  # fmt: skip
     assert r.grid_values.shape == r.grid.shape and r.mesh.n_faces > 0
+
+
+# ---------------------------------------------------------------------------
+# cavities: inward shells inside the solid are valid
+# ---------------------------------------------------------------------------
+
+
+def test_isosurface_of_a_hollow_sphere_is_a_valid_solid_with_a_cavity():
+    x, y, z, origin, spacing = lattice(-5.0, 5.0, 41)
+    r = np.sqrt(x**2 + y**2 + z**2)
+    mesh = marching_tetrahedra(np.minimum(4.0 - r, r - 2.0), origin, spacing, inside="above")
+    report = mesh.validate()
+    assert report.is_valid and report.is_oriented and report.issues() == []
+    n, label, volume = mesh_components(mesh)
+    assert n == 2 and (volume < 0).sum() == 1
+    np.testing.assert_array_equal(report.cavity_faces, np.flatnonzero(volume[label] < 0))
+    assert mesh.volume == pytest.approx(4.0 / 3.0 * np.pi * (4.0**3 - 2.0**3), rel=0.02)
+
+
+def test_implicit_solid_with_a_waste_core_reports_a_cavity_and_no_winding_issue():
+    """Vertical holes through a hollow sphere (ore between 18 and 40 m from the centre)."""
+    from bakumine.core.geometry.implicit_request import implicit_summary
+
+    outer, inner = 40.0, 18.0
+    collars, logs = [], []
+    for i, x in enumerate(np.arange(-45.0, 46.0, 10.0)):
+        for j, y in enumerate(np.arange(-45.0, 46.0, 10.0)):
+            hole = f"H{i}_{j}"
+            collars.append((hole, x, y, 60.0, 120.0))
+            rho2 = x * x + y * y
+            cuts = [0.0]
+            if rho2 < outer**2:
+                a = np.sqrt(outer**2 - rho2)
+                cuts += [60.0 - a]
+                if rho2 < inner**2:
+                    b = np.sqrt(inner**2 - rho2)
+                    cuts += [60.0 - b, 60.0 + b]
+                cuts += [60.0 + a]
+            cuts.append(120.0)
+            for k, (top, bottom) in enumerate(zip(cuts[:-1], cuts[1:], strict=True)):
+                logs.append((hole, top, bottom, "ORE" if k % 2 else "WASTE"))
+    collar = pd.DataFrame(collars, columns=["hole_id", "x", "y", "z", "max_depth"])
+    tables = {
+        "collar": collar,
+        "survey": pd.DataFrame(
+            {"hole_id": collar["hole_id"], "depth": 0.0, "dip": -90.0, "azimuth": 0.0}
+        ),
+        "geology": pd.DataFrame(logs, columns=["hole_id", "depth_from", "depth_to", "rock"]),
+    }
+    result = implicit_solid(tables, "geology", "rock", "ORE", anisotropy=None, resolution=3.0)
+    d = result.diagnostics
+    assert d["n_cavities"] == 1 and d["n_components"] == 2
+    assert d["mesh_valid"] and d["mesh_oriented"] and not d["mesh_outward"]
+    assert d["mesh_issues"] == []
+    summary = implicit_summary(result, [])
+    assert summary["valid"] and summary["issues"] == [] and summary["n_cavities"] == 1
+    # the volume is the shell: the cavity is subtracted, and that did not change
+    assert d["volume"] == pytest.approx(result.mesh.volume)
+    assert d["volume"] == pytest.approx(4.0 / 3.0 * np.pi * (outer**3 - inner**3), rel=0.1)
+    assert sum(d["component_volumes"]) == pytest.approx(d["volume"])

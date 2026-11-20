@@ -391,3 +391,37 @@ def test_closed_and_winding_agree_with_trimesh_on_20_random_meshes():
         if fixed.is_watertight:
             assert fixed.volume > 0, context
     assert seen == {(True, True), (True, False), (False, True), (False, False)}
+
+
+def test_cavities_are_inward_shells_inside_the_solid():
+    """An inward shell inside the solid is a hole in it, not a winding defect."""
+    outer, inner = cube(4.0), icosphere(2, 1.0)
+    hollow = Mesh.concatenate([outer, inner.flipped()])
+    report = validate(hollow)
+    assert report.is_valid and report.is_oriented and not report.is_outward
+    assert report.issues() == [] and report.summary().startswith("valid solid")
+    np.testing.assert_array_equal(
+        report.cavity_faces, np.arange(outer.n_faces, outer.n_faces + inner.n_faces)
+    )
+    np.testing.assert_array_equal(report.cavity_faces, report.misoriented_faces)
+    assert len(report.wrongly_wound_faces) == 0
+    assert report.to_dict()["n_cavity_faces"] == inner.n_faces and report.to_dict()["is_oriented"]
+    assert hollow.volume == pytest.approx(outer.volume - inner.volume)
+    # the same inward shell outside the cube encloses nothing: wrongly wound
+    apart = Mesh.concatenate([outer, inner.flipped().translated([10.0, 0.0, 0.0])])
+    report = validate(apart)
+    assert len(report.cavity_faces) == 0 and not report.is_oriented
+    assert report.issues() == [f"{inner.n_faces} faces wound inward (negative volume)"]
+    # below the cube, where a ray going up crosses the cube twice: still outside
+    below = Mesh.concatenate([outer, inner.flipped().translated([0.0, 0.0, -10.0])])
+    assert len(validate(below).cavity_faces) == 0
+    # an island inside a cavity is outward again; an inward island is wrongly wound
+    island = icosphere(1, 0.3)
+    nested = Mesh.concatenate([outer, inner.flipped(), island])
+    assert validate(nested).is_oriented and validate(nested).n_components == 3
+    wrong = validate(Mesh.concatenate([outer, inner.flipped(), island.flipped()]))
+    assert not wrong.is_oriented and len(wrong.wrongly_wound_faces) == island.n_faces
+    # a wholly inward solid is not a cavity, after any rigid motion either
+    assert len(validate(outer.flipped()).cavity_faces) == 0
+    moved = hollow.transformed(random_transform(np.random.default_rng(3), far=True))
+    assert validate(moved).is_oriented and len(validate(moved).cavity_faces) == inner.n_faces

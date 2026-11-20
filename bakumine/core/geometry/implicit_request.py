@@ -95,8 +95,10 @@ def implicit_summary(result: ImplicitResult, messages: list[str]) -> dict[str, A
             anisotropy[key] = d[f"anisotropy_{key}"]
     return {
         "volume": float(d["volume"]),
-        "valid": bool(d["mesh_valid"]),
+        # a solid: valid topology, every shell outward and every cavity inward
+        "valid": bool(d["mesh_valid"]) and bool(d["mesh_oriented"]),
         "outward": bool(d["mesh_outward"]),
+        "n_cavities": int(d["n_cavities"]),
         "issues": list(d["mesh_issues"] or []),
         "n_vertices": int(d["n_vertices"]),
         "n_faces": int(d["n_faces"]),

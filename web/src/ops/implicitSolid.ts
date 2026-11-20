@@ -111,6 +111,8 @@ export interface ImplicitResult {
   issues: string[]
   n_faces: number
   n_components: number
+  /** components that are holes in the solid (inward shells inside it); they are valid */
+  n_cavities?: number
   n_holes: number
   n_holes_intersecting: number
   resolution: number

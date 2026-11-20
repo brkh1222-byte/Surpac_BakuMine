@@ -145,10 +145,14 @@ def run_implicit_command(args: argparse.Namespace) -> int:
     for message in summary["warnings"]:
         print(f"warning: {message}")
     print(format_axes(summary["anisotropy"]))
+    cavities = ""
+    if summary["n_cavities"]:
+        cavities = f" of which {summary['n_cavities']} cavities (holes in the solid, wound inward)"
     print(
         f"solid: volume {summary['volume']:.1f} m3, "
         f"{'valid' if summary['valid'] else 'NOT VALID'}, {summary['n_components']} "
-        f"component(s), {summary['n_faces']} triangles, resolution {summary['resolution']:.2f} m, "
+        f"component(s){cavities}, {summary['n_faces']} triangles, "
+        f"resolution {summary['resolution']:.2f} m, "
         f"{summary['n_holes_intersecting']} of {summary['n_holes']} holes intersect"
     )
     for issue in summary["issues"]:

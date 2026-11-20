@@ -1273,6 +1273,8 @@ def implicit_solid(
         "volume": float(mesh.volume) if mesh.n_faces else 0.0,
         "mesh_valid": None if report is None else bool(report.is_valid),
         "mesh_outward": None if report is None else bool(report.is_outward),
+        "mesh_oriented": None if report is None else bool(report.is_oriented),
+        "n_cavities": int((component_volume < 0).sum()),
         "mesh_issues": None if report is None else report.issues(),
         "seconds": {
             "constraints": t1 - t0,

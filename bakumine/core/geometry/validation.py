@@ -13,7 +13,7 @@ format that repeats coordinates per face.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from numba import njit, prange
@@ -63,6 +63,13 @@ class ValidationReport:
     self_intersections : (k, 2) int64 or None
         Pairs of faces ``(i, j)``, ``i < j``, that cross or overlap other
         than along a shared vertex or edge. None if the check was skipped.
+    cavity_faces : (k,) int64
+        The faces of ``misoriented_faces`` that belong to a **cavity**: a closed
+        shell with negative volume that lies inside an odd number of the other
+        shells (a hole in the solid). Its inward winding is the correct one: the
+        normals point out of the material and ``Mesh.volume`` is the volume of
+        the outer shell less that of the hole. Found only for a closed mesh with
+        consistent winding.
     """
 
     n_vertices: int
@@ -77,6 +84,7 @@ class ValidationReport:
     degenerate_faces: np.ndarray
     duplicate_faces: np.ndarray
     self_intersections: np.ndarray | None
+    cavity_faces: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
 
     @property
     def is_closed(self) -> bool:
@@ -97,6 +105,18 @@ class ValidationReport:
     def is_outward(self) -> bool:
         """Closed, consistently wound and every component has positive volume."""
         return self.is_closed and self.is_winding_consistent and not len(self.misoriented_faces)
+
+    @property
+    def wrongly_wound_faces(self) -> np.ndarray:
+        """Faces of inward-wound shells that are not cavities (``misoriented`` less ``cavity``)."""
+        return np.setdiff1d(self.misoriented_faces, self.cavity_faces)
+
+    @property
+    def is_oriented(self) -> bool:
+        """Closed, consistently wound, every shell outward except the cavities (inward)."""
+        return (
+            self.is_closed and self.is_winding_consistent and not len(self.wrongly_wound_faces)
+        )
 
     @property
     def has_degenerate_faces(self) -> bool:
@@ -148,8 +168,8 @@ class ValidationReport:
             out.append("self-intersection not checked")
         elif len(self.self_intersections):
             out.append(f"{len(self.self_intersections)} self-intersecting face pairs")
-        if self.is_closed and self.is_winding_consistent and len(self.misoriented_faces):
-            out.append(f"{len(self.misoriented_faces)} faces wound inward (negative volume)")
+        if self.is_closed and self.is_winding_consistent and len(self.wrongly_wound_faces):
+            out.append(f"{len(self.wrongly_wound_faces)} faces wound inward (negative volume)")
         return out
 
     def summary(self) -> str:
@@ -171,6 +191,8 @@ class ValidationReport:
             "is_manifold": self.is_manifold,
             "is_winding_consistent": self.is_winding_consistent,
             "is_outward": self.is_outward,
+            "is_oriented": self.is_oriented,
+            "n_cavity_faces": len(self.cavity_faces),
             "orientable": self.orientable,
             "n_boundary_edges": len(self.boundary_edges),
             "n_nonmanifold_edges": len(self.nonmanifold_edges),
@@ -322,6 +344,43 @@ def _orientation(mesh: Mesh) -> tuple[np.ndarray, int, bool]:
     is_open = np.bincount(component, weights=open_faces, minlength=n_components) > 0
     reverse = np.where(is_open, up < 0, volume < 0)
     return flip ^ reverse[component], n_components, not conflict
+
+
+def _cavity_faces(mesh: Mesh, inward: np.ndarray) -> np.ndarray:
+    """Faces of the inward-wound shells of a closed, consistent mesh that are cavities.
+
+    A shell is enclosed when a vertical ray going up from its highest vertex crosses the
+    mesh an odd number of times: the ray cannot cross the shell itself again, and shells
+    do not cross each other, so the count is the number of shells around it.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    from bakumine.core.geometry.inside import column_crossings
+
+    f, n = mesh.faces, mesh.n_vertices
+    rows = np.concatenate([f[:, 0], f[:, 1]])
+    cols = np.concatenate([f[:, 1], f[:, 2]])
+    graph = coo_matrix((np.ones(len(rows), dtype=np.int8), (rows, cols)), shape=(n, n))
+    vertex_label = connected_components(graph, directed=False)[1]
+    face_label = vertex_label[f[:, 0]]
+    shells = np.unique(face_label[inward])
+    # a shell is inward as a whole when the winding is consistent
+    shells = shells[[bool(inward[face_label == c].all()) for c in shells]]
+    if not len(shells):
+        return np.zeros(0, dtype=np.int64)
+    z = mesh.vertices[:, 2]
+    order = np.lexsort((z, vertex_label))  # by shell, then height: the last of a shell is its top
+    last = np.flatnonzero(np.r_[vertex_label[order][1:] != vertex_label[order][:-1], True])
+    top = dict(zip(vertex_label[order][last].tolist(), order[last].tolist(), strict=True))
+    tops = mesh.vertices[[top[int(c)] for c in shells]]
+    crossings = column_crossings(mesh, tops[:, :2])
+    enclosed = np.zeros(len(shells), dtype=bool)
+    for i in range(len(shells)):
+        zs = crossings.z[crossings.offsets[i] : crossings.offsets[i + 1]]
+        above = zs > tops[i, 2] + 1e-9 * (1.0 + abs(tops[i, 2]))
+        enclosed[i] = bool(int(above.sum()) & 1)
+    return np.flatnonzero(inward & np.isin(face_label, shells[enclosed]))
 
 
 def misoriented_faces(mesh: Mesh) -> np.ndarray:
@@ -568,6 +627,10 @@ def validate(
     em = mesh.edge_map
     degenerate = _degenerate_faces(mesh, degenerate_tol)
     flip, n_components, orientable = _orientation(mesh)
+    cavity = np.zeros(0, dtype=np.int64)
+    closed = mesh.n_faces > 0 and not (em.counts != 2).any()
+    if flip.any() and closed and not len(_inconsistent_edge_ids(mesh)):
+        cavity = _cavity_faces(mesh, flip)
     if check_self_intersection:
         candidates = mesh.bvh.self_overlaps()
         hit = triangle_pairs_intersect(mesh, candidates, skip=degenerate)
@@ -587,4 +650,5 @@ def validate(
         degenerate_faces=np.flatnonzero(degenerate),
         duplicate_faces=_duplicate_faces(mesh),
         self_intersections=self_intersections,
+        cavity_faces=cavity,
     )
