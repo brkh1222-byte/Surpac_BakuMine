@@ -37,8 +37,11 @@ def configure_implicit(parser: argparse.ArgumentParser) -> None:
         "A plane: --dip --dip-azimuth [--pitch] with --ratios. The major axis lies along "
         "strike (dip azimuth - 90), turned by the pitch towards the dip direction; the "
         "minor axis is the pole of the plane. Angles: --angles bearing,plunge,dip in the "
-        "project's rotation convention with --ratios. 'auto' estimates the plane from "
-        "one point per intercept and warns when the result follows the drilling.",
+        "project's rotation convention with --ratios. 'auto' estimates the plane: for one "
+        "body from one point per intercept; for stacked lenses (holes that cut the domain "
+        "several times) as the plane along which the ore of neighbouring holes lines up "
+        "best, with a confidence. When that is not well determined no plane is chosen: "
+        "the solid is isotropic and a warning asks for the orientation.",
     )
     ani.add_argument("--dip", type=float, help="dip of the body, degrees from horizontal")
     ani.add_argument("--dip-azimuth", type=float, help="direction the body dips towards")
@@ -99,8 +102,20 @@ def _topography(args: argparse.Namespace):
 
 
 def format_axes(anisotropy: dict[str, Any]) -> str:
+    confidence = ""
+    if anisotropy.get("confidence") is not None:
+        confidence = (
+            f"; confidence {anisotropy['confidence']:.2f} (indicator correlation between "
+            f"holes {anisotropy.get('correlation', float('nan')):.2f})"
+        )
     if "major" not in anisotropy:
-        return f"anisotropy: {anisotropy['source']} (isotropic)"
+        candidate = anisotropy.get("candidate") or {}
+        if candidate.get("dip") is not None:
+            confidence += (
+                f"; best plane, NOT used: dips {candidate['dip']:.0f} towards "
+                f"{candidate['dip_azimuth']:03.0f}"
+            )
+        return f"anisotropy: {anisotropy['source']} (isotropic){confidence}"
     parts = [
         f"{label} {anisotropy[key]['azimuth']:05.1f}/{anisotropy[key]['plunge']:.1f}"
         for label, key in (("major", "major"), ("semi-major", "semi_major"), ("minor", "minor"))
@@ -110,7 +125,7 @@ def format_axes(anisotropy: dict[str, Any]) -> str:
     return (
         f"anisotropy ({anisotropy['source']}): plane dips {plane['dip']:.1f} towards "
         f"{plane['dip_azimuth']:05.1f}; axes azimuth/plunge {', '.join(parts)}; "
-        f"extent major:semi-major:minor {extent}"
+        f"extent major:semi-major:minor {extent}{confidence}"
     )
 
 

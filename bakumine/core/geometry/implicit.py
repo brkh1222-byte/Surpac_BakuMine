@@ -83,6 +83,7 @@ __all__ = [
     "ImplicitResult",
     "estimate_anisotropy",
     "estimate_intercept_anisotropy",
+    "estimate_stacked_anisotropy",
     "extract_constraints",
     "fit_field",
     "implicit_solid",
@@ -572,6 +573,60 @@ def estimate_intercept_anisotropy(
     return ellipsoid, info
 
 
+#: with more than this fraction of the mineralised holes cutting the domain more than once
+#: the bodies are stacked: the midpoints do not lie on one surface
+STACKED_HOLE_FRACTION = 0.2
+
+
+class UndeterminedOrientation(ValueError):
+    """The automatic orientation is not well determined; ``info`` holds the diagnostics."""
+
+    def __init__(self, message: str, info: dict[str, Any]):
+        super().__init__(message)
+        self.info = info
+
+
+def estimate_stacked_anisotropy(
+    runs: pd.DataFrame, traces: HoleTraces, *, max_ratio: float = 20.0
+) -> tuple[Ellipsoid, dict[str, Any]]:
+    """Orientation of stacked sub-parallel bodies from the runs of neighbouring holes.
+
+    The plane is the one that maximises the indicator correlation between neighbouring
+    holes (:func:`bakumine.core.geometry.intercept_orientation.estimate_plane_from_holes`,
+    which documents the method and its confidence measure). The minor axis is the pole
+    of that plane. The continuity within the plane is not estimated: the major axis is
+    put along strike, the semi-major axis down dip, with equal extent, and the extent
+    across is ``mean true thickness / (2 x median distance between the compared points)``
+    of it, limited to ``[1 / max_ratio, 1]``.
+
+    Returns the ellipsoid and a dict: ``method``, ``confidence``, ``correlation``,
+    ``runner_up``, ``determined``, ``n_pairs``, ``hole_angle_deg`` (pole against the mean
+    hole direction), ``thickness``, ``warnings``. Raises :class:`UndeterminedOrientation`
+    (a ``ValueError`` carrying the same dict as ``info``) when no plane is clearly better
+    than the others: the orientation must then be given.
+    """
+    from bakumine.core.estimation.orientation import plane_axes
+    from bakumine.core.geometry.intercept_orientation import estimate_plane_from_holes
+
+    estimate = estimate_plane_from_holes(runs, traces)
+    info = estimate.to_dict()
+    if not estimate.determined:
+        info["warnings"] = []
+        raise UndeterminedOrientation(estimate.reason, info)
+    major, semi, pole = plane_axes(estimate.dip, estimate.dip_azimuth)
+    across = estimate.thickness / (2.0 * estimate.pair_distance)
+    minor_ratio = float(np.clip(1.0 / across, 1.0, max_ratio)) if across > 0 else max_ratio
+    ellipsoid = Ellipsoid.from_axes(
+        major,
+        semi,
+        pole,
+        major_radius=float(2.0 * estimate.pair_distance),
+        semi_major_ratio=1.0,
+        minor_ratio=minor_ratio,
+    )
+    return ellipsoid, info
+
+
 # --------------------------------------------------------------------------
 # 3. RBF field
 # --------------------------------------------------------------------------
@@ -959,7 +1014,13 @@ def implicit_solid(
         ``diagnostics["anisotropy_warnings"]``, when its major axis is within
         20 degrees of the mean hole direction or when the intercepts are too
         few or too long to fix the plane; with fewer than four intercepts or
-        midpoints on one line the solid is built isotropic.
+        midpoints on one line the solid is built isotropic. When more than
+        :data:`STACKED_HOLE_FRACTION` of the mineralised holes cut the domain
+        more than once (stacked lenses) the plane comes from
+        :func:`estimate_stacked_anisotropy` instead; its confidence is in
+        ``diagnostics["anisotropy_confidence"]`` and, when it is not well
+        determined, no plane is chosen: the solid is isotropic, with a warning
+        (``diagnostics["anisotropy_candidate"]`` is the best plane, unused).
     resolution : grid cell size across the minor axis, in metres. Default: an
         eighth of the median in-domain intercept length. Coarsened
         automatically (with a warning) if the grid would exceed ``max_nodes``.
@@ -1023,14 +1084,25 @@ def implicit_solid(
         run_ids = runs["hole_id"].to_numpy(dtype=object)
         top, _ = traces.xyz_at(run_ids, runs["depth_from"].to_numpy())
         bottom, _ = traces.xyz_at(run_ids, runs["depth_to"].to_numpy())
+        per_hole = runs.groupby("hole_id").size()
+        stacked = len(per_hole) > 0 and float((per_hole > 1).mean()) > STACKED_HOLE_FRACTION
         try:
-            ellipsoid, anisotropy_info = estimate_intercept_anisotropy(top, bottom)
+            if stacked:
+                ellipsoid, anisotropy_info = estimate_stacked_anisotropy(
+                    constraints.intercepts, traces
+                )
+            else:
+                ellipsoid, anisotropy_info = estimate_intercept_anisotropy(top, bottom)
         except ValueError as exc:
             ellipsoid = None
             source_name = "none (auto failed)"
             anisotropy_info = {
+                **getattr(exc, "info", {}),
                 "method": "none",
-                "warnings": [f"no automatic anisotropy: {exc}. The solid is isotropic."],
+                "warnings": [
+                    f"no automatic anisotropy: {exc}. The solid is isotropic: give the "
+                    "orientation (dip and dip azimuth of the bodies)."
+                ],
             }
         for note in anisotropy_info["warnings"]:
             warnings.warn(note, stacklevel=2)
@@ -1175,6 +1247,13 @@ def implicit_solid(
         "anisotropy": None if ellipsoid is None else ellipsoid.to_dict(),
         "anisotropy_method": anisotropy_info["method"],
         "anisotropy_hole_angle_deg": anisotropy_info.get("hole_angle_deg"),
+        "anisotropy_confidence": anisotropy_info.get("confidence"),
+        "anisotropy_correlation": anisotropy_info.get("correlation"),
+        "anisotropy_candidate": (
+            None
+            if anisotropy_info.get("determined") is not False
+            else {k: anisotropy_info.get(k) for k in ("dip", "dip_azimuth")}
+        ),
         "anisotropy_warnings": list(anisotropy_info["warnings"]),
         "contact_residual_max": contact_max,
         "contact_residual_rms": contact_rms,

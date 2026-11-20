@@ -96,7 +96,7 @@ export function ImplicitSolidPanel() {
       {form.mode === 'angles' && <Text label="Angles" id="implicit-angles" value={form.angles} onChange={(v) => patch({ angles: v })} placeholder="bearing, plunge, dip" />}
       {(form.mode === 'plane' || form.mode === 'angles') && <Text label="Ratios" id="implicit-ratios" value={form.ratios} onChange={(v) => patch({ ratios: v })} placeholder="along strike : down dip : across, e.g. 4:2:1" />}
       {form.mode === '' && <p className="sidebar-note">Give the dip and dip azimuth of the body: the orientation decides how the intercepts are joined between the holes.</p>}
-      {form.mode === 'auto' && <p className="sidebar-note">Estimated from one point per intercept. Check the anisotropy reported with the result; few or long intercepts do not fix the plane.</p>}
+      {form.mode === 'auto' && <p className="sidebar-note">One body: estimated from one point per intercept. Stacked lenses: the plane along which the ore of neighbouring holes lines up best, with a confidence; when no plane is clearly best nothing is chosen and the solid is isotropic. Check the anisotropy reported with the result.</p>}
 
       <h4 className="ops-heading">Limits</h4>
       <Text label="Max extrap. (m)" id="implicit-extrapolation" value={form.maxExtrapolation} onChange={(v) => patch({ maxExtrapolation: v })} placeholder="distance from the nearest hole (no limit)" />

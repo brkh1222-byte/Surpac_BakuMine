@@ -49,5 +49,7 @@ describe('implicit solid request', () => {
       }),
     ).toBe('Anisotropy (auto): plane dips 56 towards 310; major 028/18, semi-major 276/50, minor 130/34; extent 1 : 0.55 : 0.07.')
     expect(describeAnisotropy({ source: 'none', method: 'given' })).toBe('Anisotropy: none (isotropic).')
+    expect(describeAnisotropy({ source: 'none (auto failed)', method: 'none', confidence: 0.021, candidate: { dip: 28, dip_azimuth: 212 } }))
+      .toBe('Anisotropy: none (auto failed) (isotropic). Confidence 0.02.')
   })
 })

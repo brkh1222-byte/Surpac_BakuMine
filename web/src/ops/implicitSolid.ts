@@ -95,6 +95,11 @@ export interface AnisotropyUsed {
   minor?: AxisDirection
   plane?: { dip: number; dip_azimuth: number }
   hole_angle_deg?: number
+  /** stacked bodies: 1 - runner-up / best indicator correlation between holes (0..1) */
+  confidence?: number
+  correlation?: number
+  /** the best plane when the automatic orientation was not determined (not used) */
+  candidate?: { dip: number | null; dip_azimuth: number | null }
 }
 
 export interface ImplicitResult {
@@ -122,11 +127,12 @@ const pad = (value: number, digits: number) => String(Math.round(value)).padStar
 
 /** "Anisotropy (user): plane dips 56 towards 310; major 028/18, semi-major 276/50, minor 130/34; extent 1 : 0.56 : 0.06." */
 export function describeAnisotropy(a: AnisotropyUsed): string {
-  if (!a.major || !a.semi_major || !a.minor || !a.plane || !a.ratios) return `Anisotropy: ${a.source} (isotropic).`
+  const confidence = a.confidence == null ? '' : ` Confidence ${a.confidence.toFixed(2)}.`
+  if (!a.major || !a.semi_major || !a.minor || !a.plane || !a.ratios) return `Anisotropy: ${a.source} (isotropic).${confidence}`
   const axis = (label: string, d: AxisDirection) => `${label} ${pad(d.azimuth, 3)}/${pad(d.plunge, 2)}`
   return (
     `Anisotropy (${a.source}): plane dips ${Math.round(a.plane.dip)} towards ${pad(a.plane.dip_azimuth, 3)}; ` +
     `${axis('major', a.major)}, ${axis('semi-major', a.semi_major)}, ${axis('minor', a.minor)}; ` +
-    `extent ${a.ratios.map((r) => Number(r.toFixed(2))).join(' : ')}.`
+    `extent ${a.ratios.map((r) => Number(r.toFixed(2))).join(' : ')}.${confidence}`
   )
 }
