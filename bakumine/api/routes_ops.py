@@ -119,6 +119,7 @@ def post_import(body: Json, source: Source) -> dict[str, Any]:
             body.get("tables"),
             body.get("hole_id"),
             body.get("merge"),
+            body.get("holes"),
         )
     )
 

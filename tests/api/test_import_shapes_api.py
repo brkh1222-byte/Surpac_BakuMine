@@ -243,3 +243,33 @@ def test_several_files_per_table_are_merged(setup, tmp_path):
     ok(client.delete(f"{OPS}/uploads/collar"))
     response = client.post(f"{OPS}/import", json={"name": "x"})
     assert response.status_code == 400 and "upload the collar table" in response.json()["detail"]
+
+
+def test_import_with_a_hole_filter(setup):
+    client = setup["client"]
+    ok(upload(client, "collar", setup["files"] / "collars.xlsx"))
+    ok(upload(client, "assay", setup["files"] / "assays.xlsx"))
+    body = {"name": "some", "tables": {"collar": [{}], "assay": [ASSAY_SPEC]}, "hole_id": HOLE_ID,
+            "options": {"dip_convention": "auto", "coordinate_order": "auto"}}  # fmt: skip
+    keep = [messy.hole_name(2), messy.hole_name(3)]
+    result = ok(
+        client.post(f"{OPS}/import", json={**body, "holes": {"include": ["SYN-0[1-3]", "X*"],
+                                                           "exclude": ["syn-01"]}})  # fmt: skip
+    )
+    assert result["n_holes"] == 2 and result["tables"]["collar"] == 2
+    report = result["hole_filter"]
+    assert report["tables"]["collar"] == {"rows_kept": 2, "rows_dropped": messy.N_HOLES - 2,
+                                          "holes_dropped": messy.N_HOLES - 2}  # fmt: skip
+    assert report["unmatched"] == ["X*"]
+    assert result["recipe"]["holes"] == {"include": ["SYN-0[1-3]", "X*"], "exclude": ["syn-01"]}
+    db = load_database(Project.open(setup["folder"]).path_of(result["id"]))
+    assert db.collar["hole_id"].tolist() == keep
+    assert set(db.intervals["assay"]["hole_id"]) == set(keep)
+    # the job log keeps the filter (in the parameters and in the recipe it replays)
+    entry = joblog.read(setup["folder"])[-1]
+    assert entry["params"]["holes"]["exclude"] == ["syn-01"]
+    assert entry["replay"]["recipe"]["holes"]["include"] == ["SYN-0[1-3]", "X*"]
+    bad = client.post(f"{OPS}/import", json={**body, "holes": {"only": ["A"]}})
+    assert bad.status_code == 400 and "unknown holes key" in bad.text
+    none = client.post(f"{OPS}/import", json={**body, "holes": {"include": ["NOPE"]}})
+    assert none.status_code == 400 and "leaves no hole" in none.text

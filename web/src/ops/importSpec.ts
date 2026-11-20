@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { DroppedRows, HoleIdRule, SourceSpec } from './api'
+import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -72,6 +72,25 @@ export function droppedText(table: string, dropped: DroppedRows): string {
     parts.push(`${dropped.collars_without_coordinates} without coordinates${holes.length ? ` (${holes.slice(0, 8).join(', ')}${holes.length > 8 ? ', …' : ''})` : ''}`)
   }
   return `${table}: rows dropped: ${parts.join(', ')}`
+}
+
+/** Hole names / wildcard patterns typed with commas or on lines of their own. */
+export function holeList(text: string): string[] {
+  return [...new Set(text.split(/[,\n;]/).map((p) => p.trim()).filter(Boolean))]
+}
+
+/** The `holes` of an import request; null when nothing is filtered. */
+export function holeFilter(include: string, exclude: string): HoleFilter | null {
+  const filter: HoleFilter = {}
+  if (holeList(include).length) filter.include = holeList(include)
+  if (holeList(exclude).length) filter.exclude = holeList(exclude)
+  return filter.include || filter.exclude ? filter : null
+}
+
+export function holeFilterText(report: HoleFilterReport): string {
+  const kept = Object.entries(report.tables).map(([t, c]) => `${t} ${c.rows_kept} of ${c.rows_kept + c.rows_dropped} rows`).join(', ')
+  const unmatched = report.unmatched.length ? `; matched no hole: ${report.unmatched.join(', ')}` : ''
+  return `Hole filter: kept ${kept}${unmatched}`
 }
 
 export function holeIdRule(pattern: string, template: string): HoleIdRule | null {

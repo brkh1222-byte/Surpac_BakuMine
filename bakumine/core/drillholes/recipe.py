@@ -8,6 +8,7 @@ the project's job log, so the same import can be run again on updated files with
       "format": "bakumine-import-recipe", "version": 1,
       "options": {...},                      # ImportOptions fields (units, dip, CRS ...)
       "hole_id": {"pattern": "DH[_-]?0*(\\\\d+)", "template": "DH-{1:02d}"},
+      "holes": {"include": ["DH-*"], "exclude": ["DH-07", "*-T"]},   # optional
       "merge": {"precedence": "first", "tolerance": 0.01},
       "tables": {
         "collar": [SOURCE, ...],             # one table from one or more sources
@@ -48,6 +49,12 @@ cells that differ by more than ``tolerance`` (numbers) or at all (text) are repo
 conflicts. So a hole may take its coordinates from one file and azimuth, dip and depth
 from another.
 
+``holes`` keeps only some holes, in every table (QC rows too): ``include`` and ``exclude``
+are lists of hole names or wildcard patterns (``*``, ``?``, ``[abc]``), compared without
+regard to case with the hole ids *after* the ``hole_id`` rewriting. A hole is kept when it
+matches ``include`` (or there is none) and does not match ``exclude``. The rows dropped
+per table and the patterns that matched nothing are in ``reports["hole_filter"]``.
+
 Rows that are not data are dropped and counted (``reports["dropped_rows"]`` and the
 notes): total / summary rows (``Total``, ``Нийт``, ``Итого`` ... in the hole id cell or the
 first filled cell), rows without a hole id, and, once the sources are merged, collars that
@@ -57,6 +64,7 @@ have neither projected coordinates nor longitude / latitude.
 from __future__ import annotations
 
 import copy
+import fnmatch
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, fields
@@ -79,6 +87,7 @@ from .tables import Prepared, _stack, prepare_source, read_grids
 
 __all__ = [
     "RECIPE_FILE",
+    "HoleFilter",
     "MissingColumns",
     "load_recipe",
     "make_recipe",
@@ -106,6 +115,87 @@ _KEYS: dict[str, tuple[str, ...]] = {
 }
 _MAX_LISTED = 200
 _TUPLE_OPTIONS = ("missing_tokens", "text_columns", "numeric_columns")
+
+
+class HoleFilter:
+    """Which holes an import keeps: names or wildcard patterns to include and to exclude
+    (see the module documentation). Counts what it drops, per table."""
+
+    def __init__(self, include: Sequence[str] = (), exclude: Sequence[str] = ()) -> None:
+        self.include = self._patterns(include, "include")
+        self.exclude = self._patterns(exclude, "exclude")
+        self.matched: set[str] = set()
+        self.tables: dict[str, dict[str, int]] = {}
+
+    @staticmethod
+    def _patterns(values: Any, what: str) -> list[str]:
+        if values is None:
+            return []
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, Sequence):
+            raise ValueError(f"holes.{what} must be a list of hole names or patterns")
+        cleaned = [str(v).strip() for v in values]
+        return list(dict.fromkeys(v for v in cleaned if v))
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any] | None) -> HoleFilter:
+        if values is None:
+            return cls()
+        if not isinstance(values, Mapping):
+            raise ValueError("holes must be {'include': [...], 'exclude': [...]}")
+        unknown = sorted(set(values) - {"include", "exclude"})
+        if unknown:
+            raise ValueError(f"unknown holes key(s) {unknown}; known: ['exclude', 'include']")
+        return cls(values.get("include") or (), values.get("exclude") or ())
+
+    def to_dict(self) -> dict[str, list[str]]:
+        out = {"include": list(self.include), "exclude": list(self.exclude)}
+        return {k: v for k, v in out.items() if v}
+
+    def __bool__(self) -> bool:
+        return bool(self.include or self.exclude)
+
+    def _hit(self, hole: str, patterns: Sequence[str]) -> bool:
+        found = False
+        for pattern in patterns:
+            if fnmatch.fnmatchcase(hole.casefold(), pattern.casefold()):
+                self.matched.add(pattern)
+                found = True  # no break: every pattern that matches is marked as used
+        return found
+
+    def keep(self, hole_ids: pd.Series) -> np.ndarray:
+        """True for the rows whose hole is kept."""
+        ids = hole_ids.astype(str).str.strip()
+        verdict = {}
+        for hole in ids.unique():
+            included = self._hit(hole, self.include) if self.include else True
+            excluded = self._hit(hole, self.exclude)
+            verdict[hole] = included and not excluded
+        return ids.map(verdict).to_numpy(dtype=bool)
+
+    def apply(self, table: pd.DataFrame, name: str, *extra: np.ndarray) -> tuple[Any, ...]:
+        """``table`` without the rows of the holes left out (and ``extra`` row arrays cut
+        the same way); counted under ``name``."""
+        if not self or "hole_id" not in table.columns:
+            return (table, *extra)
+        keep = self.keep(table["hole_id"]) if len(table) else np.zeros(0, dtype=bool)
+        count = self.tables.setdefault(
+            name, {"rows_kept": 0, "rows_dropped": 0, "holes_dropped": 0}
+        )
+        count["rows_kept"] += int(keep.sum())
+        count["rows_dropped"] += int((~keep).sum())
+        count["holes_dropped"] += int(table["hole_id"][~keep].nunique())
+        if keep.all():
+            return (table, *extra)
+        return (table.loc[keep].reset_index(drop=True), *(e[keep] for e in extra))
+
+    def report(self) -> dict[str, Any]:
+        return {
+            **{"include": list(self.include), "exclude": list(self.exclude)},
+            "tables": self.tables,
+            "unmatched": [p for p in (*self.include, *self.exclude) if p not in self.matched],
+        }
 
 
 class MissingColumns(ValueError):
@@ -157,6 +247,7 @@ def make_recipe(
     *,
     hole_id: Mapping[str, Any] | None = None,
     merge: Mapping[str, Any] | None = None,
+    holes: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A checked recipe dict. ``tables`` maps a table name to one source or a list."""
     if not isinstance(options, ImportOptions):
@@ -202,6 +293,9 @@ def make_recipe(
             "pattern": str(hole_id["pattern"]),
             "template": str(hole_id.get("template") or "{0}"),
         }
+    chosen = HoleFilter.from_dict(holes)
+    if chosen:
+        recipe["holes"] = chosen.to_dict()
     return recipe
 
 
@@ -219,6 +313,7 @@ def check_recipe(document: Any) -> dict[str, Any]:
         document.get("options"),
         hole_id=document.get("hole_id"),
         merge=document.get("merge"),
+        holes=document.get("holes"),
     )
 
 
@@ -429,6 +524,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         length_unit=options.length_unit, source_length_unit=options.length_unit
     )
     resolved = copy.deepcopy(recipe)
+    holes = HoleFilter.from_dict(recipe.get("holes"))
     grids: dict[Path, dict[str, pd.DataFrame]] = {}
     typed: dict[str, pd.DataFrame] = {}
     qc: dict[str, pd.DataFrame] = {}
@@ -448,6 +544,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         table, notes = import_table(stacked, kind, identity, options, name=name)  # type: ignore[arg-type]
         metadata.notes.extend(notes)
         source = table.pop(_SOURCE).to_numpy(dtype=np.int64)
+        table, source = holes.apply(table, name, source)
         if len(sources) > 1:
             table, merged = merge_sources(
                 table,
@@ -497,12 +594,28 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                      if len(p.qc)]  # fmt: skip
             if parts:
                 qc[name] = pd.concat(parts, ignore_index=True).fillna("").astype(str)
+                (qc[name],) = holes.apply(qc[name], f"{name} (QC)")
+            if name in qc and len(qc[name]):
                 reports["qc"][name] = {
                     str(k): int(v) for k, v in qc[name]["qc_type"].value_counts().items()
                 }
+            elif name in qc:
+                del qc[name]
             checks = [p.info["sample_depth"] for p in prepared if "sample_depth" in p.info]
             if checks:
                 reports["sample_depth"][name] = checks
+    if holes:
+        if not len(typed["collar"]):
+            raise ValueError(
+                f"the hole filter leaves no hole (include {holes.include or 'all'}, "
+                f"exclude {holes.exclude or 'none'})"
+            )
+        reports["hole_filter"] = holes.report()
+        for pattern in reports["hole_filter"]["unmatched"]:
+            metadata.notes.append(
+                {"table": "*", "column": "hole_id", "kind": "hole_filter_matched_nothing",
+                 "count": 1, "examples": [pattern]}
+            )  # fmt: skip
     metadata.reports.update({k: v for k, v in reports.items() if v})
     collar = typed.pop("collar")
     survey = typed.pop("survey", None)

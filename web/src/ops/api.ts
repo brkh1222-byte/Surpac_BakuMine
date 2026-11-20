@@ -117,6 +117,20 @@ export interface ValidationResult {
   truncated: boolean
 }
 
+/** Which holes an import keeps: names or wildcard patterns. */
+export interface HoleFilter {
+  include?: string[]
+  exclude?: string[]
+}
+
+export interface HoleFilterReport {
+  include: string[]
+  exclude: string[]
+  tables: Record<string, { rows_kept: number; rows_dropped: number; holes_dropped: number }>
+  /** patterns that matched no hole in any table */
+  unmatched: string[]
+}
+
 export interface DroppedRows {
   total_rows?: number
   rows_without_hole_id?: number
@@ -136,6 +150,7 @@ export interface ImportResult extends ValidationResult {
   sample_depth: Record<string, SampleDepthCheck[]>
   /** per table: total_rows, rows_without_hole_id, collars_without_coordinates (counts) */
   dropped_rows: Record<string, DroppedRows>
+  hole_filter: HoleFilterReport | null
   /** per interval table: attribute -> unit read from its header */
   units: Record<string, Record<string, string>>
   dip_convention: string

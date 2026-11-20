@@ -322,6 +322,7 @@ def import_database(
     tables: dict[str, list[dict[str, Any] | None]] | None = None,
     hole_id: dict[str, Any] | None = None,
     merge: dict[str, Any] | None = None,
+    holes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``bakumine import`` + ``validate`` on the uploaded tables; saves the database.
 
@@ -329,16 +330,19 @@ def import_database(
     column map, sample-number rule, QC; see ``bakumine.core.drillholes.recipe``), and then
     only the tables it names are imported (files uploaded earlier for other tables are left
     alone); ``maps`` is the short form: one column map per table, every uploaded table is
-    imported. What is left out is detected."""
+    imported. What is left out is detected. ``holes`` = ``{"include": [...], "exclude":
+    [...]}``: hole names or wildcard patterns kept / left out in every table."""
     params = {"name": name, "maps": maps, "options": options}
-    for key, value in (("tables", tables), ("hole_id", hole_id), ("merge", merge)):
+    for key, value in (
+        ("tables", tables), ("hole_id", hole_id), ("merge", merge), ("holes", holes),
+    ):  # fmt: skip
         if value:
             params[key] = value
     return _record(
         folder,
         "import",
         params,
-        lambda rec: _import(folder, name, maps, options, tables, hole_id, merge, rec),
+        lambda rec: _import(folder, name, maps, options, tables, hole_id, merge, rec, holes),
     )
 
 
@@ -351,6 +355,7 @@ def _import(
     hole_id: dict[str, Any] | None,
     merge: dict[str, Any] | None,
     rec: joblog.Recorder,
+    holes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     import shutil
 
@@ -363,7 +368,7 @@ def _import(
     from bakumine.core.drillholes.validate import validate
 
     for what, value in (("maps", maps), ("options", options), ("tables", tables),
-                        ("hole_id", hole_id), ("merge", merge)):  # fmt: skip
+                        ("hole_id", hole_id), ("merge", merge), ("holes", holes)):  # fmt: skip
         if not isinstance(value or {}, dict):
             raise OperationError(f"{what} must be an object")
     maps, tables = dict(maps or {}), dict(tables or {})
@@ -393,7 +398,9 @@ def _import(
             source["file"] = copied.relative_to(folder).as_posix()
             sources[table].append(source)
     try:
-        recipe = make_recipe(sources, options_from_dict(options), hole_id=hole_id, merge=merge)
+        recipe = make_recipe(
+            sources, options_from_dict(options), hole_id=hole_id, merge=merge, holes=holes
+        )
         db = run_recipe(recipe, folder)
         resolved = db.metadata.recipe
         rec.entry["replay"] = {
@@ -429,6 +436,7 @@ def _import(
             },
             "coordinates": reports.get("coordinates"),
             "dropped_rows": reports.get("dropped_rows", {}),
+            "hole_filter": reports.get("hole_filter"),
             "units": reports.get("units", {}),
             "survey": reports.get("survey"),
             "sample_depth": {
@@ -449,6 +457,7 @@ def _import(
 _LONG = {
     "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
     "recipe", "conflicts", "coordinates", "sample_depth", "survey", "dropped_rows", "units",
+    "hole_filter",
 }  # fmt: skip
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { droppedText, emptyForm, holeIdRule, matchSheets, sourceSpec } from './importSpec'
+import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -31,6 +31,14 @@ describe('import panel helpers', () => {
     expect(droppedText('collar', { total_rows: 1, rows_without_hole_id: 2, collars_without_coordinates: 1, holes_without_coordinates: ['SYN-05'] }))
       .toBe('collar: rows dropped: 1 total / summary row, 2 without a hole id, 1 without coordinates (SYN-05)')
     expect(droppedText('assay', { total_rows: 5 })).toBe('assay: rows dropped: 5 total / summary rows')
+  })
+
+  it('builds the hole filter', () => {
+    expect(holeFilter(' ', ',\n')).toBeNull()
+    expect(holeFilter('SYN-01, SYN-02\nSYN25*; SYN-01', '')).toEqual({ include: ['SYN-01', 'SYN-02', 'SYN25*'] })
+    expect(holeFilter('', ' SYN-07 ')).toEqual({ exclude: ['SYN-07'] })
+    expect(holeFilterText({ include: ['A*'], exclude: [], tables: { collar: { rows_kept: 2, rows_dropped: 4, holes_dropped: 4 } }, unmatched: ['X*'] }))
+      .toBe('Hole filter: kept collar 2 of 6 rows; matched no hole: X*')
   })
 
   it('builds the hole id rule', () => {

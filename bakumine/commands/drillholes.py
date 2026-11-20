@@ -174,6 +174,22 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         help="e.g. 'DH-{1:03d}' ({1} = first group of the pattern, {0} = the whole id)",
     )
     shape.add_argument(
+        "--include-holes",
+        action="append",
+        metavar="HOLES",
+        help="import only these holes, in every table: names or wildcard patterns "
+        "separated by commas ('DH-01,DH-02', 'DH25*'), or a text file with one per line "
+        "('#' starts a comment). Compared without regard to case, after "
+        "--hole-id-pattern rewrote the ids. Repeatable",
+    )
+    shape.add_argument(
+        "--exclude-holes",
+        action="append",
+        metavar="HOLES",
+        help="leave these holes out (same forms as --include-holes; exclusion wins). Both "
+        "are stored in the recipe; given with --recipe they replace the recipe's filter",
+    )
+    shape.add_argument(
         "--sample-depth",
         action="append",
         default=[],
@@ -283,6 +299,32 @@ def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
     return {str(t): {str(k): str(v) for k, v in m.items()} for t, m in document.items()}
 
 
+def _hole_list(items: list[str] | None, option: str) -> list[str]:
+    """``--include-holes`` / ``--exclude-holes`` values -> names and patterns. A value
+    that is an existing file is read: one hole per line."""
+    out: list[str] = []
+    for item in items or []:
+        path = Path(item)
+        if path.is_file():
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+            found = [line.split("#", 1)[0].strip() for line in lines]
+        else:
+            found = [part.strip() for part in item.split(",")]
+        found = [f for f in found if f]
+        if not found:
+            raise CommandError(f"{option} {item!r} names no hole")
+        out += [f for f in found if f not in out]
+    return out
+
+
+def _hole_filter(args: argparse.Namespace) -> dict[str, list[str]] | None:
+    chosen = {
+        "include": _hole_list(args.include_holes, "--include-holes"),
+        "exclude": _hole_list(args.exclude_holes, "--exclude-holes"),
+    }
+    return chosen if chosen["include"] or chosen["exclude"] else None
+
+
 def _sheet_list(text: str) -> list[str | int]:
     return [int(s) if s.isdigit() else s for s in (p.strip() for p in text.split(",")) if s]
 
@@ -368,6 +410,7 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
         options,
         hole_id={"pattern": args.hole_id_pattern, "template": args.hole_id_template},
         merge={"precedence": args.merge_precedence, "tolerance": args.merge_tolerance},
+        holes=_hole_filter(args),
     )
     return recipe, origin
 
@@ -400,6 +443,18 @@ def _print_import_reports(db) -> None:
                 f"    conflict {key} {row['column']}: kept {row['kept']} "
                 f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
             )
+    chosen = reports.get("hole_filter")
+    if chosen:
+        rules = "; ".join(
+            f"{what} {', '.join(chosen[what])}" for what in ("include", "exclude") if chosen[what]
+        )
+        kept = ", ".join(
+            f"{name} {c['rows_kept']} of {c['rows_kept'] + c['rows_dropped']} rows"
+            for name, c in chosen["tables"].items()
+        )
+        print(f"  hole filter ({rules}): kept {kept}")
+        if chosen["unmatched"]:
+            print(f"  WARNING: hole filter matched no hole: {', '.join(chosen['unmatched'])}")
     for name, gone in reports.get("dropped_rows", {}).items():
         parts = [
             f"{gone[key]} {text}"
@@ -447,6 +502,9 @@ def run_import(args: argparse.Namespace) -> int:
         if not path.is_file():
             raise CommandError(f"recipe not found: {path}")
         recipe = load_recipe(path)
+        chosen = _hole_filter(args)
+        if chosen:
+            recipe["holes"] = chosen
         base = Path(args.base) if args.base else path.resolve().parent
         origin = {name: "recipe" for name in recipe["tables"]}
     else:

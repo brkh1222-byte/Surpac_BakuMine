@@ -7,11 +7,12 @@
  *
  * Per file: the sheets to stack (one sheet per hole), a preview of each sheet, the header row
  * (one or two rows), the hole id from the sheet name, depths from the sample number, QC rows.
- * Per table: several files are merged. For all: hole id spelling, CRS of longitude / latitude.
+ * Per table: several files are merged. For all: hole id spelling, which holes to import
+ * (names or wildcard patterns to keep or to skip), CRS of longitude / latitude.
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { droppedText, emptyForm, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -196,6 +197,8 @@ export function ImportPanel() {
   const [crs, setCrs] = useState('')
   const [holePattern, setHolePattern] = useState('')
   const [holeTemplate, setHoleTemplate] = useState('')
+  const [includeHoles, setIncludeHoles] = useState('')
+  const [excludeHoles, setExcludeHoles] = useState('')
   const [precedence, setPrecedence] = useState('first')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -251,6 +254,7 @@ export function ImportPanel() {
         options: { length_unit: lengthUnit, convert_to_metres: toMetres, dip_convention: dip, coordinate_order: order, crs: crs.trim() || null },
         hole_id: holeIdRule(holePattern, holeTemplate),
         merge: { precedence },
+        holes: holeFilter(includeHoles, excludeHoles),
       }
       setResult(await opsApi.importDb(body))
       await useOps.getState().changed()
@@ -307,6 +311,8 @@ export function ImportPanel() {
       <div className="control">
         <button type="button" data-testid="import-hole-apply" onClick={refreshAll}>Apply hole id pattern to the previews</button>
       </div>
+      <Text label="Only holes" id="import-include-holes" value={includeHoles} onChange={setIncludeHoles} placeholder="all (names or patterns: DH-01, DH25*)" />
+      <Text label="Skip holes" id="import-exclude-holes" value={excludeHoles} onChange={setExcludeHoles} placeholder="none (names or patterns, comma separated)" />
       <Select label="Files disagree" id="import-precedence" value={precedence} onChange={setPrecedence} options={[{ value: 'first', label: 'first file wins' }, { value: 'last', label: 'last file wins' }]} />
       <div className="control">
         <button type="button" data-testid="import-run" disabled={busy} onClick={() => void run()}>{busy ? 'Importing…' : 'Import and validate'}</button>
@@ -326,6 +332,7 @@ export function ImportPanel() {
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
             <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}</p>
           )))}
+          {result.hole_filter && <p className="sidebar-note" data-testid="import-hole-filter">{holeFilterText(result.hole_filter)}</p>}
           {Object.entries(result.dropped_rows ?? {}).map(([t, d]) => (
             <p className="sidebar-note" key={t} data-testid={`import-dropped-${t}`}>{droppedText(t, d)}</p>
           ))}
