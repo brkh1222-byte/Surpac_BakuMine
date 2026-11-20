@@ -64,6 +64,11 @@ def _register_builtin() -> None:
     for name, (help_text, configure) in estimate.COMMANDS.items():
         register(name, help_text, configure)
 
+    from bakumine.commands import project
+
+    for name, (help_text, configure) in project.COMMANDS.items():
+        register(name, help_text, configure)
+
 
 _register_builtin()
 

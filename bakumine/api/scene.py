@@ -40,6 +40,8 @@ Kind = Literal["drillholes", "mesh", "blocks"]
 DEMO_FOLDER = Path(__file__).resolve().parents[2] / "data" / "synthetic" / "default"
 #: Environment variable that points the demo source at another folder.
 DEMO_FOLDER_ENV = "BAKUMINE_DEMO_DIR"
+#: Environment variable that points the API at a project folder instead of the demo.
+PROJECT_FOLDER_ENV = "BAKUMINE_PROJECT"
 
 
 @dataclass(frozen=True)
@@ -262,6 +264,10 @@ def get_scene_source() -> SceneSource:
     """The active source (FastAPI dependency). Defaults to the demo project."""
     global _source
     with _source_lock:
+        if _source is None and os.environ.get(PROJECT_FOLDER_ENV):
+            from bakumine.api.project_source import ProjectSceneSource
+
+            _source = ProjectSceneSource(os.environ[PROJECT_FOLDER_ENV])
         if _source is None:
             folder = Path(os.environ.get(DEMO_FOLDER_ENV) or DEMO_FOLDER)
             _source = DemoSceneSource(folder) if folder.is_dir() else EmptySceneSource()
