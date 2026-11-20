@@ -17,6 +17,8 @@ HELP = "Block model: info, CSV export / import, volume-tonnes-grade report"
 HELP_INFO = "Show the definition and attributes of a saved block model (reads the header only)"
 HELP_EXPORT = "Export blocks to a block model CSV (centroid, size, attributes per block)"
 HELP_IMPORT = "Import a block model CSV as a new model, or into an existing one"
+HELP_CREATE = "Create an empty block model from origin / size / shape, or fitted to geometry"
+HELP_CODE = "Code a block model with assignment steps from a JSON file (optional sub-blocking)"
 HELP_REPORT = "Report volume, tonnes, grade and metal, grouped by attribute, bench and cut-off"
 
 Handler = Callable[[argparse.Namespace], int]
@@ -206,6 +208,152 @@ def run_import(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------- create
+
+
+def _triple(text: str | None, what: str) -> tuple[float, ...] | None:
+    if text is None:
+        return None
+    try:
+        values = tuple(float(v) for v in text.replace(" ", "").split(",") if v)
+    except ValueError:
+        values = ()
+    if len(values) != 3:
+        raise CommandError(f"{what} expects three numbers like 10,10,5, got {text!r}")
+    return values
+
+
+def configure_create(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("out", help="block model folder to write")
+    parser.add_argument("--size", required=True, metavar="DX,DY,DZ", help="parent block size")
+    parser.add_argument("--origin", metavar="X,Y,Z", help="minimum corner (with --shape/--extent)")
+    parser.add_argument("--shape", metavar="NX,NY,NZ", help="number of parent blocks")
+    parser.add_argument("--extent", metavar="EX,EY,EZ", help="model extent (whole blocks)")
+    parser.add_argument("--extent-from", action="append", metavar="NAME",
+                        help="fit the model to a solid or DTM in --geometry-dir, or to the "
+                             "holes of a drillhole database as 'drillholes:FOLDER' "
+                             "(collars down to max depth); repeatable")  # fmt: skip
+    parser.add_argument("--geometry-dir", metavar="DIR", help="folder with named solids / DTMs")
+    parser.add_argument("--padding", default="0", metavar="P|PX,PY,PZ",
+                        help="margin added on every side with --extent-from (metres)")  # fmt: skip
+    parser.add_argument("--max-depth", type=int, default=0,
+                        help="sub-blocking depth (smallest block = size / 2**depth)")  # fmt: skip
+    parser.add_argument("--angles", metavar="BEARING,PLUNGE,DIP",
+                        help="model rotation in degrees (default none)")  # fmt: skip
+    parser.set_defaults(func=_guarded(run_create))
+
+
+def _extent_points(items: list[str], geometry_dir: str | None):
+    import numpy as np
+
+    from bakumine.core.blockmodel.constraints import FileResolver
+
+    resolver = FileResolver(geometry_dir) if geometry_dir else None
+    clouds = []
+    for item in items:
+        if item.startswith("drillholes:"):
+            from bakumine.core.drillholes.importer import load_database
+
+            collar = load_database(item.split(":", 1)[1]).collar
+            top = collar[["x", "y", "z"]].to_numpy(dtype=float)
+            bottom = top.copy()
+            bottom[:, 2] -= collar["max_depth"].to_numpy(dtype=float)
+            clouds += [top, bottom]
+            continue
+        if resolver is None:
+            raise CommandError("--extent-from NAME needs --geometry-dir")
+        clouds.append(np.asarray(resolver.solid(item).vertices))
+    return np.concatenate(clouds)
+
+
+def run_create(args: argparse.Namespace) -> int:
+    from bakumine.core.blockmodel.blocks import BlockModel
+    from bakumine.core.blockmodel.definition import BlockModelDefinition
+    from bakumine.core.blockmodel.storage import save_model
+
+    size = _triple(args.size, "--size")
+    options: dict = {"max_depth": args.max_depth}
+    angles = _triple(args.angles, "--angles")
+    if angles:
+        options["angles"] = angles
+    if args.extent_from:
+        padding = args.padding if "," in args.padding else ",".join([args.padding] * 3)
+        points = _extent_points(args.extent_from, args.geometry_dir)
+        definition = BlockModelDefinition.auto_extent(
+            points, size, margin=_triple(padding, "--padding"), **options
+        )
+    else:
+        origin = _triple(args.origin, "--origin")
+        if origin is None or (args.shape is None) == (args.extent is None):
+            raise CommandError("give --origin and exactly one of --shape / --extent, "
+                               "or --extent-from")  # fmt: skip
+        if args.shape:
+            shape = tuple(int(v) for v in _triple(args.shape, "--shape"))
+            definition = BlockModelDefinition(origin, size, shape, **options)
+        else:
+            definition = BlockModelDefinition.from_extent(
+                origin, _triple(args.extent, "--extent"), size, **options
+            )
+    header = save_model(BlockModel(definition), args.out)
+    d = definition
+    print(f"origin {d.origin}, size {d.block_size}, blocks {d.nx} x {d.ny} x {d.nz}")
+    _wrote(header.path, f"{header.n_blocks} blocks")
+    return 0
+
+
+# ------------------------------------------------------------------------ code
+
+
+def configure_code(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("model", help="block model folder")
+    parser.add_argument("--steps", required=True, metavar="JSON",
+                        help='coding file: {"attributes": [{"name", "kind", "background", ...}], '
+                             '"steps": [{"attribute", "value", "constraint": {...}, '
+                             '"subblock": bool, "max_level": int}]}')  # fmt: skip
+    parser.add_argument("--geometry-dir", metavar="DIR",
+                        help="folder with the solids / DTMs the constraints name")  # fmt: skip
+    parser.add_argument("--subblock", action="store_true",
+                        help="sub-block every step (unless it sets subblock itself)")  # fmt: skip
+    parser.add_argument("--merge", action="store_true",
+                        help="merge uniform sibling sub-blocks after the last step")  # fmt: skip
+    parser.add_argument("--out", help="model folder to write (default: update MODEL in place)")
+    parser.set_defaults(func=_guarded(run_code))
+
+
+def run_code(args: argparse.Namespace) -> int:
+    from bakumine.core.blockmodel.coding import code_model
+    from bakumine.core.blockmodel.constraints import FileResolver, constraint_from_dict
+    from bakumine.core.blockmodel.storage import load_model, save_model
+
+    path = Path(args.steps)
+    try:
+        spec = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise CommandError(f"{path} is not valid JSON ({error})") from None
+    model = load_model(args.model)
+    for item in spec.get("attributes", []):
+        item = dict(item)
+        if item.get("name") in model.attributes:
+            continue
+        model.add_attribute(item.pop("name"), item.pop("kind", "float"), **item)
+    steps = []
+    for item in spec.get("steps", []):
+        item = dict(item)
+        if item.get("constraint") is not None:
+            item["constraint"] = constraint_from_dict(item["constraint"])
+        if args.subblock:
+            item.setdefault("subblock", True)
+        steps.append(item)
+    resolver = FileResolver(args.geometry_dir) if args.geometry_dir else None
+    results = code_model(model, steps, resolver, merge=args.merge)
+    for r in results:
+        print(f"{r.attribute} = {r.value!r}: {r.n_assigned} blocks, volume {r.volume:.0f} m3, "
+              f"split {r.n_split}, blocks now {r.n_blocks}")  # fmt: skip
+    header = save_model(model, args.out or args.model)
+    _wrote(header.path, f"{header.n_blocks} blocks, {len(header.attributes)} attributes")
+    return 0
+
+
 # --------------------------------------------------------------------- report
 
 
@@ -285,6 +433,8 @@ SUBCOMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None]]] = 
     "info": (HELP_INFO, configure_info),
     "export-csv": (HELP_EXPORT, configure_export),
     "import-csv": (HELP_IMPORT, configure_import),
+    "create": (HELP_CREATE, configure_create),
+    "code": (HELP_CODE, configure_code),
     "report": (HELP_REPORT, configure_report),
 }
 
