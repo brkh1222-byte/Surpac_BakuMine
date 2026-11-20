@@ -1,6 +1,7 @@
 import { retryFailed } from '../api/useResource'
 import type { SceneMode } from '../scene/Viewport'
 import { ObjectControls } from './ObjectControls'
+import { ReportPanel } from './ReportPanel'
 import { SectionPanel } from './SectionPanel'
 import { CATEGORIES, MANIFEST_LOAD, useViewer, type Category, type LoadState } from '../state/store'
 
@@ -106,6 +107,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
       </ul>
       <SceneNote mode={mode} />
       <SectionPanel />
+      <ReportPanel />
     </aside>
   )
 }

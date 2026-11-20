@@ -10,6 +10,7 @@
                                                               &clip=<constraint>
     GET /api/v1/scene/objects/{id}/blocks/info          JSON: the object's manifest entry
     GET /api/v1/scene/objects/{id}/blocks/detail        JSON: one block; ?row= or ?block_id=
+    (report endpoints: routes_report.py)
 
 The manifest's ``kind`` and ``href`` of each object tell the client which endpoint to
 call. Block payloads, selection (``where``), level of detail (``lod``) and the section

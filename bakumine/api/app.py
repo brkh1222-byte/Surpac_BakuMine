@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from starlette.middleware.gzip import GZipMiddleware
 
 from bakumine import __version__
+from bakumine.api.routes_report import router as report_router
 from bakumine.api.routes_scene import router as scene_router
 
 app = FastAPI(title="BakuMine Block Modeller", version=__version__)
@@ -11,6 +12,7 @@ app = FastAPI(title="BakuMine Block Modeller", version=__version__)
 # for little gain on localhost.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)
 app.include_router(scene_router)
+app.include_router(report_router)
 
 
 @app.get("/api/health")

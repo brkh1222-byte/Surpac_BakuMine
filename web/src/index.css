@@ -1244,3 +1244,12 @@ input {
   background: var(--accent);
   cursor: ew-resize;
 }
+
+/* Report panel */
+.report-toggle { width: 100%; text-align: left; }
+.report-set { border: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.report-set legend { font-size: 11px; opacity: 0.7; }
+.report-table-wrap { overflow-x: auto; max-height: 260px; }
+.report-table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.report-table th, .report-table td { padding: 2px 6px; text-align: right; white-space: nowrap; }
+.report-table tr.is-total td { font-weight: 600; border-top: 1px solid currentColor; }
