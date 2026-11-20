@@ -141,3 +141,199 @@ def test_sheets_of_a_recipe_source_are_ignored_for_a_csv(two_files):
                     {"file": "gis.xlsx", "sheets": ["Summary"]}]}  # fmt: skip
     )
     assert run_recipe(recipe, folder).collar["hole_id"].tolist() == HOLES
+
+
+# --------------------------------------------------------------------------------------
+# files of one table that differ: dip convention, length unit, axis order, CRS
+# --------------------------------------------------------------------------------------
+def check_dips(db, collar):
+    assert db.collar["hole_id"].tolist() == HOLES
+    assert db.dip_convention == "negative_down"
+    assert db.metadata.source_dip_convention == "mixed"
+    np.testing.assert_array_equal(db.survey["dip"], collar["dip"])  # all negative down
+    assert (db.survey["dip"] < 0).all()
+    np.testing.assert_array_equal(db.survey["azimuth"], collar["azimuth"])
+    # holes 4 and 5 are in both files: after the negation they agree
+    merged = db.metadata.reports["conflicts"]["collar"]
+    assert (merged["merged"], merged["conflicts"]) == (2, 0)
+
+
+def test_dip_conventions_per_file_merge_into_negative_down(two_files, capsys):
+    folder, collar = two_files
+    sources = [{"file": "drilling.csv"},
+               {"file": "gis.xlsx", "sheets": "Summary",
+                "options": {"dip_convention": "positive_down"}}]  # fmt: skip
+    db = run_recipe(make_recipe({"collar": sources}), folder)
+    check_dips(db, collar)
+    assert db.metadata.recipe["tables"]["collar"][1]["options"] == {
+        "dip_convention": "positive_down"
+    }
+    assert db.metadata.reports["sources"]["collar"] == [
+        {"file": "drilling.csv", "dip_convention": "negative_down"},
+        {"file": "gis.xlsx", "dip_convention": "positive_down"},
+    ]
+    negated = [n for n in db.metadata.notes if n["kind"] == "dip_negated_to_negative_down"]
+    assert [(n["source"], n["count"]) for n in negated] == [("gis.xlsx", 5)]
+    # without the per-file option the two files contradict each other
+    plain = run_recipe(
+        make_recipe({"collar": [sources[0], {"file": "gis.xlsx", "sheets": "Summary"}]}), folder
+    )
+    assert plain.metadata.reports["conflicts"]["collar"]["conflicts"] == 2
+    assert (plain.survey["dip"] > 0).sum() == 3
+
+    # the CLI: said for the file, or decided per file by --dip-convention auto
+    for how in (["--source-option", "gis.xlsx:dip-convention=positive_down"],
+                ["--dip-convention", "auto"]):  # fmt: skip
+        out = folder / f"db{len(how)}"
+        code, printed, err = run_cli(
+            capsys, "import", "--collar", folder / "drilling.csv", "--collar",
+            folder / "gis.xlsx", "--auto", "--source-option", "gis.xlsx:sheet=Summary", *how,
+            "--out", out,
+        )  # fmt: skip
+        assert code == 0, err
+        check_dips(load_database(out), collar)
+        assert "collar gis.xlsx: dip convention positive_down" in printed
+        assert "dip convention negative_down" in printed
+    # a recipe saved by the CLI replays it
+    again = folder / "again"
+    assert main(["import", "--recipe", str(out / "import_recipe.json"), "--out", str(again)]) == 0
+    check_dips(load_database(again), collar)
+
+
+def test_files_that_share_a_convention_are_left_alone(two_files):
+    folder, collar = two_files
+    first = collar.iloc[:5].assign(dip=lambda t: -t["dip"])
+    first.to_csv(folder / "positive.csv", index=False)
+    recipe = make_recipe(
+        {"collar": [{"file": "positive.csv"}, {"file": "gis.xlsx", "sheets": "Summary"}]},
+        {"dip_convention": "auto"},
+    )
+    db = run_recipe(recipe, folder)
+    assert db.dip_convention == db.metadata.source_dip_convention == "positive_down"
+    np.testing.assert_array_equal(db.survey["dip"], -collar["dip"])
+
+
+def test_length_unit_per_file(two_files):
+    folder, collar = two_files
+    feet = collar.iloc[3:].copy()
+    feet[["x", "y", "z", "max_depth"]] /= 0.3048
+    feet.to_csv(folder / "feet.csv", index=False)
+    rng = np.random.default_rng(2)
+    assay = pd.DataFrame(
+        [{"hole_id": h, "depth_from": float(k), "depth_to": float(k + 2), "au": rng.random()}
+         for h in HOLES for k in range(0, 20, 2)]  # fmt: skip
+    )
+    in_feet = assay[assay["hole_id"].isin(HOLES[4:])].copy()
+    in_feet[["depth_from", "depth_to"]] /= 0.3048
+    assay[assay["hole_id"].isin(HOLES[:4])].to_csv(folder / "assay_m.csv", index=False)
+    in_feet.to_csv(folder / "assay_ft.csv", index=False)
+    recipe = make_recipe(
+        {"collar": [{"file": "drilling.csv"},
+                    {"file": "feet.csv", "options": {"length_unit": "ft"}}],
+         "assay": [{"file": "assay_m.csv"},
+                   {"file": "assay_ft.csv", "options": {"length_unit": "ft"}}]}  # fmt: skip
+    )
+    db = run_recipe(recipe, folder)
+    assert db.length_unit == "m" and db.metadata.source_length_unit == "mixed"
+    np.testing.assert_allclose(
+        db.collar[["x", "y", "z", "max_depth"]], collar[["x", "y", "z", "max_depth"]], rtol=1e-12
+    )
+    assert db.metadata.reports["conflicts"]["collar"]["conflicts"] == 0
+    np.testing.assert_allclose(
+        db.intervals["assay"][["depth_from", "depth_to"]], assay[["depth_from", "depth_to"]],
+        atol=1e-9,
+    )  # fmt: skip
+    converted = [n for n in db.metadata.notes if n["kind"] == "converted_to_metres"]
+    assert {(n["table"], n["source"], n["unit"]) for n in converted} == {
+        ("collar", "feet.csv", "ft"), ("assay", "assay_ft.csv", "ft"),
+    }  # fmt: skip
+
+
+def test_axis_order_per_file(two_files, capsys):
+    folder, collar = two_files
+    # a report table: X is the northing
+    report = collar.iloc[3:].rename(columns={"x": "Y", "y": "X", "hole_id": "Hole"})
+    report.to_csv(folder / "report.csv", index=False)
+    for options, own in (({}, {"coordinate_order": "yxz"}), ({"coordinate_order": "auto"}, {})):
+        recipe = make_recipe(
+            {"collar": [{"file": "drilling.csv"}, {"file": "report.csv", "options": own}]}, options
+        )
+        db = run_recipe(recipe, folder)
+        np.testing.assert_allclose(db.collar[["x", "y"]], collar[["x", "y"]])
+        assert db.metadata.reports["conflicts"]["collar"]["conflicts"] == 0
+        assert db.metadata.coordinate_order == "mixed"
+        orders = [e["coordinate_order"] for e in db.metadata.reports["sources"]["collar"]]
+        assert orders == ["xyz", "yxz"]
+    code, printed, err = run_cli(
+        capsys, "import", "--collar", folder / "drilling.csv", "--collar", folder / "report.csv",
+        "--auto", "--source-option", "report.csv:coordinate-order=yxz", "--dry-run",
+    )  # fmt: skip
+    assert code == 0, err
+    assert "collar report.csv: coordinate order yxz" in printed
+    assert "coordinate order mixed" in printed
+
+
+def test_crs_per_file_is_reprojected_into_the_database_crs(tmp_path):
+    from test_import_collars import kruger_utm
+
+    # holes either side of the 18 E meridian: zone 33 on the left, zone 34 on the right
+    lon = np.array([17.90, 17.95, 17.99, 18.01, 18.05, 18.10])
+    lat = np.array([45.00, 45.02, 45.04, 45.01, 45.03, 45.05])
+    names = [f"SYN-{i:02d}" for i in range(1, 7)]
+    in_33 = np.array([kruger_utm(a, b, 33) for a, b in zip(lon, lat, strict=True)])
+    in_34 = np.array([kruger_utm(a, b, 34) for a, b in zip(lon, lat, strict=True)])
+    west = pd.DataFrame({"Hole": names[:3], "East": in_33[:3, 0], "North": in_33[:3, 1]})
+    east = pd.DataFrame({"Hole": names[2:], "East": in_34[2:, 0], "North": in_34[2:, 1]})
+    for frame, file in ((west, "west.csv"), (east, "east.csv")):
+        frame.assign(RL=100.0, Depth=50.0, Azimuth=0.0, Dip=-90.0).to_csv(
+            tmp_path / file, index=False
+        )
+    recipe = make_recipe(
+        {"collar": [{"file": "west.csv"},
+                    {"file": "east.csv", "options": {"crs": "EPSG:32634"}}]},  # fmt: skip
+        {"crs": "EPSG:32633"},
+    )
+    db = run_recipe(recipe, tmp_path)
+    assert db.collar["hole_id"].tolist() == names
+    # an independent series (Krueger) gives the zone 33 coordinates of every hole
+    np.testing.assert_allclose(db.collar[["x", "y"]], in_33, atol=0.01)
+    assert abs(in_34[3, 0] - in_33[3, 0]) > 100_000  # the two zones differ by far more
+    merged = db.metadata.reports["conflicts"]["collar"]
+    assert (merged["merged"], merged["conflicts"]) == (1, 0)  # SYN-03 is in both files
+    moved = [n for n in db.metadata.notes if n["kind"] == "reprojected"]
+    assert [(n["source"], n["from"], n["to"], n["count"]) for n in moved] == [
+        ("east.csv", "EPSG:32634", "EPSG:32633", 4)
+    ]
+    # without a recipe-wide CRS the first CRS named by a collar file is the database's
+    recipe = make_recipe(
+        {"collar": [{"file": "east.csv", "options": {"crs": "EPSG:32634"}},
+                    {"file": "west.csv", "options": {"crs": "EPSG:32633"}}]}  # fmt: skip
+    )
+    db = run_recipe(recipe, tmp_path)
+    np.testing.assert_allclose(
+        db.collar.set_index("hole_id").loc[names, ["x", "y"]], in_34, atol=0.01
+    )
+    feet = make_recipe(
+        {"collar": [{"file": "west.csv"}, {"file": "east.csv", "options": {"crs": "EPSG:32634"}}]},
+        {"crs": "EPSG:32633", "length_unit": "ft"},
+    )
+    with pytest.raises(ValueError, match="cannot be reprojected"):
+        run_recipe(feet, tmp_path)
+
+
+def test_source_options_are_checked(two_files, capsys):
+    folder, _ = two_files
+    with pytest.raises(ValueError, match="cannot set \\['delimiter'\\] for itself"):
+        make_recipe({"collar": [{"file": "a.csv", "options": {"delimiter": ";"}}]})
+    with pytest.raises(ValueError, match="source options: dip_convention must be one of"):
+        make_recipe({"collar": [{"file": "a.csv", "options": {"dip_convention": "down"}}]})
+    with pytest.raises(ValueError, match="'options' must be an object"):
+        make_recipe({"collar": [{"file": "a.csv", "options": "ft"}]})
+    # nothing set: nothing stored (recipes written before stay as they were)
+    empty = make_recipe({"collar": [{"file": "a.csv", "options": {"crs": ""}}]})
+    assert empty["tables"]["collar"] == [{"file": "a.csv"}]
+    code, _, err = run_cli(
+        capsys, "import", "--collar", folder / "drilling.csv", "--auto", "--source-option",
+        "drilling.csv:length-unit=yards", "--dry-run",
+    )  # fmt: skip
+    assert code == 2 and "length_unit must be one of" in err

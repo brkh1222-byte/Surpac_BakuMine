@@ -41,6 +41,8 @@ export interface SourceSpec {
   hole_id_from_sheet?: boolean
   sample_depth?: { length: number; patterns?: string[] }
   qc?: { mode: 'separate' | 'off' }
+  /** what this file does differently: dip_convention, length_unit, coordinate_order, crs */
+  options?: Record<string, string>
   /** preview only: the sheet whose raw rows are shown */
   preview_sheet?: string
 }
@@ -117,6 +119,14 @@ export interface ValidationResult {
   truncated: boolean
 }
 
+export interface SourceReport {
+  file: string
+  dip_convention?: string
+  length_unit?: string
+  coordinate_order?: string
+  crs?: string
+}
+
 /** Which holes an import keeps: names or wildcard patterns. */
 export interface HoleFilter {
   include?: string[]
@@ -151,6 +161,8 @@ export interface ImportResult extends ValidationResult {
   /** per table: total_rows, rows_without_hole_id, collars_without_coordinates (counts) */
   dropped_rows: Record<string, DroppedRows>
   hole_filter: HoleFilterReport | null
+  /** per table, per file: what was decided for it (when the files of a table differ) */
+  sources: Record<string, SourceReport[]>
   /** per interval table: attribute -> unit read from its header */
   units: Record<string, Record<string, string>>
   dip_convention: string

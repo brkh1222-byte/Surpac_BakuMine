@@ -67,7 +67,7 @@ MAX_SHEETS_LISTED = 400
 _SPEC_KEYS = frozenset(
     {
         "sheets", "exclude_sheets", "header_row", "header_rows", "map", "hole_id_from_sheet",
-        "hole_id", "sample_depth", "qc",
+        "hole_id", "sample_depth", "qc", "options",
     }
 )  # fmt: skip
 
@@ -196,6 +196,7 @@ def preview_upload(
     kind = _table_kind(name)
     try:
         grids = _grids(path, delimiter)
+        spec.pop("options", None)  # units, dips, axes: applied at import, not to the text
         prepared = prepare_source(spec, kind, name=name, grids=grids, hole_id=hole_id)
         chosen = prepared.info["sheets"]
         shown = shown if shown in grids else chosen[0]["name"]
@@ -437,6 +438,7 @@ def _import(
             "coordinates": reports.get("coordinates"),
             "dropped_rows": reports.get("dropped_rows", {}),
             "hole_filter": reports.get("hole_filter"),
+            "sources": reports.get("sources", {}),
             "units": reports.get("units", {}),
             "survey": reports.get("survey"),
             "sample_depth": {
@@ -457,7 +459,7 @@ def _import(
 _LONG = {
     "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
     "recipe", "conflicts", "coordinates", "sample_depth", "survey", "dropped_rows", "units",
-    "hole_filter",
+    "hole_filter", "sources",
 }  # fmt: skip
 
 

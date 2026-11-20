@@ -37,6 +37,7 @@ __all__ = [
     "dms_to_decimal",
     "parse_angle",
     "project",
+    "reproject",
     "resolve_collar_coordinates",
     "utm_crs",
 ]
@@ -95,6 +96,22 @@ def project(
     if known.any():
         transformer = Transformer.from_crs(geographic_crs, crs, always_xy=True)
         east[known], north[known] = transformer.transform(lon[known], lat[known])
+    return east, north
+
+
+def reproject(
+    x: np.ndarray, y: np.ndarray, from_crs: str, to_crs: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Easting, northing in ``from_crs`` -> easting, northing in ``to_crs`` (NaN stays NaN)."""
+    from pyproj import Transformer
+
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    east, north = x.copy(), y.copy()
+    known = np.isfinite(x) & np.isfinite(y)
+    if known.any():
+        transformer = Transformer.from_crs(from_crs, to_crs, always_xy=True)
+        east[known], north[known] = transformer.transform(x[known], y[known])
     return east, north
 
 

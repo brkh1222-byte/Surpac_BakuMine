@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec } from './importSpec'
+import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -31,6 +31,14 @@ describe('import panel helpers', () => {
     expect(droppedText('collar', { total_rows: 1, rows_without_hole_id: 2, collars_without_coordinates: 1, holes_without_coordinates: ['SYN-05'] }))
       .toBe('collar: rows dropped: 1 total / summary row, 2 without a hole id, 1 without coordinates (SYN-05)')
     expect(droppedText('assay', { total_rows: 5 })).toBe('assay: rows dropped: 5 total / summary rows')
+  })
+
+  it('sends what a file does differently from the others', () => {
+    const form = { ...emptyForm(), dip: 'positive_down' as const, lengthUnit: 'ft' as const, order: 'yxz' as const, crs: ' EPSG:32634 ' }
+    expect(sourceSpec(form, false)).toEqual({ options: { dip_convention: 'positive_down', length_unit: 'ft', coordinate_order: 'yxz', crs: 'EPSG:32634' } })
+    // an interval table has depths only: the unit
+    expect(sourceSpec(form, true)).toEqual({ options: { length_unit: 'ft' } })
+    expect(sourceText({ file: 'gis.xlsx', dip_convention: 'positive_down', length_unit: 'ft' })).toBe('gis.xlsx: dip convention positive_down, length unit ft')
   })
 
   it('builds the hole filter', () => {

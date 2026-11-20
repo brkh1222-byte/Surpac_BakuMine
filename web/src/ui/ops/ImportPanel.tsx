@@ -6,13 +6,14 @@
  * with the import recipe.
  *
  * Per file: the sheets to stack (one sheet per hole), a preview of each sheet, the header row
- * (one or two rows), the hole id from the sheet name, depths from the sample number, QC rows.
+ * (one or two rows), the hole id from the sheet name, depths from the sample number, QC rows,
+ * and what the file does differently from the others: length unit, dip sign, axis order, CRS.
  * Per table: several files are merged. For all: hole id spelling, which holes to import
  * (names or wildcard patterns to keep or to skip), CRS of longitude / latitude.
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { droppedText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -144,6 +145,42 @@ function SourceCard({ table, index, source, onForm, onMap, onMapDone }: {
           )}
         </fieldset>
       )}
+      <fieldset className="control report-set" style={FIT} data-testid={`import-own-${key}`}>
+        <legend>This file, where it differs from the settings below</legend>
+        <label className="control-inline">Length unit
+          <select aria-label={`${key} length unit`} data-testid={`import-own-unit-${key}`} value={form.lengthUnit} onChange={(e) => onForm({ lengthUnit: e.target.value as SourceForm['lengthUnit'] })}>
+            <option value="">as below</option>
+            <option value="m">m</option>
+            <option value="ft">ft</option>
+            <option value="ftUS">ftUS</option>
+          </select>
+        </label>
+        {!interval && (
+          <label className="control-inline">Dip
+            <select aria-label={`${key} dip`} data-testid={`import-own-dip-${key}`} value={form.dip} onChange={(e) => onForm({ dip: e.target.value as SourceForm['dip'] })}>
+              <option value="">as below</option>
+              <option value="auto">auto</option>
+              <option value="negative_down">negative down</option>
+              <option value="positive_down">positive down</option>
+            </select>
+          </label>
+        )}
+        {preview.kind === 'collar' && (
+          <>
+            <label className="control-inline">Coord. order
+              <select aria-label={`${key} coordinate order`} data-testid={`import-own-order-${key}`} value={form.order} onChange={(e) => onForm({ order: e.target.value as SourceForm['order'] })}>
+                <option value="">as below</option>
+                <option value="auto">auto</option>
+                <option value="xyz">x = east, y = north</option>
+                <option value="yxz">x = north, y = east</option>
+              </select>
+            </label>
+            <label className="control-inline" style={ROW}>CRS of this file
+              <input type="text" size={12} aria-label={`${key} crs`} data-testid={`import-own-crs-${key}`} value={form.crs} placeholder="as below (e.g. EPSG:32647)" onChange={(e) => onForm({ crs: e.target.value })} />
+            </label>
+          </>
+        )}
+      </fieldset>
       {preview.missing.length > 0 && (
         <span className="sidebar-error" data-testid={`import-missing-${key}`}>No column for: {preview.missing.join(', ')}</span>
       )}
@@ -331,6 +368,9 @@ export function ImportPanel() {
           ))}
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
             <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}</p>
+          )))}
+          {Object.entries(result.sources ?? {}).map(([t, entries]) => entries.filter((e) => Object.keys(e).length > 1).map((e) => (
+            <p className="sidebar-note" key={`${t}-${e.file}`} data-testid={`import-source-result-${t}`}>{t} {sourceText(e)}</p>
           )))}
           {result.hole_filter && <p className="sidebar-note" data-testid="import-hole-filter">{holeFilterText(result.hole_filter)}</p>}
           {Object.entries(result.dropped_rows ?? {}).map(([t, d]) => (

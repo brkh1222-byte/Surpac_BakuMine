@@ -41,6 +41,10 @@ the project's job log, so the same import can be run again on updated files with
 ``qc``                  interval tables: ``{"mode": "separate" | "off", "columns": [...],
                         "letter_suffix": true}``; default separate: QC rows leave the table
                         and are kept in the database's QC table.
+``options``             what this file does differently from the recipe's ``options``:
+                        ``dip_convention``, ``length_unit``, ``coordinate_order``, ``crs``
+                        (the projected CRS of this file's coordinates) and
+                        ``geographic_crs``. See "Sources that differ" below.
 
 Several sources of one table are stacked. Rows with the same key (``hole_id`` for the
 collar; ``hole_id, depth`` for the survey; ``hole_id, depth_from, depth_to`` for an interval
@@ -56,6 +60,22 @@ regard to case with the hole ids *after* the ``hole_id`` rewriting. A hole is ke
 matches ``include`` (or there is none) and does not match ``exclude``. The rows dropped
 per table and the patterns that matched nothing are in ``reports["hole_filter"]``.
 
+Sources that differ. A source's ``options`` are applied to its rows before the sources
+are merged, so that the merged table is consistent:
+
+* dips: when the sources of the collar or survey table do not share one convention (each
+  as its own ``dip_convention`` says, ``"auto"`` deciding per file from the signs), the
+  ``positive_down`` files are negated and the database is ``negative_down``. With the
+  recipe-wide ``"dip_convention": "auto"`` and several files this is decided per file too.
+* lengths: when the sources (of any table) do not share one ``length_unit``, every file is
+  converted to metres.
+* axis order: decided and applied per collar file (``"auto"`` by that file's values).
+* CRS: a collar file's ``crs`` is the CRS of its projected coordinates and the target for
+  its longitude / latitude. The database is in the recipe's ``crs``, else in the first
+  ``crs`` a collar source names; files in another CRS are reprojected into it.
+
+What was decided for each file is in ``reports["sources"]``.
+
 Rows that are not data are dropped and counted (``reports["dropped_rows"]`` and the
 notes): total / summary rows (``Total``, ``Нийт``, ``Итого`` ... in the hole id cell or the
 first filled cell), rows without a hole id, and, once the sources are merged, collars that
@@ -68,7 +88,7 @@ import copy
 import fnmatch
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +96,9 @@ import numpy as np
 import pandas as pd
 
 from .importer import (
+    _LENGTH_COLUMNS,
+    GEOGRAPHIC_COLUMNS,
+    LENGTH_UNITS,
     DrillholeDatabase,
     DrillholeMetadata,
     ImportOptions,
@@ -88,6 +111,7 @@ from .tables import Prepared, _stack, prepare_source, read_grids
 
 __all__ = [
     "RECIPE_FILE",
+    "SOURCE_OPTIONS",
     "HoleFilter",
     "MissingColumns",
     "load_recipe",
@@ -106,8 +130,12 @@ _SOURCE = "__source__"
 _SOURCE_KEYS = frozenset(
     {
         "file", "sheets", "exclude_sheets", "header_row", "header_rows", "map",
-        "hole_id_from_sheet", "hole_id", "sample_depth", "qc",
+        "hole_id_from_sheet", "hole_id", "sample_depth", "qc", "options",
     }
+)  # fmt: skip
+#: import options a source may set for itself
+SOURCE_OPTIONS: tuple[str, ...] = (
+    "dip_convention", "length_unit", "coordinate_order", "crs", "geographic_crs",
 )  # fmt: skip
 _KEYS: dict[str, tuple[str, ...]] = {
     "collar": ("hole_id",),
@@ -273,9 +301,14 @@ def make_recipe(
                     f"table {name!r}: unknown source key(s) {unknown}; "
                     f"known: {sorted(_SOURCE_KEYS)}"
                 )
-            checked[name].append(
-                {k: copy.deepcopy(v) for k, v in source.items() if v is not None and v != ""}
-            )
+            cleaned = {
+                k: copy.deepcopy(v) for k, v in source.items() if v is not None and v != ""
+            }
+            if "options" in cleaned:
+                cleaned["options"] = _check_source_options(name, cleaned["options"], options)
+                if not cleaned["options"]:
+                    del cleaned["options"]
+            checked[name].append(cleaned)
     merge = {"precedence": "first", "tolerance": 0.01, **(merge or {})}
     if merge["precedence"] not in ("first", "last"):
         raise ValueError(
@@ -298,6 +331,25 @@ def make_recipe(
     if chosen:
         recipe["holes"] = chosen.to_dict()
     return recipe
+
+
+def _check_source_options(
+    name: str, values: Any, options: ImportOptions
+) -> dict[str, str]:
+    if not isinstance(values, Mapping):
+        raise ValueError(f"table {name!r}: a source's 'options' must be an object")
+    cleaned = {k: str(v).strip() for k, v in values.items() if v is not None and v != ""}
+    unknown = sorted(set(cleaned) - set(SOURCE_OPTIONS))
+    if unknown:
+        raise ValueError(
+            f"table {name!r}: a source cannot set {unknown} for itself; "
+            f"it can set {list(SOURCE_OPTIONS)}"
+        )
+    try:
+        replace(options, **cleaned)  # the checks of ImportOptions
+    except ValueError as exc:
+        raise ValueError(f"table {name!r}: source options: {exc}") from None
+    return cleaned
 
 
 def check_recipe(document: Any) -> dict[str, Any]:
@@ -471,6 +523,193 @@ def prepare_table(
     return prepared
 
 
+class _SourceOptions:
+    """The options the sources of a recipe set for themselves, applied to the typed rows
+    of each table before its sources are merged (see "Sources that differ" in the module
+    documentation), and what that leaves for :func:`finish_database` to do."""
+
+    def __init__(self, recipe: Mapping[str, Any], options: ImportOptions) -> None:
+        self.options = options
+        self.own: dict[str, list[dict[str, str]]] = {
+            name: [dict(s.get("options") or {}) for s in sources]
+            for name, sources in recipe["tables"].items()
+        }
+        every = [o for own in self.own.values() for o in own]
+        units = {o.get("length_unit", options.length_unit) for o in every}
+        self.mixed_units = len(units) > 1
+        self.crs = options.crs or next(
+            (o["crs"] for o in self.own.get("collar", []) if o.get("crs")), None
+        )
+        self.dips: dict[str, str] = {}  # table -> the convention its rows now have
+        self.orders: list[str] | None = None  # per collar source, once applied
+        self.coordinates: list[dict[str, Any]] = []
+        self.report: dict[str, list[dict[str, Any]]] = {}
+
+    def effective(self, name: str, i: int) -> ImportOptions:
+        return replace(self.options, **self.own[name][i])
+
+    def apply(
+        self, name: str, kind: str, table: pd.DataFrame, source: np.ndarray,
+        labels: Sequence[str], metadata: DrillholeMetadata,
+    ) -> pd.DataFrame:  # fmt: skip
+        own = self.own[name]
+        rows = [source == i for i in range(len(own))]
+        entries: list[dict[str, Any]] = [{"file": label} for label in labels]
+
+        def note(i: int, column: str, what: str, **extra: Any) -> None:
+            metadata.notes.append(
+                {"table": name, "column": column, "kind": what, "count": int(rows[i].sum()),
+                 "source": labels[i], **extra}  # fmt: skip
+            )
+
+        if self.mixed_units:
+            columns = [c for c in _LENGTH_COLUMNS[kind] if c in table.columns]
+            for i in range(len(own)):
+                unit = self.effective(name, i).length_unit
+                entries[i]["length_unit"] = unit
+                if unit != "m" and rows[i].any() and columns:
+                    table.loc[rows[i], columns] = table.loc[rows[i], columns] * LENGTH_UNITS[unit]
+                    note(i, ",".join(columns), "converted_to_metres", unit=unit)
+        if kind in ("collar", "survey") and "dip" in table.columns:
+            table = self._dips(name, table, rows, entries, note)
+        if kind == "collar":
+            table = self._coordinates(name, table, rows, entries, labels, metadata)
+        if any(own) or any(len(e) > 1 for e in entries):
+            self.report[name] = entries
+        return table
+
+    def _dips(self, name: str, table: pd.DataFrame, rows: list[np.ndarray],
+              entries: list[dict[str, Any]], note: Any) -> pd.DataFrame:  # fmt: skip
+        own = self.own[name]
+        chosen = any("dip_convention" in o for o in own)
+        if not chosen and not (self.options.dip_convention == "auto" and len(own) > 1):
+            return table
+        found: list[str | None] = []
+        for i in range(len(own)):
+            convention: str | None = self.effective(name, i).dip_convention
+            if convention == "auto":
+                dips = table.loc[rows[i], "dip"].dropna().to_numpy(dtype=np.float64)
+                if not dips.size:
+                    convention = None
+                elif (dips >= 0).all() and (dips > 0).any():
+                    convention = "positive_down"
+                else:
+                    convention = "negative_down"
+                if convention:
+                    note(i, "dip", f"dip_assumed_{convention}")
+            found.append(convention)
+            if convention:
+                entries[i]["dip_convention"] = convention
+        known = {c for c in found if c}
+        if len(known) > 1:  # the files disagree: one convention for the table
+            for i, convention in enumerate(found):
+                if convention == "positive_down":
+                    table.loc[rows[i], "dip"] = -table.loc[rows[i], "dip"]
+                    note(i, "dip", "dip_negated_to_negative_down")
+            self.dips[name] = "mixed"
+        elif known and chosen:
+            self.dips[name] = known.pop()
+        return table
+
+    def _coordinates(
+        self, name: str, table: pd.DataFrame, rows: list[np.ndarray],
+        entries: list[dict[str, Any]], labels: Sequence[str], metadata: DrillholeMetadata,
+    ) -> pd.DataFrame:  # fmt: skip
+        from .coordinates import reproject, resolve_collar_coordinates
+
+        own = self.own[name]
+        chosen = any(k in o for o in own for k in ("coordinate_order", "crs", "geographic_crs"))
+        if not chosen and not (self.options.coordinate_order == "auto" and len(own) > 1):
+            return table
+        parts: list[pd.DataFrame] = []
+        orders: list[str] = []
+        projected = False
+        for i, mine in enumerate(own):
+            part = table.loc[rows[i]].copy()
+            options = self.effective(name, i)
+            options = replace(
+                options,
+                length_unit="m" if self.mixed_units else options.length_unit,
+                crs=mine.get("crs") or self.crs,
+            )
+            scratch = DrillholeMetadata()
+            order = options.coordinate_order if options.coordinate_order != "auto" else "xyz"
+            full = "crs" in mine or "geographic_crs" in mine
+            if len(part):
+                resolved, order = resolve_collar_coordinates(part, options, scratch)
+                if full:
+                    part = resolved
+            if order != "xyz":
+                part = part.rename(columns=dict(zip("xyz", order, strict=True)))
+            entries[i]["coordinate_order"] = order
+            orders.append(order)
+            for found in scratch.notes:  # what was decided, said of this file
+                if full or found["kind"].startswith(("coordinate_order_", "x_looks_")):
+                    metadata.notes.append({**found, "source": labels[i]})
+            if full and len(part):
+                projected = True
+                crs = mine.get("crs") or scratch.crs or self.crs
+                if crs:
+                    entries[i]["crs"] = crs
+                if crs and self.crs and crs.casefold() != self.crs.casefold():
+                    if options.length_unit != "m":
+                        raise ValueError(
+                            f"{labels[i]}: coordinates in {options.length_unit} cannot be "
+                            f"reprojected from {crs} to {self.crs}; give them in metres"
+                        )
+                    try:
+                        east, north = reproject(part["x"], part["y"], crs, self.crs)
+                    except Exception as exc:  # pyproj.exceptions.CRSError and friends
+                        raise ValueError(
+                            f"{labels[i]}: cannot reproject {crs} to {self.crs}: {exc}"
+                        ) from None
+                    part["x"], part["y"] = east, north
+                    metadata.notes.append(
+                        {"table": name, "column": "x,y", "kind": "reprojected",
+                         "count": len(part), "source": labels[i], "from": crs, "to": self.crs}
+                    )  # fmt: skip
+                if "coordinates" in scratch.reports:
+                    self.coordinates.append({"file": labels[i], **scratch.reports["coordinates"]})
+                for column in GEOGRAPHIC_COLUMNS:  # done: not to be projected again
+                    if column in part.columns:
+                        part[column] = np.nan
+            parts.append(part)
+        columns = list(table.columns)
+        for part in parts:
+            columns += [c for c in part.columns if c not in columns]
+        table = pd.concat([p.reindex(columns=columns) for p in parts], ignore_index=True)
+        if projected:
+            spent = [c for c in GEOGRAPHIC_COLUMNS if c in table.columns and table[c].isna().all()]
+            table = table.drop(columns=spent)
+        self.orders = orders
+        return table
+
+    def finish(
+        self, tables: Mapping[str, Any]
+    ) -> tuple[ImportOptions, dict[str, str]]:
+        """The options left for :func:`finish_database`, and the metadata fields to set
+        afterwards."""
+        changes: dict[str, Any] = {}
+        after: dict[str, str] = {}
+        if self.mixed_units:
+            changes.update(length_unit="m", convert_to_metres=False)
+            after.update(length_unit="m", source_length_unit="mixed")
+        dips = self.dips.get("survey" if "survey" in tables else "collar")
+        if dips == "mixed":
+            changes["dip_convention"] = "negative_down"
+            after["source_dip_convention"] = "mixed"
+        elif dips:
+            changes["dip_convention"] = dips
+        if self.orders is not None:
+            changes["coordinate_order"] = "xyz"
+            after["coordinate_order"] = (
+                self.orders[0] if len(set(self.orders)) == 1 else "mixed"
+            )
+        if self.crs:
+            changes["crs"] = self.crs
+        return replace(self.options, **changes), after
+
+
 def _collars_with_coordinates(collar: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """The collars that have a position (projected x and y, or a readable longitude and
     latitude), and the hole ids of the rows that have none (a planned hole, a remark)."""
@@ -526,6 +765,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     )
     resolved = copy.deepcopy(recipe)
     holes = HoleFilter.from_dict(recipe.get("holes"))
+    per_source = _SourceOptions(recipe, options)
     grids: dict[Path, dict[str, pd.DataFrame]] = {}
     typed: dict[str, pd.DataFrame] = {}
     qc: dict[str, pd.DataFrame] = {}
@@ -546,6 +786,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         metadata.notes.extend(notes)
         source = table.pop(_SOURCE).to_numpy(dtype=np.int64)
         table, source = holes.apply(table, name, source)
+        table = per_source.apply(name, kind, table, source, labels, metadata)
         if len(sources) > 1:
             table, merged = merge_sources(
                 table,
@@ -617,9 +858,19 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                 {"table": "*", "column": "hole_id", "kind": "hole_filter_matched_nothing",
                  "count": 1, "examples": [pattern]}
             )  # fmt: skip
+    reports["sources"] = per_source.report
     metadata.reports.update({k: v for k, v in reports.items() if v})
+    options, after = per_source.finish(recipe["tables"])
     collar = typed.pop("collar")
     survey = typed.pop("survey", None)
     db = finish_database(collar, survey, typed, options, metadata, qc)
+    for key, value in after.items():
+        setattr(db.metadata, key, value)
+    if per_source.coordinates:
+        db.metadata.reports["coordinates_by_source"] = per_source.coordinates
+        if db.metadata.crs is None:
+            db.metadata.crs = per_source.crs or per_source.coordinates[0]["crs"]
+        first = {k: v for k, v in per_source.coordinates[0].items() if k != "file"}
+        db.metadata.reports.setdefault("coordinates", first)
     db.metadata.recipe = resolved
     return db

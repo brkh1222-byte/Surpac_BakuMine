@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, SourceSpec } from './api'
+import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, SourceReport, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -17,6 +17,11 @@ export interface SourceForm {
   /** the column map once the user edited it; null = as suggested */
   map: Record<string, string> | null
   previewSheet: string | null
+  /** what this file does differently from the panel's settings ('' = as set there) */
+  dip: '' | 'auto' | 'negative_down' | 'positive_down'
+  lengthUnit: '' | 'm' | 'ft' | 'ftUS'
+  order: '' | 'auto' | 'xyz' | 'yxz'
+  crs: string
 }
 
 export const emptyForm = (): SourceForm => ({
@@ -30,6 +35,10 @@ export const emptyForm = (): SourceForm => ({
   qc: 'separate',
   map: null,
   previewSheet: null,
+  dip: '',
+  lengthUnit: '',
+  order: '',
+  crs: '',
 })
 
 /** Sheet names matching a wildcard pattern (`*` any text, `?` one character), in order. */
@@ -58,6 +67,12 @@ export function sourceSpec(form: SourceForm, interval: boolean, forPreview = fal
     }
     if (form.qc === 'off') spec.qc = { mode: 'off' }
   }
+  const options: Record<string, string> = {}
+  if (form.dip && !interval) options.dip_convention = form.dip
+  if (form.lengthUnit) options.length_unit = form.lengthUnit
+  if (form.order && !interval) options.coordinate_order = form.order
+  if (form.crs.trim() && !interval) options.crs = form.crs.trim()
+  if (Object.keys(options).length) spec.options = options
   if (forPreview && form.previewSheet) spec.preview_sheet = form.previewSheet
   return spec
 }
@@ -72,6 +87,12 @@ export function droppedText(table: string, dropped: DroppedRows): string {
     parts.push(`${dropped.collars_without_coordinates} without coordinates${holes.length ? ` (${holes.slice(0, 8).join(', ')}${holes.length > 8 ? ', …' : ''})` : ''}`)
   }
   return `${table}: rows dropped: ${parts.join(', ')}`
+}
+
+/** "gis.xlsx: dip convention positive_down, length unit ft" (what was decided for a file) */
+export function sourceText(entry: SourceReport): string {
+  const said = Object.entries(entry).filter(([k]) => k !== 'file').map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`)
+  return `${entry.file}: ${said.join(', ')}`
 }
 
 /** Hole names / wildcard patterns typed with commas or on lines of their own. */

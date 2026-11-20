@@ -273,3 +273,46 @@ def test_import_with_a_hole_filter(setup):
     assert bad.status_code == 400 and "unknown holes key" in bad.text
     none = client.post(f"{OPS}/import", json={**body, "holes": {"include": ["NOPE"]}})
     assert none.status_code == 400 and "leaves no hole" in none.text
+
+
+def test_import_of_two_collar_files_with_their_own_options(setup, tmp_path):
+    """Two collar files uploaded for one table: the second gives its dips negative down
+    and its X column holds the northing; said per file, they merge without a conflict."""
+    client, tables = setup["client"], setup["tables"]
+    collar = tables["collar"].merge(tables["survey"], on="hole_id")
+    first = collar.iloc[:4].drop(columns="depth")  # dips positive down, as in the truth
+    second = collar.iloc[2:].drop(columns="depth").assign(dip=lambda t: -t["dip"])
+    second = second.rename(columns={"x": "y", "y": "x"})[first.columns.tolist()]
+    first.to_csv(tmp_path / "a.csv", index=False)
+    second.to_csv(tmp_path / "b.csv", index=False)
+    ok(upload(client, "collar", tmp_path / "a.csv"))
+    assert ok(upload(client, "collar", tmp_path / "b.csv", add=True))["index"] == 1
+    own = {"options": {"dip_convention": "negative_down", "coordinate_order": "yxz"}}
+    # the preview takes the same description (the options do not change the text shown)
+    shown = ok(client.post(f"{OPS}/uploads/collar/preview", json={"index": 1, "spec": own}))
+    assert shown["rows"] == 4
+    result = ok(
+        client.post(
+            f"{OPS}/import",
+            json={"name": "two", "tables": {"collar": [{}, own]},
+                  "options": {"dip_convention": "positive_down"}},
+        )  # fmt: skip
+    )
+    assert result["tables"]["collar"] == messy.N_HOLES
+    assert result["conflicts"]["collar"]["conflicts"] == 0
+    assert result["conflicts"]["collar"]["merged"] == 2
+    assert result["dip_convention"] == "negative_down" and result["coordinate_order"] == "mixed"
+    assert result["sources"]["collar"] == [
+        {"file": "collar.csv", "dip_convention": "positive_down", "coordinate_order": "xyz"},
+        {"file": "collar+2.csv", "dip_convention": "negative_down", "coordinate_order": "yxz"},
+    ]
+    db = load_database(Project.open(setup["folder"]).path_of(result["id"]))
+    want = tables["collar"]
+    assert db.collar["x"].tolist() == want["x"].tolist()
+    assert db.collar["y"].tolist() == want["y"].tolist()
+    assert db.survey["dip"].tolist() == (-tables["survey"]["dip"]).tolist()
+    assert result["recipe"]["tables"]["collar"][1]["options"] == own["options"]
+    bad = client.post(
+        f"{OPS}/import", json={"tables": {"collar": [{}, {"options": {"delimiter": ";"}}]}}
+    )
+    assert bad.status_code == 400 and "cannot set ['delimiter']" in bad.text

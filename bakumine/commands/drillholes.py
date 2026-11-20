@@ -329,11 +329,21 @@ _SOURCE_LAYOUT_KEYS = {
     "map": "map",
 }
 #: --source-option keys that are import options of one file -> the ImportOptions field
-_SOURCE_VALUE_KEYS: dict[str, str] = {}
+_SOURCE_VALUE_KEYS: dict[str, str] = {
+    "dip-convention": "dip_convention",
+    "length-unit": "length_unit",
+    "coordinate-order": "coordinate_order",
+    "crs": "crs",
+    "geographic-crs": "geographic_crs",
+}
 SOURCE_OPTION_HELP = (
     "sheet (names, indexes or wildcards, comma separated), exclude-sheets, header-row, "
     "header-rows, hole-from-sheet (yes / no), map (a JSON or TOML file: {source column: "
-    "canonical name})"
+    "canonical name}); and, as the options of the same name but for this file only, "
+    "dip-convention, length-unit, coordinate-order, crs (the CRS of this file's "
+    "coordinates; files in another CRS than --crs are reprojected), geographic-crs. "
+    "Files of one table with different dip conventions are all stored negative_down, "
+    "files with different length units are all converted to metres"
 )
 
 
@@ -547,6 +557,11 @@ def _print_import_reports(db) -> None:
                 f"    conflict {key} {row['column']}: kept {row['kept']} "
                 f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
             )
+    for name, entries in reports.get("sources", {}).items():
+        for entry in entries:
+            said = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in entry.items() if k != "file")
+            if said:
+                print(f"  {name} {entry['file']}: {said}")
     chosen = reports.get("hole_filter")
     if chosen:
         rules = "; ".join(
