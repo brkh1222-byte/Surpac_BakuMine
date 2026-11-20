@@ -157,9 +157,9 @@ def test_cli_writes_csv_and_report_and_the_csv_imports(appendix, tmp_path, capsy
     np.testing.assert_array_equal(assay["depth_from"], frame["from"].astype(float))
     np.testing.assert_array_equal(assay["depth_to"], frame["to"].astype(float))
     au = pd.to_numeric(frame["Au, g/t"], errors="coerce")
-    np.testing.assert_array_equal(assay["au_g_t"], au)
+    np.testing.assert_array_equal(assay["au"], au)
     ag = frame["Ag, g/t"].replace({"<1.0": "0.5", "": "nan"}).astype(float)
-    np.testing.assert_array_equal(assay["ag_g_t"], ag)
+    np.testing.assert_array_equal(assay["ag"], ag)
     assert assay["sample_id"].tolist() == frame["Sample No"].tolist()
 
 

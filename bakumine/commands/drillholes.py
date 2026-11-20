@@ -229,8 +229,11 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--coordinate-order",
         default="xyz",
-        help="true axes of the columns mapped to x, y, z; 'yxz' when the column mapped "
-        "to x holds the northing; 'auto' decides from the values (default: xyz)",
+        help="true axes of the columns mapped to x, y, z: 'xyz' (default), or 'yxz' when the "
+        "column mapped to x holds the northing (X of CIS / Mongolian reports). 'auto' swaps "
+        "x and y when the values say so (agreement with longitude / latitude; else, for "
+        "metres, x within 1e6..1e7 and y within 1e5..1e6 in every row: UTM) and reports it. "
+        "With 'xyz' such a table only gets a warning",
     )
     parser.add_argument(
         "--crs",
@@ -476,9 +479,19 @@ def run_import(args: argparse.Namespace) -> int:
         f"length unit {db.length_unit}{converted}, dip convention {db.dip_convention}, "
         f"coordinate order {db.metadata.coordinate_order}"
     )
+    for note in db.metadata.notes:
+        if note["kind"] in ("x_looks_like_northing", "x_looks_like_easting"):
+            print(
+                f"WARNING: the collar column mapped to x {note['kind'][2:].replace('_', ' ')}"
+                "s: check the axes, or import with --coordinate-order auto"
+            )
     for name in db.intervals:
         table = db.intervals[name]
-        columns = ", ".join(f"{c} [{table[c].dtype}]" for c in db.attribute_columns(name))
+        units = db.metadata.reports.get("units", {}).get(name, {})
+        columns = ", ".join(
+            f"{c} [{table[c].dtype}{', ' + units[c] if c in units else ''}]"
+            for c in db.attribute_columns(name)
+        )
         print(f"  {name} attributes: {columns or '(none)'}")
     _print_import_reports(db)
     for note in db.metadata.notes[:10]:

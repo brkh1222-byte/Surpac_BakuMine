@@ -71,6 +71,7 @@ __all__ = [
     "DrillholeMetadata",
     "ImportOptions",
     "TableSource",
+    "element_attribute",
     "import_drillholes",
     "import_table",
     "finish_database",
@@ -962,11 +963,13 @@ _SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
             "x", "east", "easting", "eastings", "xcollar", "collarx", "xcoord", "xcoordinate",
             "collareast", "collareasting", "utme", "utmeast", "utmeasting", "e",
             "восток", "зүүн", "utmlongitude", "utmlon", "utmдолгота", "utmуртраг",
+            "utmx", "xutm", "х",
         ),
         "y": (
             "y", "north", "northing", "northings", "ycollar", "collary", "ycoord",
             "ycoordinate", "collarnorth", "collarnorthing", "utmn", "utmnorth", "utmnorthing",
             "n", "север", "хойд", "utmlatitude", "utmlat", "utmширота", "utmөргөрөг",
+            "utmy", "yutm", "у",
         ),
         "z": (
             "z", "rl", "elevation", "elev", "zcollar", "collarz", "collarrl", "zcoord",
@@ -979,8 +982,9 @@ _SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
             "endofhole", "td", "length", "holelength", "totallength",
             "глубина", "глубинаскважины", "гүн", "цооногийнгүн",
         ),
-        "lon": ("lon", "long", "longitude", "lng", "долгота", "уртраг"),
-        "lat": ("lat", "latitude", "широта", "өргөрөг"),
+        # B / L: geodetic latitude / longitude of CIS tables (taken only as a pair)
+        "lon": ("lon", "long", "longitude", "lng", "долгота", "уртраг", "l"),
+        "lat": ("lat", "latitude", "широта", "өргөрөг", "b"),
         "azimuth": _AZIMUTH,
         "dip": _DIP,
     },
@@ -1051,6 +1055,8 @@ class ColumnMapSuggestion:
     missing: list[str]
     unmatched: list[str]
     scores: dict[str, float]
+    #: attribute name -> unit read from its header (``"au": "g/t"``)
+    units: dict[str, str] = field(default_factory=dict)
 
 
 def _words(header: object) -> list[str]:
@@ -1069,6 +1075,87 @@ def _attribute_name(header: object) -> str:
     return name or "column"
 
 
+#: chemical element symbols, hydrogen to uranium
+ELEMENT_SYMBOLS = frozenset(
+    """H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge
+    As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm
+    Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa
+    U""".split()
+)
+_ALNUM = r"[^\W_]"
+#: concentration units as written in headers -> one spelling
+_CONCENTRATION_UNITS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"(?<!{_ALNUM})(?:{pattern})(?!{_ALNUM})", re.IGNORECASE), unit)
+    for pattern, unit in (
+        (r"мг\s*/\s*кг|mg\s*/\s*kg", "mg/kg"),
+        (r"гр?\s*[/.]\s*тн?|g\s*/\s*t|gpt", "g/t"),
+        (r"oz\s*/\s*t(?:on)?|opt", "oz/t"),
+        (r"ppm", "ppm"),
+        (r"ppb", "ppb"),
+        (r"wt\s*%|pct", "%"),
+    )
+) + ((re.compile("%"), "%"),)
+#: words around the symbol that say "this is an assay result" and nothing more
+_ASSAY_WORDS = frozenset(
+    {
+        "result", "results", "assay", "assays", "grade", "content", "element", "elements",
+        "value", "шинжилгээний", "шинжилгээ", "үр", "дүн", "агуулга", "элемент", "элементы",
+        "содержание", "содержания", "результат", "результаты", "анализ", "анализа",
+    }
+)  # fmt: skip
+#: laboratory method codes: FAA303, ICP61, AAS, ME-MS41 ...
+_METHOD_CODE = re.compile(
+    r"^(?:[A-Za-z]{2,4}\d{1,4}[A-Za-z]?|FAA?|AAS?|ICP|MS|OES|AES|XRF|INAA|ME)$"
+)
+#: lower-case words that are symbols only by accident
+_NOT_SYMBOLS = frozenset("in at no be he as os i u w k b c n s y h p v o f".split())
+
+
+def element_attribute(header: object) -> tuple[str, str | None] | None:
+    """The element a column header names, and its unit: ``"Au (г/т)"``, ``"Au /г/т/"``,
+    ``"Au, g/t"``, ``"Au-г.т"``, ``"FAA303 Au г/т"`` -> ``("au", "g/t")``; ``"Element,
+    mg/kg Pb"`` -> ``("pb", "mg/kg")``; ``"Шинжилгээний үр дүн Au"`` -> ``("au", None)``.
+
+    None when the header is not an element symbol (hydrogen to uranium, as written:
+    ``Au``; ``AU`` and, with a unit, ``au`` too) alone or with a concentration unit
+    (g/t, ppm, ppb, %, mg/kg, oz/t), assay words (``result``, ``дүн``, ``содержание`` ...)
+    and a laboratory method code. ``Recovery, %``, ``Fe2O3 %`` and ``Au Ag`` are not."""
+    text = str(header).strip()
+    unit: str | None = None
+    for pattern, name in _CONCENTRATION_UNITS:
+        if pattern.search(text):
+            unit, text = name, pattern.sub(" ", text, count=1)
+            break
+    tokens = [t for t in re.split(r"[\W_]+", text) if t]
+    left = [t for t in tokens if t.casefold() not in _ASSAY_WORDS and not _METHOD_CODE.match(t)]
+    if len(left) != 1:
+        return None
+    token = left[0]
+    if token in ELEMENT_SYMBOLS:
+        if unit is None and len(token) == 1 and len(tokens) > 1:
+            return None  # "result S": too little to go by
+        return token.casefold(), unit
+    symbol = token.capitalize()
+    if symbol not in ELEMENT_SYMBOLS or len(token) != 2:
+        return None
+    if token.isupper() or (unit is not None and token.casefold() not in _NOT_SYMBOLS):
+        return token.casefold(), unit
+    return None
+
+
+_COORDINATE_WORDS = ("солбицол", "координат", "coordinate", "coord")
+_AXIS_LETTERS = {"x": "x", "y": "y", "z": "z", "h": "h", "х": "x", "у": "y", "н": "h"}
+
+
+def _coordinate_axis(header: object) -> str | None:
+    """``"Солбицол /UTM/ X"``, ``"Координаты Y"``, ``"Coordinates, m Z"`` -> the axis
+    letter (a two-row header flattened: the group over ``X``, ``Y``, ``H``)."""
+    words = [w for w in re.split(r"[\W_]+", str(header).casefold()) if w]
+    if len(words) < 2 or not words[0].startswith(_COORDINATE_WORDS):
+        return None
+    return _AXIS_LETTERS.get(words[-1])
+
+
 def suggest_column_map(
     headers: Iterable[object],
     table: TableKind = "collar",
@@ -1085,7 +1172,13 @@ def suggest_column_map(
     a row under one longitude header become ``lon_deg, lon_min, lon_sec``) and
     ``azimuth`` / ``dip``; an interval table ``sample_id``, ``sample_type`` and
     ``sample_length``. For an interval table the remaining columns are proposed as
-    attributes under a lower-case name. The result is a proposal: check it, edit
+    attributes under a lower-case name; a header that names a chemical element
+    (``Au (г/т)``, ``Au, g/t``, ``FAA303 Au г/т``, ``Element, mg/kg Pb``; see
+    :func:`element_attribute`) becomes the element (``au``, ``pb``) and its unit goes to
+    ``.units``. In a collar table ``Солбицол X`` / ``Координаты Y`` (a flattened two-row
+    header) are the axes, and ``B`` / ``L`` together are latitude / longitude. Which of
+    ``X`` / ``Y`` is the easting is not decided here but from the values
+    (``coordinate_order="auto"``). The result is a proposal: check it, edit
     ``.mapping``, then pass it to :class:`TableSource`.
     """
     if table not in _SYNONYMS:
@@ -1093,7 +1186,7 @@ def suggest_column_map(
     headers = [str(h).strip() for h in headers]
     candidates: list[tuple[float, int, int, str, str]] = []
     for position, header in enumerate(headers):
-        normal = _normalise_header(header)
+        normal = (table == "collar" and _coordinate_axis(header)) or _normalise_header(header)
         if not normal:
             continue
         for canonical, spellings in _SYNONYMS[table].items():
@@ -1119,6 +1212,10 @@ def suggest_column_map(
         scores[canonical] = round(score, 3)
         used.add(header)
 
+    # a lone "B" or "L" is not a latitude or a longitude: they come as a pair
+    for one, other in (("lat", "lon"), ("lon", "lat")):
+        if one in chosen and len(_normalise_header(chosen[one])) == 1 and other not in chosen:
+            del chosen[one], scores[one]
     by_header = {header: canonical for canonical, header in chosen.items()}
     # "Longitude", "Longitude 2", "Longitude 3": degrees, minutes, seconds
     for whole, parts in _DMS_PARTS.items():
@@ -1132,18 +1229,22 @@ def suggest_column_map(
             chosen[parts[0]] = chosen.pop(whole)
     mapping: dict[str, str] = {}
     unmatched: list[str] = []
+    units: dict[str, str] = {}
     taken = set(_CANONICAL[table]) | set(_SYNONYMS[table])
     for header in headers:
         if header in by_header:
             mapping[header] = by_header[header]
         elif table == "interval" and header not in mapping:
-            base = _attribute_name(header)
+            element = element_attribute(header)
+            base = element[0] if element else _attribute_name(header)
             name, n = base, 2
             while name in taken:
                 name, n = f"{base}_{n}", n + 1
             taken.add(name)
             mapping[header] = name
+            if element and element[1]:
+                units[name] = element[1]
         else:
             unmatched.append(header)
     missing = missing_required(table, by_header.values())
-    return ColumnMapSuggestion(table, mapping, missing, unmatched, scores)
+    return ColumnMapSuggestion(table, mapping, missing, unmatched, scores, units)

@@ -17,7 +17,8 @@ projected columns of the same table when there are any:
 * with ``coordinate_order="auto"`` the order of the projected columns (``X`` = northing
   in CIS-style tables) is the one that agrees with the longitude / latitude. Without
   longitude / latitude the order is decided by magnitude when it is unambiguous
-  (a UTM easting is below 1 000 000 m, a northing away from the equator is above).
+  (a UTM easting is below 1 000 000 m, a northing away from the equator is above);
+  only for coordinates in metres.
 """
 
 from __future__ import annotations
@@ -164,7 +165,8 @@ def resolve_collar_coordinates(
     geographic = _geographic(collar)
 
     if geographic is None:
-        guess = _order_by_magnitude(x, y)
+        # the magnitudes of UTM metres; feet (state plane grids) tell nothing this way
+        guess = _order_by_magnitude(x, y) if options.length_unit == "m" else None
         if order == "auto":
             order = guess or "xyz"
             note(f"coordinate_order_assumed_{order}", int(len(collar)),

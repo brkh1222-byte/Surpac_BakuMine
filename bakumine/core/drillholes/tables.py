@@ -41,6 +41,7 @@ from .importer import (
     _cell_text,
     _normalise_header,
     _resolve_column_map,
+    element_attribute,
     suggest_column_map,
 )
 
@@ -595,7 +596,8 @@ class Prepared:
     ``qc``      the rows set aside (interval tables), with ``qc_type``, ``sheet``, ``row``.
     ``mapping`` source column -> canonical name, as used.
     ``info``    what was read and decided: sheets (name, header row, rows), columns,
-                missing canonical columns, QC and sample-number summaries.
+                missing canonical columns, units of element columns, QC and sample-number
+                summaries.
     ``notes``   importer notes (table, column, kind, count ...).
     """
 
@@ -706,6 +708,9 @@ def prepare_source(
         note("hole_id", "hole_id_pattern_not_matched", len(unmatched), examples=unmatched[:5])
 
     info: dict[str, Any] = {"sheets": sheet_info, "columns": headers}
+    # the unit a header gives for an element column ("Au, g/t"), under the mapped name
+    elements = {target: element_attribute(column) for column, target in resolved.items()}
+    info["units"] = {target: found[1] for target, found in elements.items() if found and found[1]}
     qc_rows = pd.DataFrame()
     if kind == "interval" and len(renamed):
         renamed, qc_rows = _interval_rules(renamed, spec, name, info, note)

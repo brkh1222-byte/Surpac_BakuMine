@@ -370,12 +370,35 @@ def prepare_table(
     return prepared
 
 
+def _units(
+    name: str, per_source: Sequence[Mapping[str, str]], labels: Sequence[str],
+    metadata: DrillholeMetadata,
+) -> dict[str, str]:  # fmt: skip
+    """Column -> unit read from the headers of a table's sources. Sources that give one
+    column in different units are reported (nothing is converted)."""
+    units: dict[str, str] = {}
+    seen: dict[str, dict[str, str]] = {}
+    for label, found in zip(labels, per_source, strict=True):
+        for column, unit in found.items():
+            units.setdefault(column, unit)
+            seen.setdefault(column, {})[label] = unit
+    for column, by_file in seen.items():
+        if len(set(by_file.values())) > 1:
+            metadata.notes.append(
+                {"table": name, "column": column, "kind": "units_differ_between_sources",
+                 "count": len(by_file), "values": dict(by_file),
+                 "hint": "nothing was converted; import the files separately or rename"}
+            )  # fmt: skip
+    return units
+
+
 def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> DrillholeDatabase:
     """Import the files a recipe names. ``base`` is the folder its relative paths start
     from. The database's metadata holds the recipe with every column map filled in
     (``metadata.recipe``) and the reports (``metadata.reports``): per table the sheets read,
-    QC rows set aside, depths taken from sample numbers, merge conflicts; the coordinate
-    check; the survey made from the collar."""
+    QC rows set aside, depths taken from sample numbers, merge conflicts, the units read
+    from element headers (``units``); the coordinate check; the survey made from the
+    collar."""
     recipe = check_recipe(recipe)
     base = Path(base) if base is not None else None
     options = options_from_dict(recipe["options"])
@@ -386,7 +409,9 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     grids: dict[Path, dict[str, pd.DataFrame]] = {}
     typed: dict[str, pd.DataFrame] = {}
     qc: dict[str, pd.DataFrame] = {}
-    reports: dict[str, Any] = {"tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}}
+    reports: dict[str, Any] = {
+        "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
+    }  # fmt: skip
     for name, sources in recipe["tables"].items():
         kind = _kind(name)
         prepared = prepare_table(name, sources, recipe, options, base, grids)
@@ -415,6 +440,9 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                         {"table": name, "column": "*", "kind": f"sources_{what}",
                          "count": merged[what]}  # fmt: skip
                     )
+        units = _units(name, [p.info.get("units", {}) for p in prepared], labels, metadata)
+        if units:
+            reports["units"][name] = {c: u for c, u in units.items() if c in table.columns}
         typed[name] = table
         metadata.column_maps[name] = dict(prepared[0].mapping)
         metadata.sources[name] = "; ".join(str(s["file"]) for s in sources)

@@ -210,7 +210,7 @@ def test_suggested_maps_import_babbitt(babbitt_db):
             "interval",
             ["HOLE-ID", "Depth_From", "Depth_To", "Au ppm", "LITH"],
             {"HOLE-ID": "hole_id", "Depth_From": "depth_from", "Depth_To": "depth_to",
-             "Au ppm": "au_ppm", "LITH": "lith"},
+             "Au ppm": "au", "LITH": "lith"},
         ),
         (
             "interval",  # N and E are grades here, not northing/easting

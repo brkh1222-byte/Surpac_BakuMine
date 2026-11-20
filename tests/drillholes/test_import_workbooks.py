@@ -157,7 +157,7 @@ def test_merged_header_without_sub_header_and_repeated_header_rows():
         ("survey", ["Скважина", "Глубина", "Азимут", "Угол наклона"],
          ["hole_id", "depth", "azimuth", "dip"]),
         ("interval", ["скв.", "От", "До", "Проба", "Au г/т"],
-         ["hole_id", "depth_from", "depth_to", "sample_id", "au_г_т"]),
+         ["hole_id", "depth_from", "depth_to", "sample_id", "au"]),
     ],
 )  # fmt: skip
 def test_non_english_headers_are_suggested(kind, headers, expected):
