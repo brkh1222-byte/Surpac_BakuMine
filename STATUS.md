@@ -28,8 +28,8 @@ convention below is an unverified assumption.
 | Babbitt: swath correlation x / y / z | > 0.5 (test) | 0.84 / 0.91 / 0.96 | §8 P7.T2 |
 | Babbitt: leave-one-hole-out cross-validation | (none) | corr 0.39 | §8 P7.T2 |
 
-Gate A also required `/code-review high` on the core. The core review part of P7.T5 is done
-(10 confirmed bugs fixed). The rest of P7.T5 is still open (see §5).
+Gate A also required `/code-review high` on the core: done in P7.T5 (10 confirmed bugs fixed).
+The API / web security review is done too (8 confirmed findings fixed, see §5).
 
 ## 2. What works, and how it is verified
 
@@ -169,13 +169,12 @@ binary-variant note in each.)
 | Drillhole import defaults | Below detection = half the limit; -99 / -999 sentinels on attribute columns only |
 | Transport | Custom "BKMA" container, not Arrow as planned in §1 |
 
-## 5. Not done (unticked boxes in plan.md)
+## 5. Not done, and the review outcome
 
 | Task | State | Reason |
 |---|---|---|
 | P7.T3 Surpac comparison | Not started (marked CUT: no inputs) | No Surpac licence or exports supplied (plan.md §7 input 1). Needed: a `.str` + `.dtm` pair exported from Surpac, a block model CSV export, and the estimation parameters used, all for the same data set. To answer the [verify] items as well, the block model should be coded and IDW-estimated from drillholes we also have, and ideally use a rotated model and a rotated ellipsoid (V5, 3.4) and include desurveyed hole coordinates for a curved hole (V2, V3); these additions are this report's suggestion, not part of §7 |
-| P7.T5 Review | In progress | Part 1 done: core `/code-review high`, 10 confirmed bugs fixed with failing-first tests (commits 51ecbab..1c5ae17); estimation core read, no bug found. Not yet logged: `/security-review` and review of the API / web diff. Acceptance ("no open important findings") not yet met |
-| P7.T7 Honest status report | This file | Ticked by the orchestrator after review |
+| P7.T5 Review | Done (ticked) | Core review: 10 confirmed bugs fixed with failing-first tests (51ecbab..1c5ae17); estimation core read only, no bug found. API / web security review: 8 confirmed findings fixed (composite name path write, DNS rebinding / cross-origin writes now refused by a Host + Origin guard, upload delete wildcards and size limit, 500s on malformed input, unbounded report / model / job sizes, concurrent numba kernels aborting the process, concurrent string/solid saves, dev proxy Host). Unconfirmed and left open: a read between `save_model`'s two renames, XLSX zip/XML bombs, delay of UI kernels behind the numba lock, memory blow-ups inferred but not run |
 
 ## 6. Reproducing the numbers
 
@@ -196,8 +195,7 @@ uv run pytest tests/cli/test_babbitt_run.py        # Babbitt acceptance assertio
 
 | Suite | Count | Source |
 |---|---|---|
-| pytest (`make check`) | 1356 passed | §8 P6.T7 and P7.T6 orchestrator runs |
-| pytest collected on `b7e2aeb` | 1362 | `uv run pytest --collect-only` when writing this file; not run |
+| pytest (`make check`) | 1382 passed, 3 skipped | orchestrator run after the P7.T5 security merge |
 | of which strict xfail | 3 | `tests/estimation/test_experimental.py` |
-| vitest | 140 passed | §8 P6.T7, P7.T6 |
-| Playwright e2e | 56 passed | §8 P5.T7 (last logged `make e2e` run; later merges not re-run in the log) |
+| vitest | 140 passed | orchestrator run after the P7.T5 security merge |
+| Playwright e2e | 56 passed | orchestrator `make e2e` after the P7.T5 security merge |
