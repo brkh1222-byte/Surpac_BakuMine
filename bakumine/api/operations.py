@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from bakumine.core import joblog
-from bakumine.core.project import Project
+from bakumine.core.project import Project, _slug
 
 UPLOADS = "uploads"
 #: uploaded files an import used are copied here (``inputs/<job id>/``) for replay
@@ -487,9 +487,10 @@ def _composite(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> d
         raise _fail(exc) from None
     if not len(out):
         raise OperationError("no composites were produced")
-    name = request.get("name") or f"composites_{table}"
+    name = str(request.get("name") or f"composites_{table}")
     with tempfile.TemporaryDirectory() as tmp:
-        file = Path(tmp) / f"{name}.parquet"
+        # The name is display text: the file name is a slug of it, never a path.
+        file = Path(tmp) / f"{_slug(name)}.parquet"
         out.to_parquet(file)
         obj = Project.open(folder).add("composite", file, name)
     rec.entry["outputs"] = [obj.to_dict()]
