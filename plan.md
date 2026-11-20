@@ -161,11 +161,11 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [x] **P5.T1 Scene.** Orbit/pan/zoom, Z-up, orthographic/perspective toggle, grid, axes with real coordinates, vertical exaggeration, large-coordinate handling (recentre to local origin to avoid float32 jitter). *Accept:* Playwright screenshot test; a point at E 500 000 / N 5 000 000 renders without jitter.
 - [x] **P5.T2 Drillholes.** Traces as tubes/lines coloured by any interval attribute, collar labels, hover/pick shows hole, depth, values. *Accept:* 500 holes at 60 fps.
 - [x] **P5.T3 Meshes.** DTMs and solids, solid/wireframe/transparent modes, per-object visibility and colour. *Accept:* 1M triangles interactive.
-- [ ] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
-- [ ] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
+- [x] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
+- [x] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
 - [x] **P5.T6 Section tools.** Clipping plane at any orientation with thickness (slab), step forward/back, section view locks camera normal to plane; drillholes, mesh outlines and blocks all clip together. *Accept:* screenshot test on synthetic section matches expected composition.
 - [ ] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
-- [ ] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
+- [x] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
 
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
 
@@ -260,6 +260,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 12:45  P3.T5-T7  8665258 4dd5bed 481ab09  Sub-blocking to depth 3 on ore solid: +0.0034 % vs mesh; net error NOT strictly monotone (+0.0100 % d1, +0.0119 % d2, noise level) so test asserts shrinking straddle bound instead. Partials n>=2 within 0.5 % on sphere. Coding agreement 99.96 % centroid / 99.88 % random points at d3.
 2026-11-20 12:45  P3.T8/T9  8b5027b 1edb102  Parquet+JSON model folder (5.6M blocks: save 0.84 s, load 0.46 s, lossless), block CSV (provisional Surpac-like layout, 9 unverified assumptions), report + `bakumine blockmodel` CLI. Truth totals: tonnes -3e-5, grade/metal -1.1 % (synth block grid vs truth.json node averaging; cause not verified).
 2026-11-20 12:50  fix  51b319a  Full make check after merges: 1 hypothesis failure in desurvey property test (180-degree dogleg; test measure invalid for documented fallback). Test fixed; code unchanged. 1246 tests pass.
+2026-11-20 13:20  P5.T8/T4/T5  b366734 efed50d 58c5a8b  Blocks endpoint (BKMA, no coords on wire, 2-16 B/block), instanced blocks layer with section caps and picking, constraint filter panel (UI counts = server = Python masks). Shell LOD: 2M model first view 16 ms, orbit 2 ms/frame; all 2M as instances 26 fps (plan said 30: NOT met for lod=full). Rotated model on screen and opacity<1 not inspected. Orchestrator: make check 1276 + 118 vitest green after merge; e2e (54) run by agent only.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
