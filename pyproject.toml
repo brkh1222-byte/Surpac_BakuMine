@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn",
     "triangle>=20250106",
     "openpyxl>=3.1.5",
+    "pyproj>=3.8.0",
     "xlrd>=2.0.2",
 ]
 

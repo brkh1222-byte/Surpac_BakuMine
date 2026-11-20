@@ -182,6 +182,15 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         help="blank / standard / duplicate rows of interval tables: set aside in a QC "
         "table (default) or left among the samples",
     )
+    shape.add_argument(
+        "--merge-precedence",
+        choices=("first", "last"),
+        default="first",
+        help="which file wins when several files of one table disagree (default: first)",
+    )
+    shape.add_argument(
+        "--merge-tolerance", type=float, default=0.01, help="numbers closer than this agree"
+    )
     parser.add_argument(
         "--length-unit",
         choices=tuple(LENGTH_UNITS),
@@ -208,6 +217,18 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "to x holds the northing; 'auto' decides from the values (default: xyz)",
     )
     parser.add_argument(
+        "--crs",
+        help="projected CRS for collars given as longitude / latitude, e.g. EPSG:32647 "
+        "(default: the UTM zone of the data)",
+    )
+    parser.add_argument(
+        "--coordinate-tolerance",
+        type=float,
+        default=30.0,
+        help="report collars whose projected columns differ from their longitude / "
+        "latitude by more than this (default: 30)",
+    )
+    parser.add_argument(
         "--below-detection",
         choices=BELOW_DETECTION_RULES,
         default="half",
@@ -229,10 +250,6 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     # options of later import features, at their defaults
     parser.set_defaults(
         func=_guarded(run_import),
-        merge_precedence="first",
-        merge_tolerance=0.01,
-        crs=None,
-        coordinate_tolerance=30.0,
         recipe=None,
         base=None,
         save_recipe=None,

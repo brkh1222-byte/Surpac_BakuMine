@@ -811,7 +811,9 @@ def finish_database(
     collar's ``azimuth`` / ``dip`` when ``survey_table`` is None, the dip convention, and
     the unit conversion. What was decided or changed is added to ``metadata``.
     """
-    order = "xyz" if options.coordinate_order == "auto" else options.coordinate_order
+    from .coordinates import resolve_collar_coordinates
+
+    collar_table, order = resolve_collar_coordinates(collar_table, options, metadata)
     metadata.coordinate_order = order
     # Axis order: the column mapped as "xyz"[i] holds the true axis coordinate_order[i].
     if order != "xyz":

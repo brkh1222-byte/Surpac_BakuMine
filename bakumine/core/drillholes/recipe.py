@@ -58,6 +58,7 @@ from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .importer import (
@@ -76,6 +77,7 @@ __all__ = [
     "MissingColumns",
     "load_recipe",
     "make_recipe",
+    "merge_sources",
     "options_from_dict",
     "options_to_dict",
     "run_recipe",
@@ -235,6 +237,92 @@ def save_recipe(recipe: Mapping[str, Any], path: str | Path) -> Path:
 
 
 # --------------------------------------------------------------------------------------
+# merging sources
+# --------------------------------------------------------------------------------------
+def _differs(a: Any, b: Any, tolerance: float) -> bool:
+    if isinstance(a, int | float | np.integer | np.floating) and isinstance(
+        b, int | float | np.integer | np.floating
+    ):
+        return bool(abs(float(a) - float(b)) > tolerance)
+    return str(a) != str(b)
+
+
+def merge_sources(
+    table: pd.DataFrame,
+    source: np.ndarray,
+    keys: Sequence[str],
+    *,
+    precedence: str = "first",
+    tolerance: float = 0.01,
+    labels: Sequence[str] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Merge rows with the same key that come from different sources (see module doc).
+
+    ``source`` is the 0-based source index of each row. Returns the merged table (row
+    order kept; the winning row stays where it was) and a report: ``merged`` rows
+    removed, ``filled`` cells taken from a losing source, ``conflicts`` (count) and
+    ``rows`` (the first conflicts: key, column, kept / dropped value and source).
+    """
+    source = np.asarray(source, dtype=np.int64)
+    labels = list(labels) if labels is not None else [str(i) for i in range(source.max() + 1)]
+    report: dict[str, Any] = {
+        "precedence": precedence, "tolerance": tolerance, "keys": list(keys),
+        "merged": 0, "filled": 0, "conflicts": 0, "rows": [],
+    }  # fmt: skip
+    if len(table) == 0 or len(np.unique(source)) < 2:
+        return table, report
+    key_frame = table[list(keys)].copy()
+    for column in keys:
+        if column != "hole_id":
+            key_frame[column] = key_frame[column].round(6)
+    groups = key_frame.groupby(list(keys), sort=False, dropna=True).indices
+    table = table.copy()
+    values = [c for c in table.columns if c not in keys]
+    drop: list[int] = []
+    for positions in groups.values():
+        if len(positions) < 2 or len(set(source[positions].tolist())) < 2:
+            continue
+        sign = 1 if precedence == "first" else -1
+        ranked = sorted(positions, key=lambda i: sign * source[i])
+        winner_source = source[ranked[0]]
+        winner = ranked[0]
+        for other in ranked[1:]:
+            if source[other] == winner_source:
+                continue  # a duplicate inside the winning source: the validator's business
+            drop.append(int(other))
+            for column in values:
+                at = table.columns.get_loc(column)
+                kept, lost = table.iat[winner, at], table.iat[other, at]
+                if pd.isna(lost):
+                    continue
+                if pd.isna(kept):
+                    table.iat[winner, at] = lost
+                    report["filled"] += 1
+                elif _differs(kept, lost, tolerance):
+                    report["conflicts"] += 1
+                    if len(report["rows"]) < _MAX_LISTED:
+                        row = {k: _plain(table[k].iat[winner]) for k in keys}
+                        row.update(
+                            column=column,
+                            kept=_plain(kept),
+                            dropped=_plain(lost),
+                            kept_source=labels[winner_source],
+                            dropped_source=labels[source[other]],
+                        )
+                        report["rows"].append(row)
+    report["merged"] = len(drop)
+    if drop:
+        table = table.drop(index=table.index[drop]).reset_index(drop=True)
+    return table, report
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        value = value.item()
+    return None if isinstance(value, float) and np.isnan(value) else value
+
+
+# --------------------------------------------------------------------------------------
 # running a recipe
 # --------------------------------------------------------------------------------------
 def _resolve(file: str, base: Path | None) -> Path:
@@ -310,7 +398,23 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         identity = {c: c for c in stacked.columns}
         table, notes = import_table(stacked, kind, identity, options, name=name)  # type: ignore[arg-type]
         metadata.notes.extend(notes)
-        table.pop(_SOURCE)  # several sources are stacked as they come
+        source = table.pop(_SOURCE).to_numpy(dtype=np.int64)
+        if len(sources) > 1:
+            table, merged = merge_sources(
+                table,
+                source,
+                _KEYS[kind],
+                precedence=recipe["merge"]["precedence"],
+                tolerance=recipe["merge"]["tolerance"],
+                labels=labels,
+            )
+            reports["conflicts"][name] = merged
+            for what in ("merged", "filled", "conflicts"):
+                if merged[what]:
+                    metadata.notes.append(
+                        {"table": name, "column": "*", "kind": f"sources_{what}",
+                         "count": merged[what]}  # fmt: skip
+                    )
         typed[name] = table
         metadata.column_maps[name] = dict(prepared[0].mapping)
         metadata.sources[name] = "; ".join(str(s["file"]) for s in sources)
