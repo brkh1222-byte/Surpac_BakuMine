@@ -350,7 +350,17 @@ def format_surpac_str(strings, *, decimals: int = 3) -> str:
         _check_text_field(getattr(header, name), f"header {name}", allow_separator=name == "memo")
     header = StringHeader(*(getattr(header, n).strip() for n in HEADER_FIELDS))
 
-    lines = [_format_header(header), _format_axis_record(strings.axis, decimals)]
+    header_line = _format_header(header)
+    try:  # the reader would take a header that parses as a point record for data
+        _parse_point_record(_split_record(header_line))
+    except ValueError:
+        pass
+    else:
+        raise SurpacFormatError(
+            f"header {header_line!r} would be read back as a point record; "
+            "make its first field non-numeric"
+        )
+    lines = [header_line, _format_axis_record(strings.axis, decimals)]
     for k, segment in enumerate(strings.segments):
         if segment.n_points == 0:
             raise SurpacFormatError(f"segment {k} has no points")

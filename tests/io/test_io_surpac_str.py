@@ -442,3 +442,13 @@ def test_property_round_trip(segments, decimals):
         assert b.is_closed  # rounding cannot open a closed ring
     # idempotent: writing what was read gives the same text
     assert format_surpac_str(back, decimals=decimals) == text
+
+
+def test_header_that_reads_as_a_point_record_is_refused():
+    """P7.T5 regression: such a header came back as a phantom string and the real
+    header was lost."""
+    seg = StringSegment(1, [[1.0, 2.0, 3.0]], [()])
+    with pytest.raises(SurpacFormatError, match="read back as a point record"):
+        format_surpac_str(StringFile([seg], StringHeader("12", "2026", "3", "4")))
+    text = format_surpac_str(StringFile([seg], StringHeader("pit12", "2026", "3", "4")))
+    assert parse_surpac_str(text).header.location == "pit12"
