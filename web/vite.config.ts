@@ -11,7 +11,9 @@ export default defineConfig({
   assetsInclude: ['**/*.bkma'],
   server: {
     proxy: {
-      '/api': API_URL,
+      // Keep the browser's Host header: the API refuses state-changing requests whose
+      // Origin is not its Host (bakumine/api/guard.py), and the page's origin is this server.
+      '/api': { target: API_URL, changeOrigin: false },
     },
   },
   test: {
