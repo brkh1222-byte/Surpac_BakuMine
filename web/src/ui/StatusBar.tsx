@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { formatCount, formatVolume } from '../blocks/format'
 import { fetchHealth, type HealthState } from '../health'
 import { formatCoord, formatLength } from '../scene/format'
 import type { SceneMode } from '../scene/Viewport'
+import { useBlocks } from '../state/blocks'
 import { useDisplay } from '../state/display'
 import { loadSummary, useViewer } from '../state/store'
 import { hoverDepthText } from './HoverTooltip'
@@ -82,6 +84,41 @@ function HoverStatus() {
   )
 }
 
+/** Blocks on screen and selected, of how many, and the volume selected: one per model. */
+function BlockSummary() {
+  const status = useBlocks((s) => s.status)
+  const models = useBlocks((s) => s.models)
+  const objects = useViewer((s) => s.objects)
+  const shownCategory = useViewer((s) => s.categoryVisible.blockModels)
+  return (
+    <>
+      {Object.entries(status).map(([id, st]) => {
+        if (!models[id] || !objects[id]?.visible || !shownCategory || st.total === 0) return null
+        // Fewer blocks drawn than selected: the exposed shell, or a section slab.
+        const part = st.shown !== st.selected ? ` (${formatCount(st.shown)} ${st.clipped ? 'in section' : 'drawn'})` : ''
+        const text = `Blocks ${formatCount(st.selected)} / ${formatCount(st.total)}${part} · ${formatVolume(st.volume)}`
+        return (
+          <span
+            key={id}
+            className={`status-item block-summary is-${st.state}`}
+            data-testid={`block-summary-${id}`}
+            data-state={st.state}
+            data-selected={st.selected}
+            data-shown={st.shown}
+            data-total={st.total}
+            data-volume={st.volume}
+            data-lod={st.lod}
+            data-clipped={st.clipped}
+            title={`${models[id].name}: blocks selected by the filter / in the model, and their volume`}
+          >
+            {st.state === 'loading' ? `${text} · filtering…` : st.state === 'error' ? `${text} · filter error` : text}
+          </span>
+        )
+      })}
+    </>
+  )
+}
+
 export function StatusBar({ mode }: { mode: SceneMode }) {
   const cursor = useViewer((s) => s.cursor)
   const gridSpacing = useViewer((s) => s.gridSpacing)
@@ -106,6 +143,7 @@ export function StatusBar({ mode }: { mode: SceneMode }) {
       </span>
       <HoverStatus />
       <span className="spacer" />
+      <BlockSummary />
       <span className="status-item" data-testid="status-grid">Grid {formatLength(gridSpacing)}</span>
       <span className="status-item" data-testid="status-projection">
         {projection === 'perspective' ? 'Perspective' : 'Orthographic'}

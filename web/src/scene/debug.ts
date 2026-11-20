@@ -5,12 +5,13 @@
 import { Vector3, type BufferGeometry, type Object3D, type Scene, type WebGLRenderer } from 'three'
 import { outlineCount, outlinePoints } from '../section/outline'
 import { outlineClient, type OutlineStats } from '../section/outlineClient'
+import { useBlocks } from '../state/blocks'
 import { useSection } from '../state/section'
 import { useViewer } from '../state/store'
 import { SECTION_PLANES, sectionClipActive, updateSectionPlanes } from './clipping'
 import { buildMockData } from './mockData'
 import { getOrigin, worldToRender, type Vec3 } from './origin'
-import { view, type CameraState, type StandardView } from './view'
+import { view, type BlockLayerDebug, type CameraState, type StandardView } from './view'
 
 export interface BufferReport {
   /** Object name (or type) owning the buffer. */
@@ -106,6 +107,13 @@ export interface DebugHandle {
   worldToClient: (world: Vec3) => { x: number; y: number } | null
   /** WebGL renderer string and the draw calls / triangles of the last frame. */
   renderInfo: () => { renderer: string; calls: number; triangles: number; lines: number; points: number }
+  blockStore: typeof useBlocks
+  /** What each blocks layer draws now (count, sizes, timings), by object id. */
+  blocks: () => Record<string, Omit<BlockLayerDebug, 'block'>>
+  /** Instance `k` of a blocks layer: row, world centroid, size, level. */
+  blockAt: (objectId: string, k: number) => ReturnType<BlockLayerDebug['block']>
+  /** Renders a frame and waits for the GPU to finish it (one-pixel read-back). */
+  finishFrame: () => void
   /** Centres and sizes of the mock boxes, world coordinates. */
   mockBoxes: () => { centre: [number, number, number]; size: [number, number, number] }[]
 }
@@ -141,7 +149,8 @@ export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void 
       const geometry = (object as Object3D & { geometry?: BufferGeometry }).geometry
       // Fat lines keep their coordinates in `instanceStart` (interleaved start + end);
       // their `position` attribute is only the unit quad.
-      const position = geometry?.getAttribute('instanceStart') ?? geometry?.getAttribute('position')
+      // Blocks keep theirs in `aCentre` (one per instance); `position` is the unit cube.
+      const position = geometry?.getAttribute('instanceStart') ?? geometry?.getAttribute('aCentre') ?? geometry?.getAttribute('position')
       if (!position) return
       let maxAbs = 0
       const array = position.array
@@ -364,6 +373,20 @@ export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void 
       const renderer = extension ? String(context.getParameter(extension.UNMASKED_RENDERER_WEBGL)) : 'unknown'
       const { calls, triangles, lines, points } = gl.info.render
       return { renderer, calls, triangles, lines, points }
+    },
+    blockStore: useBlocks,
+    blocks: () =>
+      Object.fromEntries(
+        [...view.blocks].map(([id, b]) => {
+          const { block: _block, ...rest } = b
+          return [id, { ...rest, timing: { ...rest.timing } }]
+        }),
+      ),
+    blockAt: (objectId, k) => view.blocks.get(objectId)?.block(k) ?? null,
+    finishFrame: () => {
+      render()
+      const context = gl.getContext()
+      context.readPixels(0, 0, 1, 1, context.RGBA, context.UNSIGNED_BYTE, new Uint8Array(4))
     },
     mockBoxes: () => buildMockData().boxes.map((b) => ({ centre: b.centre, size: b.size })),
   }

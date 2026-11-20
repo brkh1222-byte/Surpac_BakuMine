@@ -26,9 +26,13 @@ export async function settle(page: Page, count = 3): Promise<void> {
   }
 }
 
-/** Opens the demo project served by the API and waits until every object is loaded. */
-export async function openDemo(page: Page, query = 'theme=dark'): Promise<void> {
-  await page.goto(`/?${query}`)
+/**
+ * Opens the demo project served by the API and waits until every object is loaded.
+ * The block model is left out (`blocks=off`) unless `blocks` is true: the drillhole,
+ * mesh and section tests look at those objects alone; e2e/blocks.spec.ts has the model.
+ */
+export async function openDemo(page: Page, query = 'theme=dark', blocks = false): Promise<void> {
+  await page.goto(`/?${query}${blocks ? '' : '&blocks=off'}`)
   await page.waitForFunction(() => (window.__bakumine?.frames() ?? 0) > 0)
   await page.locator('[data-testid="load-status"][data-status="ready"]').waitFor()
   await settle(page)

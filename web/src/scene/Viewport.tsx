@@ -2,9 +2,11 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect } from 'react'
 import { Object3D, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { rayPlane, toPlane } from '../section/plane'
+import { useBlocks } from '../state/blocks'
 import { useDisplay } from '../state/display'
 import { sectionExtent, useSection } from '../state/section'
 import { allBounds, useViewer } from '../state/store'
+import { BlockPanel } from '../ui/BlockPanel'
 import { HolePanel } from '../ui/HolePanel'
 import { HoverTooltip } from '../ui/HoverTooltip'
 import { LegendStack } from '../ui/Legend'
@@ -188,6 +190,8 @@ function CursorProbe() {
         return
       }
       const picked = cast(event.clientX, event.clientY)?.picked
+      // One thing is selected at a time: a hole or a block.
+      useBlocks.getState().setPick(null)
       if (picked) picked.select()
       else useDisplay.getState().setSelection(null)
     }
@@ -297,6 +301,7 @@ export function Viewport({ mode }: { mode: SceneMode }) {
       <OrientationGizmo />
       <LegendStack />
       <HolePanel />
+      <BlockPanel />
       <HoverTooltip />
       {drawing && (
         <div className="viewport-hint" data-testid="section-hint" role="status">

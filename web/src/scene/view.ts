@@ -103,6 +103,29 @@ export const view = {
   },
   /** World xyz of a hole's trace (flat triples, collar first), by drillhole object id. */
   holeTraces: new Map<string, (hole: number) => Float64Array>(),
+  /** By block model object id. */
+  blocks: new Map<string, BlockLayerDebug>(),
+}
+
+/** What a blocks layer currently draws, for tests and the performance probe. */
+export interface BlockLayerDebug {
+  /** Blocks drawn (instances). */
+  count: number
+  selected: number
+  total: number
+  lod: 'full' | 'shell'
+  clipped: boolean
+  /** Attribute the instance values hold. */
+  attribute: string | null
+  /** Distinct block sizes among the instances (dx, dy, dz), largest first. */
+  sizes: number[][]
+  /** Largest |coordinate| in the float32 centre buffer. */
+  maxAbsCentre: number
+  bytesPerBlock: number
+  /** ms: request sent -> decoded; buffers built; request sent -> draw issued / GPU done (-1 = not yet). */
+  timing: { requestMs: number; buildMs: number; toDrawMs: number; toFrameMs: number }
+  /** Instance k: its row in the block table, world centroid, size and level. */
+  block: (k: number) => { row: number; centroid: [number, number, number]; size: [number, number, number]; level: number } | null
 }
 
 /** DOM nodes the scene updates directly each frame (no React re-render). */

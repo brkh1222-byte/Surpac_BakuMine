@@ -100,7 +100,7 @@ export interface DisplayState {
   resetNumericSettings: (id: string, key: string) => void
   setShowLabels: (id: string, show: boolean) => void
   /** Declares a mesh; keeps the user's choices when it is registered again. */
-  registerMesh: (id: string, closed: boolean, zRange: readonly [number, number]) => void
+  registerMesh: (id: string, closed: boolean, zRange: readonly [number, number], seeThrough?: boolean) => void
   unregisterMesh: (id: string) => void
   setMesh: (id: string, patch: MeshPatch) => void
   setHover: (hover: HoverInfo | null) => void
@@ -199,14 +199,17 @@ export const useDisplay = create<DisplayState>()((set) => ({
       const d = s.drillholes[id]
       return d ? { drillholes: { ...s.drillholes, [id]: { ...d, showLabels } } } : s
     }),
-  registerMesh: (id, closed, zRange) =>
+  registerMesh: (id, closed, zRange, seeThrough = false) =>
     set((s) => {
       const previous = s.meshes[id]
       if (previous) {
         return { meshes: { ...s.meshes, [id]: { ...previous, closed, zRange: [zRange[0], zRange[1]] } } }
       }
       const sameKind = Object.values(s.meshes).filter((m) => m.closed === closed).length
-      return { meshes: { ...s.meshes, [id]: defaultMeshDisplay(closed, zRange, sameKind) } }
+      const display = defaultMeshDisplay(closed, zRange, sameKind)
+      // Something is drawn inside this mesh (blocks inside a solid): start see-through.
+      if (seeThrough) display.mode = 'transparent'
+      return { meshes: { ...s.meshes, [id]: display } }
     }),
   unregisterMesh: (id) =>
     set((s) => {

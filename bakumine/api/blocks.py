@@ -57,6 +57,15 @@ constraint, normally two planes): with ``clip`` the server sends every selected 
 inside it - no shell - while ``n_selected`` and ``selected_volume`` still describe the
 ``where`` selection. The same goes for a shrink factor or an opacity below one, which
 make the interior visible: the viewer then asks for ``lod = "full"``.
+
+Limits of the shell: it is decided per parent cell, so in a sub-blocked model it keeps
+more than the true skin; every exposed block is sent whole (all its faces); and it is a
+property of the selection, not of the view - nothing is dropped for being far away or
+small on screen, so a selection that is all skin (scattered blocks) is sent in full.
+
+Besides the payload: ``block_object_entry`` is the manifest entry (definition, attribute
+summaries, ``display`` hints for the first view, the solids and surfaces a constraint may
+name) and ``block_details`` is one block with every attribute at full precision.
 """
 
 from __future__ import annotations
@@ -110,6 +119,9 @@ class BlockData:
     #: scene object id -> name of the closed solids / surfaces a constraint may name
     solids: dict[str, str] = field(default_factory=dict)
     surfaces: dict[str, str] = field(default_factory=dict)
+    #: how the viewer should open the model: ``color_by`` (attribute name) and
+    #: ``category_filter`` (``{"attribute", "values"}``: show only these categories)
+    display: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------- demo model
@@ -260,7 +272,7 @@ def synthetic_block_data(object_id: str) -> BlockData | None:
     n = int(match.group(1))
     with _synthetic_lock:
         if n not in _synthetic:
-            data = BlockData(synthetic_block_model(n))
+            data = BlockData(synthetic_block_model(n), display={"color_by": "au"})
             _synthetic.clear()
             _synthetic[n] = data
         return _synthetic[n]
@@ -338,6 +350,7 @@ def block_object_entry(data: BlockData) -> dict[str, Any]:
             "max_level": int(model.level.max()) if model.n_blocks else 0,
             "volume": float(model.definition.volume),
         },
+        "display": dict(data.display),
         "constraint_geometry": {
             "solids": [{"id": k, "name": v} for k, v in data.solids.items()],
             "surfaces": [{"id": k, "name": v} for k, v in data.surfaces.items()],

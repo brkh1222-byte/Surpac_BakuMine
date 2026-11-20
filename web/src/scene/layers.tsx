@@ -32,6 +32,8 @@ export interface LayerObject {
   category: Category
   /** World bounds, true Z. */
   bounds: Bounds
+  /** Starts unticked in the object tree (the user's later choice is kept). */
+  hidden?: boolean
 }
 
 export interface LayerObjectState {
@@ -45,16 +47,17 @@ export interface LayerObjectState {
 
 /** Registers one drawable object for the lifetime of the calling component. */
 export function useLayerObject(object: LayerObject): LayerObjectState {
-  const { id, name, category, bounds } = object
+  const { id, name, category, bounds, hidden } = object
   const [ready, setReady] = useState(false)
   const origin = useSceneOrigin()
   const visible = useViewer((s) => isObjectVisible(s, id))
 
   useLayoutEffect(() => {
-    useViewer.getState().registerObject({ id, name, category, bounds })
+    const known = id in useViewer.getState().objects
+    useViewer.getState().registerObject({ id, name, category, bounds, visible: !known && hidden ? false : undefined })
     setReady(true)
     return () => useViewer.getState().removeObject(id)
-  }, [id, name, category, bounds])
+  }, [id, name, category, bounds, hidden])
 
   return { ready, visible, origin }
 }

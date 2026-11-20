@@ -1003,3 +1003,22 @@ input {
 .grid-labels span[data-kind='end'] {
   color: var(--text);
 }
+
+/* ---- Block models ----------------------------------------------------------------- */
+
+.block-panel .block-attributes {
+  border-top: 1px solid var(--line);
+  overflow: auto;
+}
+
+.block-panel dd.is-missing {
+  color: var(--text-muted);
+}
+
+.block-summary.is-loading {
+  color: var(--accent);
+}
+
+.block-summary.is-error {
+  color: var(--danger);
+}

@@ -243,6 +243,11 @@ class DemoSceneSource:
                     DictResolver(dtms=dtms, solids=solids),
                     solids={k: self._MESHES[k][0] for k in solids},
                     surfaces={k: self._MESHES[k][0] for k in dtms},
+                    # Every block at once, air included, is an opaque brick: open on the ore.
+                    display={
+                        "color_by": "au",
+                        "category_filter": {"attribute": "rock", "values": ["ORE"]},
+                    },
                 )
             return self._blocks
 

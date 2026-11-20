@@ -1,5 +1,7 @@
 /** Per-object display controls shown under an object's row in the sidebar tree. */
 import { MESH_MODES, type MeshMode, type MeshShading } from '../meshes/display'
+import type { MissingDisplay } from '../blocks/colour'
+import { MIN_OPACITY, MIN_SHRINK, useBlocks } from '../state/blocks'
 import { attributeKey, useDisplay } from '../state/display'
 
 function DrillholeControls({ id }: { id: string }) {
@@ -107,7 +109,52 @@ function MeshControls({ id }: { id: string }) {
   )
 }
 
+function BlockControls({ id }: { id: string }) {
+  const model = useBlocks((s) => s.models[id])
+  const setColorBy = useBlocks((s) => s.setColorBy)
+  const setDisplay = useBlocks((s) => s.setDisplay)
+  if (!model) return null
+  return (
+    <div className="object-controls" data-testid={`controls-${id}`}>
+      <label className="control">
+        <span>Colour by</span>
+        <select data-testid={`colour-by-${id}`} value={model.colorBy ?? ''} onChange={(e) => setColorBy(id, e.target.value || null)}>
+          <option value="">None</option>
+          {model.attributes.map((a) => (
+            <option key={a.name} value={a.name}>
+              {a.name}
+              {a.type === 'numeric' && a.unit ? ` (${a.unit})` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="control">
+        <span>No value</span>
+        <select data-testid={`missing-${id}`} value={model.missing} onChange={(e) => setDisplay(id, { missing: e.target.value as MissingDisplay })}>
+          <option value="hidden">Hidden</option>
+          <option value="neutral">Grey</option>
+        </select>
+      </label>
+      <label className="control">
+        <span>Opacity</span>
+        <input type="range" data-testid={`opacity-${id}`} min={MIN_OPACITY} max={1} step={0.05} value={model.opacity} onChange={(e) => setDisplay(id, { opacity: Number(e.target.value) })} />
+        <output>{Math.round(model.opacity * 100)}%</output>
+      </label>
+      <label className="control" title="Draws every block smaller than it is, to see the gaps between blocks">
+        <span>Shrink</span>
+        <input type="range" data-testid={`shrink-${id}`} min={MIN_SHRINK} max={1} step={0.05} value={model.shrink} onChange={(e) => setDisplay(id, { shrink: Number(e.target.value) })} />
+        <output data-testid={`shrink-value-${id}`}>{model.shrink.toFixed(2)}</output>
+      </label>
+      <label className="control control-check">
+        <input type="checkbox" data-testid={`edges-${id}`} checked={model.edges} onChange={(e) => setDisplay(id, { edges: e.target.checked })} />
+        <span>Block edges</span>
+      </label>
+    </div>
+  )
+}
+
 export function ObjectControls({ id }: { id: string }) {
   const isMesh = useDisplay((s) => id in s.meshes)
-  return isMesh ? <MeshControls id={id} /> : <DrillholeControls id={id} />
+  const isBlocks = useBlocks((s) => id in s.models)
+  return isBlocks ? <BlockControls id={id} /> : isMesh ? <MeshControls id={id} /> : <DrillholeControls id={id} />
 }

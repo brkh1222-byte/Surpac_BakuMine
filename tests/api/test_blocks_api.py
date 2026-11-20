@@ -153,6 +153,11 @@ def test_manifest_entry_describes_the_model(client, data):
         "surfaces": [{"id": "topo", "name": "Topography"}],
     }
 
+    assert entry["display"] == {
+        "color_by": "au",
+        "category_filter": {"attribute": "rock", "values": ["ORE"]},
+    }
+
     attributes = {a["name"]: a for a in entry["attributes"]}
     assert list(attributes) == ["rock", "au", "au_ore", "ore_fraction", "density"]
     rock = attributes["rock"]
