@@ -55,16 +55,34 @@ def get_project(source: Source) -> dict[str, Any]:
     return ops.project_summary(_project(source).folder)
 
 
+#: largest uploaded table file (HTTP 413 above)
+MAX_UPLOAD_BYTES = 1024**3
+
+
+async def _read_limited(request: Request, limit: int) -> bytes:
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"the file is larger than {limit // 1024**2} MB")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(413, f"the file is larger than {limit // 1024**2} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.put("/uploads/{table}")
 async def put_upload(table: str, filename: str, request: Request, source: Source) -> dict[str, Any]:
     folder = _project(source).folder
-    content = await request.body()
+    content = await _read_limited(request, MAX_UPLOAD_BYTES)
     return _guard(lambda: ops.store_upload(folder, table, filename, content))
 
 
 @router.delete("/uploads/{table}")
 def delete_upload(table: str, source: Source) -> dict[str, str]:
-    ops.remove_upload(_project(source).folder, table)
+    folder = _project(source).folder
+    _guard(lambda: ops.remove_upload(folder, table))
     return {"removed": table}
 
 

@@ -58,7 +58,8 @@ def _upload_path(folder: Path, name: str) -> Path | None:
     return None
 
 
-def store_upload(folder: Path, name: str, filename: str, content: bytes) -> dict[str, Any]:
+def _check_upload_name(name: str) -> None:
+    """Table names are also glob patterns of the uploads folder: no wildcards."""
     from bakumine.core.drillholes.importer import _check_table_name
 
     if name not in ("collar", "survey"):
@@ -66,6 +67,10 @@ def store_upload(folder: Path, name: str, filename: str, content: bytes) -> dict
             _check_table_name(name)
         except ValueError as exc:
             raise _fail(exc) from None
+
+
+def store_upload(folder: Path, name: str, filename: str, content: bytes) -> dict[str, Any]:
+    _check_upload_name(name)
     suffix = Path(filename).suffix.lower()
     if suffix not in (".csv", ".txt", ".xlsx", ".xlsm"):
         raise OperationError(f"{filename!r}: use a CSV or XLSX file")
@@ -78,6 +83,7 @@ def store_upload(folder: Path, name: str, filename: str, content: bytes) -> dict
 
 
 def remove_upload(folder: Path, name: str) -> None:
+    _check_upload_name(name)
     for old in (folder / UPLOADS).glob(f"{name}.*"):
         old.unlink()
 

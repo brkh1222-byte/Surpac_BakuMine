@@ -62,6 +62,41 @@ def test_composite_name_cannot_write_outside_the_project(project, tmp_path, kind
     assert Project.open(folder).path_of(obj).is_relative_to(folder)
 
 
+# ---------------------------------------------------------------------- uploads
+
+CSV = b"hole_id,x,y,z,max_depth\nA,0,0,0,10\n"
+
+
+@pytest.mark.parametrize("pattern", ["*", "c*", "[cs]ollar", "%3Follar"])
+def test_deleting_an_upload_takes_no_wildcards(project, pattern):
+    client, folder = project
+    for table in ("collar", "survey"):
+        r = client.put(f"/api/v1/ops/uploads/{table}", params={"filename": "t.csv"}, content=CSV)
+        assert r.status_code == 200, r.text
+    assert client.delete(f"/api/v1/ops/uploads/{pattern}").status_code == 400
+    assert sorted(p.name for p in (folder / "uploads").iterdir()) == ["collar.csv", "survey.csv"]
+    assert client.delete("/api/v1/ops/uploads/collar").status_code == 200
+    assert [p.name for p in (folder / "uploads").iterdir()] == ["survey.csv"]
+
+
+def test_uploads_are_limited_in_size(project, monkeypatch):
+    from bakumine.api import routes_ops
+
+    client, folder = project
+    monkeypatch.setattr(routes_ops, "MAX_UPLOAD_BYTES", len(CSV) - 1)
+    r = client.put("/api/v1/ops/uploads/collar", params={"filename": "c.csv"}, content=CSV)
+    assert r.status_code == 413
+    # a streamed body with no Content-Length is counted as it arrives
+    r = client.put(
+        "/api/v1/ops/uploads/collar", params={"filename": "c.csv"}, content=iter([CSV[:5], CSV[5:]])
+    )
+    assert r.status_code == 413
+    assert not (folder / "uploads").exists() or not any((folder / "uploads").iterdir())
+    monkeypatch.setattr(routes_ops, "MAX_UPLOAD_BYTES", len(CSV))
+    r = client.put("/api/v1/ops/uploads/collar", params={"filename": "c.csv"}, content=CSV)
+    assert r.status_code == 200, r.text
+
+
 # ---------------------------------------------------------------------- request guard
 
 
