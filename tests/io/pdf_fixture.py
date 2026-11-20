@@ -120,3 +120,87 @@ def write_appendix(path: Path, rows: list[list[str]] | None = None) -> list[list
         str(path), pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=40, rightMargin=40
     ).build(story)
     return rows
+
+
+# --------------------------------------------------------------------------------------
+# a collar table cut by page breaks the way report writers leave it
+# --------------------------------------------------------------------------------------
+COLLAR_HEADER = [
+    ["No", "Hole", "Type", "Coordinates", "", "Elevation, m", "Azimuth, deg", "Dip, deg",
+     "Depth, m"],
+    ["", "", "", "X", "Y", "", "", "", ""],
+    [str(i) for i in range(1, 10)],
+]  # fmt: skip
+COLLAR_COLUMNS = ["No", "Hole", "Type", "X", "Y", "Elevation, m", "Azimuth, deg", "Dip, deg",
+                  "Depth, m"]  # fmt: skip
+COLLAR_WIDTHS = [26, 62, 36, 70, 66, 58, 58, 46, 50]
+#: rows per page; what each page starts with
+COLLAR_PAGES = (
+    (12, "header"),  # the header, two rows and the column numbers
+    (18, "open"),  # no header, and no rule above the first row (cut by the page break)
+    (15, "header"),  # the header again
+    (14, "text"),  # no header; the first row holds text only (a hole not yet surveyed)
+    (9, "open"),  # open again; the table ends with a total row
+)
+
+
+def collar_rows() -> list[list[str]]:
+    """No, Hole, Type, X (northing), Y (easting), elevation, azimuth, dip, depth; then a
+    total row. The first row of the fourth page has text only."""
+    rng = np.random.default_rng(11)
+    rows: list[list[str]] = []
+    text_only = sum(n for n, _ in COLLAR_PAGES[:3])
+    total = 0.0
+    for i in range(sum(n for n, _ in COLLAR_PAGES) - 1):
+        hole = f"SYN25_{i + 1:02d}"
+        if i == text_only:
+            rows.append(["", hole, "RC", "", "", "", "", "", ""])
+            continue
+        depth = float(rng.integers(120, 400)) + 0.5
+        total += depth
+        rows.append(
+            [str(i + 1), hole, "Core" if i % 4 else "RC",
+             f"{5204000 + rng.uniform(0, 900):.3f}", f"{412000 + rng.uniform(0, 900):.3f}",
+             f"{1230 + rng.uniform(0, 20):.3f}", str(int(rng.choice([30, 210]))),
+             str(int(rng.choice([-60, -70, -90]))), f"{depth:.1f}"]  # fmt: skip
+        )
+    rows.append(["Total", "", "", "", "", "", "", "", f"{total:.1f}"])
+    return rows
+
+
+def write_collar_report(path: Path) -> list[list[str]]:
+    """Draw :func:`collar_rows` over five pages (see ``COLLAR_PAGES``), then a different
+    small table on a page of its own. Returns the collar rows."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import PageBreak, SimpleDocTemplate, Table
+
+    rows = collar_rows()
+    everywhere = ((0, 0), (-1, -1))
+    font = [("FONTSIZE", *everywhere, 7), ("TOPPADDING", *everywhere, 1),
+            ("BOTTOMPADDING", *everywhere, 1)]  # fmt: skip
+    closed = [*font, ("GRID", *everywhere, 0.5, colors.black)]
+    # every rule but the one above the first row
+    open_top = [*font, ("INNERGRID", *everywhere, 0.5, colors.black),
+                ("LINEBELOW", (0, -1), (-1, -1), 0.5, colors.black),
+                ("LINEBEFORE", (0, 0), (0, -1), 0.5, colors.black),
+                ("LINEAFTER", (-1, 0), (-1, -1), 0.5, colors.black)]  # fmt: skip
+    spans = [("SPAN", (3, 0), (4, 0))] + [("SPAN", (c, 0), (c, 1)) for c in (0, 1, 2, 5, 6, 7, 8)]
+    story: list = []
+    first = 0
+    for count, start in COLLAR_PAGES:
+        body = rows[first : first + count]
+        first += count
+        if start == "header":
+            story.append(Table(COLLAR_HEADER + body, colWidths=COLLAR_WIDTHS,
+                               style=[*closed, *spans]))  # fmt: skip
+        else:
+            story.append(Table(body, colWidths=COLLAR_WIDTHS,
+                               style=open_top if start == "open" else closed))  # fmt: skip
+        story.append(PageBreak())
+    other = [["Trench", "Length, m", "Samples"], ["TR-1", "40.0", "38"], ["TR-2", "55.5", "51"]]
+    story.append(Table(other, colWidths=[80, 80, 80], style=closed))
+    SimpleDocTemplate(
+        str(path), pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=40, rightMargin=40
+    ).build(story)
+    return rows

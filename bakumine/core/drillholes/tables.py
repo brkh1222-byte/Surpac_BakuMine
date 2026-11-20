@@ -51,6 +51,7 @@ __all__ = [
     "check_sample_depths",
     "classify_qc",
     "depths_from_sample_ids",
+    "is_total_label",
     "locate_header",
     "normalise_hole_ids",
     "prepare_source",
@@ -82,6 +83,26 @@ QC_WORDS: dict[str, tuple[str, ...]] = {
         "давтан",
     ),  # fmt: skip
 }
+
+
+#: words that open the label of a total / summary row (English, Mongolian, Russian)
+TOTAL_WORDS: tuple[str, ...] = (
+    "total", "totals", "subtotal", "sum", "нийт", "нэгтгэл", "дүн", "бүгд",
+    "итого", "всего",
+)  # fmt: skip
+
+
+def is_total_label(text: object) -> bool:
+    """Does a cell label a total / summary row: ``Total``, ``Нийт``, ``НЭГТГЭЛ``,
+    ``Итого по участку``, ``Grand total:``, ``Sum`` ... Its first word (or the one after
+    ``grand`` / ``sub``) is a total word and it holds no digit, so that a hole named
+    ``SUM-01`` is not one."""
+    words = [w for w in re.split(r"[\W_]+", str(text).casefold()) if w]
+    if not words or any(c.isdigit() for c in str(text)):
+        return False
+    if words[0] in ("grand", "sub", "нийт") and len(words) > 1 and words[1] in TOTAL_WORDS:
+        return True
+    return words[0] in TOTAL_WORDS
 
 
 # --------------------------------------------------------------------------------------

@@ -6,8 +6,15 @@ with ``pdfplumber`` (MIT licence; it reads the cell rectangles the PDF draws) an
 them into whole tables:
 
 * a table continues on the next page when that page starts with data or repeats the
-  header (repeated headers are dropped); a page that starts with a *different* header
-  starts a new table (``one_table=True`` never does);
+  header (repeated headers are dropped). The first row of a continuation page is a header
+  only when it matches the known header, or is clearly another header (it has text over
+  the number columns of the rows below, or other columns): then it starts a new table
+  (``one_table=True`` never does). A text-only row in the columns of the running table is
+  data;
+* a row at the top or the bottom of a page whose outer rule is not drawn (the table is
+  left open at the page break) is closed and read like the others;
+* every page is accounted for: ruled rows found against rows written, and text lying in
+  the table's columns outside its rows (see :func:`table_report`);
 * columns are matched by position on the page, not by counting cells, so that empty
   cells, a missing optional last column, padding columns and a table drawn in two pieces
   side by side do not shift anything;
@@ -23,6 +30,7 @@ Never used on Surpac files; a PDF is a text export like any other.
 from __future__ import annotations
 
 import csv
+import difflib
 import json
 import re
 from collections.abc import Callable, Iterable, Sequence
@@ -33,6 +41,7 @@ from typing import Any
 __all__ = [
     "ExtractedTable",
     "extract_tables",
+    "page_warnings",
     "parse_pages",
     "table_report",
     "write_tables",
@@ -43,6 +52,8 @@ _Y_TOLERANCE = 2.5  # points: rows of two table pieces on one line
 _X_TOLERANCE = 1.5  # points: column boundaries that are the same line
 _MIN_COLUMN = 2.0  # points: narrower intervals between boundaries are rulings, not columns
 _MAX_TITLES = 100
+_MIN_ROW = 4.0  # points: a band of rulings lower than this is not a row
+_JOINED = 1.5  # points: ruling pieces closer than this are one line
 
 
 @dataclass
@@ -114,10 +125,86 @@ def _clean(text: str | None, header: bool = False) -> str:
     return " ".join(lines)
 
 
-def _page_groups(page: Any, number: int, settings: dict[str, Any]) -> list[list[_Row]]:
-    """The tables of a page as groups of rows; pieces drawn side by side are one group."""
+def _open_ends(page: Any, tables: list[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Rows left open at the top or bottom of a table: the column rulings run on beyond
+    the outermost horizontal rule (a table cut by a page break is often drawn without the
+    rule at the cut) and there is text between them. Returns the horizontal lines that
+    close them, each with the number of text lines it brings in (``text_lines``)."""
+    verticals = [e for e in page.edges if e["orientation"] == "v"]
+    if not verticals or not tables:
+        return []
+    words: list[dict[str, Any]] | None = None
+    lines: list[dict[str, Any]] = []
+    for table in tables:
+        x0, top, x1, bottom = (float(v) for v in table.bbox)
+        inside = [e for e in verticals if x0 - 2.0 <= float(e["x0"]) <= x1 + 2.0]
+        for upward in (True, False):
+            edge = top if upward else bottom
+            reached = edge
+            grown = True
+            while grown:  # the rulings come in pieces, one per row
+                grown = False
+                for e in inside:
+                    a, b = float(e["top"]), float(e["bottom"])
+                    if upward and b >= reached - _JOINED and a < reached - _JOINED:
+                        reached, grown = a, True
+                    elif not upward and a <= reached + _JOINED and b > reached + _JOINED:
+                        reached, grown = b, True
+            low, high = (reached, edge) if upward else (edge, reached)
+            if high - low < _MIN_ROW:
+                continue
+            columns = {
+                round(float(e["x0"]))
+                for e in inside
+                if float(e["top"]) < high - _JOINED and float(e["bottom"]) > low + _JOINED
+            }
+            taken = any(
+                o is not table
+                and o.bbox[1] < high - _JOINED and o.bbox[3] > low + _JOINED
+                and o.bbox[0] < x1 and o.bbox[2] > x0
+                for o in tables
+            )  # fmt: skip
+            if len(columns) < 2 or taken:
+                continue
+            if words is None:
+                words = page.extract_words()
+            held = {
+                round(float(w["top"]))
+                for w in words
+                if float(w["top"]) >= low - _JOINED
+                and float(w["bottom"]) <= high + _JOINED
+                and float(w["x0"]) >= x0 - 2.0
+                and float(w["x1"]) <= x1 + 2.0
+            }
+            if not held:
+                continue
+            lines.append(
+                {
+                    "object_type": "line", "x0": x0, "x1": x1, "top": reached,
+                    "bottom": reached, "width": x1 - x0, "height": 0.0, "orientation": "h",
+                    "text_lines": len(held),
+                }
+            )  # fmt: skip
+    return lines
+
+
+def _page_groups(
+    page: Any, number: int, settings: dict[str, Any]
+) -> list[tuple[list[_Row], dict[str, int]]]:
+    """The tables of a page as groups of rows; pieces drawn side by side are one group.
+    With each group what was done about rows open at a page break: ``closed`` (rules
+    added) and ``outside`` (text lines still between its column rulings but in no row)."""
     groups: list[tuple[tuple[float, float, float, float], list[_Row]]] = []
     found = page.find_tables(table_settings=settings)
+    closing: list[dict[str, Any]] = []
+    left_out: list[dict[str, Any]] = []
+    if settings.get("vertical_strategy") == "lines":
+        closing = _open_ends(page, found)
+        if closing:
+            found = page.find_tables(
+                table_settings={**settings, "explicit_horizontal_lines": closing}
+            )
+        left_out = _open_ends(page, found)
 
     def inside(inner: Any, outer: Any) -> bool:
         a, b = inner.bbox, outer.bbox
@@ -150,7 +237,25 @@ def _page_groups(page: Any, number: int, settings: dict[str, Any]) -> list[list[
                 break
         else:
             groups.append((box, rows))  # type: ignore[arg-type]
-    return [rows for _, rows in groups]
+    out = []
+    for box, rows in groups:
+        def mine(line: dict[str, Any], box: tuple[float, ...] = box) -> bool:
+            return (
+                box[1] - _MIN_ROW <= line["top"] <= box[3] + _MIN_ROW
+                and line["x0"] < box[2] and line["x1"] > box[0]
+            )  # fmt: skip
+
+        check = {
+            "closed": sum(1 for line in closing if mine(line)),
+            # a line still open after closing is past the box: look one row further
+            "outside": sum(
+                line["text_lines"] for line in left_out
+                if line["x0"] < box[2] and line["x1"] > box[0]
+                and box[1] - 60.0 <= line["top"] <= box[3] + 60.0
+            ),
+        }  # fmt: skip
+        out.append((rows, check))
+    return out
 
 
 def _merge_beside(rows: list[_Row], more: list[_Row]) -> None:
@@ -242,7 +347,59 @@ class _Builder:
             "title_rows": 0,
             "titles": [],
             "cells_joined": 0,
+            "open_rows_closed": 0,
+            "pages": [],
         }
+
+    def page_entry(self, page: int) -> dict[str, int]:
+        """The accounting of one page of this table (made on first use)."""
+        pages = self.notes["pages"]
+        if not pages or pages[-1]["page"] != page:
+            pages.append(
+                {"page": page, "rows_found": 0, "rows_written": 0, "header_rows": 0,
+                 "title_rows": 0, "numbering_rows": 0, "empty_rows": 0,
+                 "open_rows_closed": 0, "text_lines_outside": 0}  # fmt: skip
+            )
+        return pages[-1]
+
+    def continues_with(self, header: list[_Row], body: list[_Row]) -> bool:
+        """Are the text-only leading rows of a later piece (``header``, not the known
+        header) data rows of this table? Yes when the piece has this table's columns and
+        the rows do not look like a header: no text over a column that holds numbers in the
+        rows below, or a value this table already has in the same column."""
+        if any(_numbering([_clean(t) for t in r.texts() if t]) for r in header):
+            return False
+        starts = [a for a, _ in self.intervals]
+        ends = [b for _, b in self.intervals]
+        cells = [c for r in (header + body)[:8] for c in r.cells]
+        fits = sum(
+            1 for c in cells
+            if min(abs(c.x0 - a) for a in starts) <= 2 * _X_TOLERANCE
+            and min(abs(c.x1 - b) for b in ends) <= 2 * _X_TOLERANCE
+        )  # fmt: skip
+        if not cells or fits < 0.9 * len(cells):
+            return False
+        seen: dict[int, set[str]] = {}
+        for row in self.rows[-200:]:
+            for j, text in row.items():
+                seen.setdefault(j, set()).add(text)
+        over_numbers = shared = 0
+        for row in header:
+            for cell in row.cells:
+                text = _clean(cell.text)
+                if not text:
+                    continue
+                middle = 0.5 * (cell.x0 + cell.x1)
+                below = [
+                    _clean(c.text) for r in body for c in r.cells
+                    if c.x0 - _X_TOLERANCE <= middle <= c.x1 + _X_TOLERANCE
+                ]  # fmt: skip
+                below = [t for t in below if t]
+                if below and sum(_is_number(t) for t in below) >= 0.5 * len(below):
+                    over_numbers += 1
+                if text in below or text in seen.get(self._column(cell), ()):
+                    shared += 1
+        return shared > 0 or over_numbers == 0
 
     def _header_line(self, rows: list[_Row]) -> list[str]:
         """Header text per interval; a merged cell gives its text to its first interval."""
@@ -285,7 +442,7 @@ class _Builder:
             self.sub.append("")
         return len(self.intervals) - 1
 
-    def add(self, row: _Row) -> None:
+    def add(self, row: _Row) -> bool:
         out: dict[int, str] = {}
         for cell in row.cells:
             text = _clean(cell.text)
@@ -300,10 +457,11 @@ class _Builder:
         if out:
             self.rows.append(out)
             self.pages.append(row.page)
+        return bool(out)
 
     def finish(self, carry_down: Sequence[str | int] | str | None) -> ExtractedTable:
         from bakumine.core.drillholes.importer import suggest_column_map
-        from bakumine.core.drillholes.tables import _names
+        from bakumine.core.drillholes.tables import _names, is_total_label
 
         # left to right (columns met after the header page were appended at the end)
         order = sorted(range(len(self.intervals)), key=lambda j: self.intervals[j][0])
@@ -333,16 +491,22 @@ class _Builder:
                 else:
                     raise ValueError(f"no column {item!r} to carry down; there are {columns}")
         filled = 0
+        # a total row ("Total", "Нийт" in its first cell) belongs to no hole
+        totals = [is_total_label(next((c for c in row if c), "")) for row in rows]
         for name in carried:
             j = columns.index(name)
             last = ""
-            for row in rows:
+            for row, total in zip(rows, totals, strict=True):
                 if row[j]:
                     last = row[j]
-                elif last:
+                elif last and not total:
                     row[j] = last
                     filled += 1
-        notes = {**self.notes, "carried_down": {"columns": carried, "cells": filled}}
+        notes = {
+            **self.notes,
+            "carried_down": {"columns": carried, "cells": filled},
+            "total_rows": int(sum(totals)),
+        }
         return ExtractedTable(columns, rows, list(self.pages), notes)
 
 
@@ -381,33 +545,41 @@ def extract_tables(
             if not 1 <= number <= len(pdf.pages):
                 raise ValueError(f"page {number} is outside 1..{len(pdf.pages)}")
             page = pdf.pages[number - 1]
-            for rows in _page_groups(page, number, settings):
+            for rows, check in _page_groups(page, number, settings):
                 left, right = _width(rows)
                 n_header = _leading_header(rows, left, right)
                 header, body = rows[:n_header], rows[n_header:]
                 key = [[_clean(t, True) for t in r.texts()] for r in header]
-                if current is None or (
-                    header and not one_table and not _same_header(key, current.header_key)
-                ):
+                if current is not None and header and not _same_header(key, current.header_key):
+                    if one_table or current.continues_with(header, body):
+                        header, body, key = [], rows, []  # data that happens to be text
+                if current is None or (header and not _same_header(key, current.header_key)):
                     if not header and not body:
                         continue
                     current = _Builder(header, (body or header)[0])
                     builders.append(current)
-                elif header and _same_header(key, current.header_key):
+                elif header:
                     current.notes["repeated_headers"] += 1
-                elif header:  # one_table: a different header is data
-                    body = rows
+                entry = current.page_entry(number)
+                entry["rows_found"] += len(rows)
+                entry["header_rows"] += len(header)
                 for row in body:
                     if _is_title(row, left, right):
                         current.notes["title_rows"] += 1
+                        entry["title_rows"] += 1
                         if len(current.notes["titles"]) < _MAX_TITLES:
                             current.notes["titles"].append(
                                 {"page": row.page, "text": _clean(row.texts()[0], True)}
                             )
                     elif _numbering([_clean(t) for t in row.texts() if t]) and row is body[0]:
-                        continue  # the column-number row repeated on each page
+                        entry["numbering_rows"] += 1  # the column-number row of each page
+                    elif current.add(row):
+                        entry["rows_written"] += 1
                     else:
-                        current.add(row)
+                        entry["empty_rows"] += 1
+                entry["open_rows_closed"] += check["closed"]
+                entry["text_lines_outside"] += check["outside"]
+                current.notes["open_rows_closed"] += check["closed"]
             page.close()  # frees the page's parsed objects: long files stay small in memory
             if progress is not None:
                 progress(done + 1, len(numbers))
@@ -419,12 +591,72 @@ def _same_header(a: list[list[str]], b: list[list[str]]) -> bool:
         return [re.sub(r"\s+", " ", t).casefold() for row in rows for t in row if t]
 
     first_a, first_b = flat(a[:1]), flat(b[:1])
-    return bool(first_a) and (flat(a) == flat(b) or first_a == first_b)
+    if not first_a or not first_b:
+        return False
+    if flat(a) == flat(b) or first_a == first_b:
+        return True
+    # closely: the same header with a word broken differently or a footnote mark
+    close = difflib.SequenceMatcher(None, " | ".join(first_a), " | ".join(first_b)).ratio()
+    return len(first_a) == len(first_b) and close >= 0.9
+
+
+def _numbering_gaps(table: ExtractedTable) -> dict[str, Any] | None:
+    """The row-number column of a table (1, 2, 3 ...) and the numbers it skips."""
+    if len(table.rows) < 3:
+        return None
+    for j, name in enumerate(table.columns[:2]):
+        cells = [row[j] for row in table.rows]
+        numbers = [int(c) for c in cells if c.isdigit()]
+        if len(numbers) < 0.8 * len(cells) or len(numbers) < 3:
+            continue
+        steps = [b - a for a, b in zip(numbers, numbers[1:], strict=False)]
+        if sum(1 for s in steps if s == 1) < 0.8 * len(steps):
+            continue
+        missing = [
+            n for a, s in zip(numbers, steps, strict=False) if 1 < s <= 50
+            for n in range(a + 1, a + s)
+        ]  # fmt: skip
+        return {"column": name, "missing": missing[:100], "n_missing": len(missing)}
+    return None
+
+
+def page_warnings(table: ExtractedTable) -> list[str]:
+    """What may have been lost, per page: ruled rows that were not written, text between
+    the column rulings but in no row, and numbers skipped by the row-number column."""
+    warnings = []
+    for entry in table.notes.get("pages", []):
+        accounted = (
+            entry["rows_written"] + entry["header_rows"] + entry["title_rows"]
+            + entry["numbering_rows"]
+        )  # fmt: skip
+        if accounted < entry["rows_found"]:
+            warnings.append(
+                f"page {entry['page']}: {entry['rows_found']} ruled rows, "
+                f"{entry['rows_written']} written; {entry['rows_found'] - accounted} "
+                "had no text"
+            )
+        if entry["text_lines_outside"]:
+            warnings.append(
+                f"page {entry['page']}: {entry['text_lines_outside']} text line(s) between "
+                "the column rulings lie outside the ruled rows and were NOT extracted"
+            )
+    gaps = _numbering_gaps(table)
+    if gaps and gaps["n_missing"]:
+        listed = ", ".join(str(n) for n in gaps["missing"][:12])
+        warnings.append(
+            f"the numbering column {gaps['column']!r} skips {gaps['n_missing']} number(s) "
+            f"({listed}): rows may be missing"
+        )
+    return warnings
 
 
 def table_report(table: ExtractedTable) -> dict[str, Any]:
     """Rows per hole, depth range and where ``from`` goes backwards, for a table whose
-    header names a hole and from / to columns (else only the row and page counts)."""
+    header names a hole and from / to columns (else only the row and page counts).
+
+    Always: ``pages`` (per page the ruled rows found, the rows written, header / title /
+    numbering / empty rows, rows closed at a page break, text lines left outside),
+    ``numbering`` (numbers the row-number column skips) and ``warnings``."""
     import numpy as np
     import pandas as pd
 
@@ -436,6 +668,8 @@ def table_report(table: ExtractedTable) -> dict[str, Any]:
         "first_page": table.first_page,
         "last_page": table.last_page,
         **{k: v for k, v in table.notes.items() if k != "titles"},
+        "numbering": _numbering_gaps(table),
+        "warnings": page_warnings(table),
     }
     mapping = suggest_column_map(table.columns, "interval").mapping
     found = {target: source for source, target in mapping.items()}

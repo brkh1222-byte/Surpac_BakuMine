@@ -180,3 +180,102 @@ def test_cli_errors(tmp_path, capsys):
     assert main(["extract-tables", str(broken), "--out", str(tmp_path / "o")]) == 2
     assert "cannot read broken.pdf" in capsys.readouterr().err
     assert write_tables([], tmp_path / "empty")[0] == []
+
+
+# --------------------------------------------------------------------------------------
+# continuation pages: no header, the first row open at the page break, a text-only row
+# --------------------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def collar_report(tmp_path_factory):
+    from pdf_fixture import write_collar_report
+
+    path = tmp_path_factory.mktemp("collar_pdf") / "volume 1.pdf"
+    return path, write_collar_report(path)
+
+
+def test_no_row_is_lost_at_a_page_break(collar_report):
+    from pdf_fixture import COLLAR_COLUMNS, COLLAR_PAGES
+
+    path, rows = collar_report
+    # the fixture is what it claims: pdfplumber alone does not see the open rows
+    import pdfplumber
+
+    with pdfplumber.open(str(path)) as pdf:
+        plain = [len(pdf.pages[i].find_tables()[0].rows) for i in range(len(COLLAR_PAGES))]
+    assert plain == [12 + 3, 18 - 1, 15 + 3, 14, 9 - 1]
+
+    collar, other = extract_tables(path)
+    assert collar.columns == COLLAR_COLUMNS
+    assert collar.rows == rows  # every hole, the text-only row and the total row
+    assert [r[1] for r in collar.rows[:-1]] == [f"SYN25_{i:02d}" for i in range(1, len(rows))]
+    assert collar.pages == [p + 1 for p, (n, _) in enumerate(COLLAR_PAGES) for _ in range(n)]
+    assert collar.notes["repeated_headers"] == 1 and collar.notes["open_rows_closed"] == 2
+    # a different header on a new page is still a new table
+    assert other.columns == ["Trench", "Length, m", "Samples"]
+    assert other.rows == [["TR-1", "40.0", "38"], ["TR-2", "55.5", "51"]]
+    assert other.first_page == len(COLLAR_PAGES) + 1
+
+    report = table_report(collar)
+    assert [(p["rows_found"], p["rows_written"], p["header_rows"]) for p in report["pages"]] == [
+        (15, 12, 3), (18, 18, 0), (18, 15, 3), (14, 14, 0), (9, 9, 0),
+    ]  # fmt: skip
+    assert [p["open_rows_closed"] for p in report["pages"]] == [0, 1, 0, 0, 1]
+    assert all(p["text_lines_outside"] == 0 for p in report["pages"])
+    # the only number the numbering column skips is that of the text-only row
+    assert report["numbering"] == {"column": "No", "missing": [46], "n_missing": 1}
+    assert report["warnings"] == [
+        "the numbering column 'No' skips 1 number(s) (46): rows may be missing"
+    ]
+
+
+def _second_look_only(real):
+    """``_open_ends`` that finds the open rows on the second look only: they are then
+    counted as left outside, not closed (what a failure to close them looks like)."""
+    calls = {"n": 0}
+
+    def fake(page, tables):
+        calls["n"] += 1
+        return [] if calls["n"] % 2 else real(page, tables)
+
+    return fake
+
+
+def test_report_warns_where_a_page_gives_fewer_rows_than_it_has(collar_report, monkeypatch):
+    from bakumine.core.io import pdf_tables
+
+    path, rows = collar_report
+    monkeypatch.setattr(pdf_tables, "_open_ends", _second_look_only(pdf_tables._open_ends))
+    collar = extract_tables(path)[0]
+    assert len(collar.rows) == len(rows) - 2
+    report = table_report(collar)
+    assert [p["text_lines_outside"] for p in report["pages"]] == [0, 1, 0, 0, 1]
+    assert report["numbering"]["missing"] == [13, 46, 60]
+    assert report["warnings"] == [
+        "page 2: 1 text line(s) between the column rulings lie outside the ruled rows and "
+        "were NOT extracted",
+        "page 5: 1 text line(s) between the column rulings lie outside the ruled rows and "
+        "were NOT extracted",
+        "the numbering column 'No' skips 3 number(s) (13, 46, 60): rows may be missing",
+    ]
+    # a ruled row without text is counted, and said
+    table = pdf_tables.ExtractedTable(
+        ["a"], [["1"]], [3],
+        {"pages": [{"page": 3, "rows_found": 4, "rows_written": 1, "header_rows": 1,
+                    "title_rows": 0, "numbering_rows": 0, "empty_rows": 2,
+                    "open_rows_closed": 0, "text_lines_outside": 0}]},
+    )  # fmt: skip
+    assert pdf_tables.page_warnings(table) == ["page 3: 4 ruled rows, 1 written; 2 had no text"]
+
+
+def test_cli_prints_the_page_check(collar_report, tmp_path, capsys):
+    path, rows = collar_report
+    assert main(["extract-tables", str(path), "--out", str(tmp_path), "--name", "c"]) == 0
+    out = capsys.readouterr().out
+    assert f"({len(rows)} rows, 9 columns, pages 1-5)" in out
+    assert "pages: 74 ruled rows found, 68 written; 2 row(s) left open at a page break" in out
+    assert "WARNING: the numbering column 'No' skips 1 number(s) (46)" in out
+    report = json.loads((tmp_path / "c_report.json").read_text(encoding="utf-8"))
+    assert report["tables"][0]["pages"][1] == {
+        "page": 2, "rows_found": 18, "rows_written": 18, "header_rows": 0, "title_rows": 0,
+        "numbering_rows": 0, "empty_rows": 0, "open_rows_closed": 1, "text_lines_outside": 0,
+    }  # fmt: skip

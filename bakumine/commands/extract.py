@@ -5,7 +5,9 @@
 writes ``DIR/<name>_1.csv`` ... (one per table found in the page range) and
 ``DIR/<name>_report.json``, and prints for each table its pages, rows and, when it has
 hole / from / to columns, the rows per hole, the depth range and the holes where ``from``
-goes backwards. The CSVs are ordinary inputs of ``bakumine import`` and the Import panel.
+goes backwards. Per page the ruled rows found are checked against the rows written; a
+``WARNING`` line says where rows may have been lost. The CSVs are ordinary inputs of
+``bakumine import`` and the Import panel.
 See :mod:`bakumine.core.io.pdf_tables`.
 """
 
@@ -97,6 +99,14 @@ def run_extract(args: argparse.Namespace) -> int:
         if carried["columns"]:
             dropped += f"; {carried['cells']} cells of {carried['columns']} carried down"
         print(f"  {dropped}")
+        found = sum(p["rows_found"] for p in report.get("pages", []))
+        closed = report.get("open_rows_closed", 0)
+        print(
+            f"  pages: {found} ruled rows found, {report['rows']} written"
+            + (f"; {closed} row(s) left open at a page break were closed" if closed else "")
+        )
+        for warning in report.get("warnings", []):
+            print(f"  WARNING: {warning}")
         if "holes" not in report:
             continue
         print(
