@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, SourceReport, SourceSpec } from './api'
+import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, MergeReport, SourceReport, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -87,6 +87,14 @@ export function droppedText(table: string, dropped: DroppedRows): string {
     parts.push(`${dropped.collars_without_coordinates} without coordinates${holes.length ? ` (${holes.slice(0, 8).join(', ')}${holes.length > 8 ? ', …' : ''})` : ''}`)
   }
   return `${table}: rows dropped: ${parts.join(', ')}`
+}
+
+/** " (au 3, ag 1); not counted: sample_id 2140; full list in conflicts_assay.csv" */
+export function conflictsText(report: MergeReport): string {
+  const counts = (values?: Record<string, number>) => Object.entries(values ?? {}).map(([c, n]) => `${c} ${n}`).join(', ')
+  const by = counts(report.by_column)
+  const apart = counts(report.informational)
+  return `${by ? ` (${by})` : ''}${apart ? `; not counted (informational): ${apart}` : ''}${report.listing ? `; every difference is in ${report.listing}` : ''}`
 }
 
 /** "gis.xlsx: dip convention positive_down, length unit ft" (what was decided for a file) */

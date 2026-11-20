@@ -236,6 +236,14 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     shape.add_argument(
         "--merge-tolerance", type=float, default=0.01, help="numbers closer than this agree"
     )
+    shape.add_argument(
+        "--merge-ignore",
+        action="append",
+        metavar="COLUMNS",
+        help="columns (canonical names, comma separated; repeatable) whose differences "
+        "between files are informational, not conflicts: they are counted apart and listed "
+        "in conflicts_<table>.csv only. Default: sample_id; 'none' checks every column",
+    )
     parser.add_argument(
         "--length-unit",
         choices=tuple(LENGTH_UNITS),
@@ -426,6 +434,14 @@ def _hole_list(items: list[str] | None, option: str) -> list[str]:
     return out
 
 
+def _merge_ignore(items: list[str] | None) -> list[str] | None:
+    """``--merge-ignore`` values -> column names; None = the default (the sample id)."""
+    if not items:
+        return None
+    names = [part.strip() for item in items for part in item.split(",") if part.strip()]
+    return [] if "none" in names else names
+
+
 def _hole_filter(args: argparse.Namespace) -> dict[str, list[str]] | None:
     chosen = {
         "include": _hole_list(args.include_holes, "--include-holes"),
@@ -523,7 +539,11 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
         tables,
         options,
         hole_id={"pattern": args.hole_id_pattern, "template": args.hole_id_template},
-        merge={"precedence": args.merge_precedence, "tolerance": args.merge_tolerance},
+        merge={
+            "precedence": args.merge_precedence,
+            "tolerance": args.merge_tolerance,
+            "ignore_columns": _merge_ignore(args.merge_ignore),
+        },
         holes=_hole_filter(args),
     )
     return recipe, origin
@@ -551,12 +571,20 @@ def _print_import_reports(db) -> None:
             f"  {name} sources merged ({merged['precedence']} file wins): {merged['merged']} "
             f"rows joined, {merged['filled']} cells filled, {merged['conflicts']} conflicts"
         )
+        if merged.get("by_column"):
+            by_column = ", ".join(f"{c} {n}" for c, n in merged["by_column"].items())
+            print(f"    conflicts by column: {by_column}")
         for row in merged["rows"][:5]:
             key = ", ".join(str(row[k]) for k in merged["keys"])
             print(
                 f"    conflict {key} {row['column']}: kept {row['kept']} "
                 f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
             )
+        if merged.get("informational"):
+            apart = ", ".join(f"{c} {n}" for c, n in merged["informational"].items())
+            print(f"    differences not counted as conflicts (informational): {apart}")
+        if merged.get("listing"):
+            print(f"    every difference: {merged['listing']} in the database folder")
     for name, entries in reports.get("sources", {}).items():
         for entry in entries:
             said = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in entry.items() if k != "file")
@@ -654,6 +682,8 @@ def run_import(args: argparse.Namespace) -> int:
             _wrote(folder / file, f"{len(table)} rows")
         for name, table in db.qc.items():
             _wrote(folder / f"qc_{name}.parquet", f"{len(table)} QC rows")
+        for name, table in db.listings.items():
+            _wrote(folder / f"{name}.csv", f"{len(table)} rows, the full listing")
     print("column maps:")
     for name, sources in db.metadata.recipe["tables"].items():
         for source in sources:

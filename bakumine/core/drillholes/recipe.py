@@ -9,7 +9,7 @@ the project's job log, so the same import can be run again on updated files with
       "options": {...},                      # ImportOptions fields (units, dip, CRS ...)
       "hole_id": {"pattern": "DH[_-]?0*(\\\\d+)", "template": "DH-{1:02d}"},
       "holes": {"include": ["DH-*"], "exclude": ["DH-07", "*-T"]},   # optional
-      "merge": {"precedence": "first", "tolerance": 0.01},
+      "merge": {"precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"]},
       "tables": {
         "collar": [SOURCE, ...],             # one table from one or more sources
         "survey": [SOURCE, ...],             # optional: else from the collar's azimuth, dip
@@ -52,7 +52,11 @@ table) coming from *different* sources are merged into one: the first source lis
 (``"precedence": "last"`` reverses that), cells it lacks are filled from the others, and
 cells that differ by more than ``tolerance`` (numbers) or at all (text) are reported as
 conflicts. So a hole may take its coordinates from one file and azimuth, dip and depth
-from another.
+from another. Columns named in ``ignore_columns`` (default: the sample id, which every
+laboratory file spells its own way) are merged the same way but their differences are
+informational: counted apart, not conflicts. The report (``reports["conflicts"][table]``)
+counts the conflicts per column and lists the first; every difference is in the
+database's ``conflicts_<table>.csv``.
 
 ``holes`` keeps only some holes, in every table (QC rows too): ``include`` and ``exclude``
 are lists of hole names or wildcard patterns (``*``, ``?``, ``[abc]``), compared without
@@ -143,6 +147,7 @@ _KEYS: dict[str, tuple[str, ...]] = {
     "interval": ("hole_id", "depth_from", "depth_to"),
 }
 _MAX_LISTED = 200
+_MERGE_KEYS = frozenset({"precedence", "tolerance", "ignore_columns"})
 _TUPLE_OPTIONS = ("missing_tokens", "text_columns", "numeric_columns")
 
 
@@ -309,12 +314,24 @@ def make_recipe(
                 if not cleaned["options"]:
                     del cleaned["options"]
             checked[name].append(cleaned)
-    merge = {"precedence": "first", "tolerance": 0.01, **(merge or {})}
+    merge = {
+        "precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"],
+        **{k: v for k, v in (merge or {}).items() if v is not None},
+    }  # fmt: skip
+    unknown = sorted(set(merge) - _MERGE_KEYS)
+    if unknown:
+        raise ValueError(f"unknown merge key(s) {unknown}; known: {sorted(_MERGE_KEYS)}")
     if merge["precedence"] not in ("first", "last"):
         raise ValueError(
             f"merge precedence must be 'first' or 'last', got {merge['precedence']!r}"
         )
     merge["tolerance"] = float(merge["tolerance"])
+    ignored = merge["ignore_columns"]
+    if isinstance(ignored, str):
+        ignored = [ignored]
+    if not isinstance(ignored, Sequence):
+        raise ValueError("merge ignore_columns must be a list of column names")
+    merge["ignore_columns"] = list(dict.fromkeys(str(c).strip() for c in ignored if str(c).strip()))
     recipe: dict[str, Any] = {
         "format": RECIPE_FORMAT,
         "version": RECIPE_VERSION,
@@ -408,19 +425,25 @@ def merge_sources(
     precedence: str = "first",
     tolerance: float = 0.01,
     labels: Sequence[str] | None = None,
+    ignore: Sequence[str] = (),
+    listing: list[dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Merge rows with the same key that come from different sources (see module doc).
 
     ``source`` is the 0-based source index of each row. Returns the merged table (row
     order kept; the winning row stays where it was) and a report: ``merged`` rows
-    removed, ``filled`` cells taken from a losing source, ``conflicts`` (count) and
-    ``rows`` (the first conflicts: key, column, kept / dropped value and source).
+    removed, ``filled`` cells taken from a losing source, ``conflicts`` (count),
+    ``by_column`` (conflicts per column, most first), ``informational`` (differences per
+    column of ``ignore``: counted, not conflicts) and ``rows`` (the first conflicts: key,
+    column, kept / dropped value and source). ``listing`` receives every difference,
+    conflicts and informational ones (``informational`` true), uncapped.
     """
     source = np.asarray(source, dtype=np.int64)
     labels = list(labels) if labels is not None else [str(i) for i in range(source.max() + 1)]
     report: dict[str, Any] = {
         "precedence": precedence, "tolerance": tolerance, "keys": list(keys),
-        "merged": 0, "filled": 0, "conflicts": 0, "rows": [],
+        "merged": 0, "filled": 0, "conflicts": 0, "by_column": {}, "informational": {},
+        "ignored": list(ignore), "rows": [],
     }  # fmt: skip
     if len(table) == 0 or len(np.unique(source)) < 2:
         return table, report
@@ -452,8 +475,13 @@ def merge_sources(
                     table.iat[winner, at] = lost
                     report["filled"] += 1
                 elif _differs(kept, lost, tolerance):
-                    report["conflicts"] += 1
-                    if len(report["rows"]) < _MAX_LISTED:
+                    informational = column in ignore
+                    counts = report["informational" if informational else "by_column"]
+                    counts[column] = counts.get(column, 0) + 1
+                    if not informational:
+                        report["conflicts"] += 1
+                    listed = not informational and len(report["rows"]) < _MAX_LISTED
+                    if listed or listing is not None:
                         row = {k: _plain(table[k].iat[winner]) for k in keys}
                         row.update(
                             column=column,
@@ -462,7 +490,12 @@ def merge_sources(
                             kept_source=labels[winner_source],
                             dropped_source=labels[source[other]],
                         )
-                        report["rows"].append(row)
+                        if listed:
+                            report["rows"].append(row)
+                        if listing is not None:
+                            listing.append({**row, "informational": informational})
+    for key in ("by_column", "informational"):
+        report[key] = dict(sorted(report[key].items(), key=lambda item: -item[1]))
     report["merged"] = len(drop)
     if drop:
         table = table.drop(index=table.index[drop]).reset_index(drop=True)
@@ -769,6 +802,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     grids: dict[Path, dict[str, pd.DataFrame]] = {}
     typed: dict[str, pd.DataFrame] = {}
     qc: dict[str, pd.DataFrame] = {}
+    listings: dict[str, pd.DataFrame] = {}
     reports: dict[str, Any] = {
         "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
         "dropped_rows": {},
@@ -788,6 +822,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         table, source = holes.apply(table, name, source)
         table = per_source.apply(name, kind, table, source, labels, metadata)
         if len(sources) > 1:
+            differences: list[dict[str, Any]] = []
             table, merged = merge_sources(
                 table,
                 source,
@@ -795,14 +830,20 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                 precedence=recipe["merge"]["precedence"],
                 tolerance=recipe["merge"]["tolerance"],
                 labels=labels,
+                ignore=recipe["merge"]["ignore_columns"],
+                listing=differences,
             )
             reports["conflicts"][name] = merged
+            if differences:
+                listings[f"conflicts_{name}"] = pd.DataFrame(differences)
+                merged["listing"] = f"conflicts_{name}.csv"
             for what in ("merged", "filled", "conflicts"):
                 if merged[what]:
                     metadata.notes.append(
                         {"table": name, "column": "*", "kind": f"sources_{what}",
-                         "count": merged[what]}  # fmt: skip
-                    )
+                         "count": merged[what],
+                         **({"values": merged["by_column"]} if what == "conflicts" else {})}
+                    )  # fmt: skip
         gone: dict[str, Any] = {}
         for part in prepared:
             for reason, count in part.info.get("dropped", {}).items():
@@ -873,4 +914,5 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         first = {k: v for k, v in per_source.coordinates[0].items() if k != "file"}
         db.metadata.reports.setdefault("coordinates", first)
     db.metadata.recipe = resolved
+    db.listings.update(listings)
     return db

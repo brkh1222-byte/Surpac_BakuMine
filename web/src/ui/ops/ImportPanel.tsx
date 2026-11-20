@@ -13,7 +13,7 @@
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { droppedText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { conflictsText, droppedText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -237,6 +237,7 @@ export function ImportPanel() {
   const [includeHoles, setIncludeHoles] = useState('')
   const [excludeHoles, setExcludeHoles] = useState('')
   const [precedence, setPrecedence] = useState('first')
+  const [mergeIgnore, setMergeIgnore] = useState('sample_id')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -290,7 +291,7 @@ export function ImportPanel() {
         tables: Object.fromEntries(Object.entries(tables).map(([t, sources]) => [t, sources.map((s) => sourceSpec(s.form, s.preview.kind === 'interval'))])),
         options: { length_unit: lengthUnit, convert_to_metres: toMetres, dip_convention: dip, coordinate_order: order, crs: crs.trim() || null },
         hole_id: holeIdRule(holePattern, holeTemplate),
-        merge: { precedence },
+        merge: { precedence, ignore_columns: holeList(mergeIgnore) },
         holes: holeFilter(includeHoles, excludeHoles),
       }
       setResult(await opsApi.importDb(body))
@@ -351,6 +352,7 @@ export function ImportPanel() {
       <Text label="Only holes" id="import-include-holes" value={includeHoles} onChange={setIncludeHoles} placeholder="all (names or patterns: DH-01, DH25*)" />
       <Text label="Skip holes" id="import-exclude-holes" value={excludeHoles} onChange={setExcludeHoles} placeholder="none (names or patterns, comma separated)" />
       <Select label="Files disagree" id="import-precedence" value={precedence} onChange={setPrecedence} options={[{ value: 'first', label: 'first file wins' }, { value: 'last', label: 'last file wins' }]} />
+      <Text label="Not conflicts" id="import-merge-ignore" value={mergeIgnore} onChange={setMergeIgnore} placeholder="columns whose differences are only counted" />
       <div className="control">
         <button type="button" data-testid="import-run" disabled={busy} onClick={() => void run()}>{busy ? 'Importing…' : 'Import and validate'}</button>
       </div>
@@ -385,7 +387,7 @@ export function ImportPanel() {
           )}
           {Object.entries(result.conflicts).map(([t, c]) => (
             <div key={t} data-testid={`import-conflicts-${t}`}>
-              <p className="sidebar-note">{t}: files merged ({c.precedence} file wins): {c.merged} rows joined, {c.filled} cells filled, {c.conflicts} conflicts</p>
+              <p className="sidebar-note">{t}: files merged ({c.precedence} file wins): {c.merged} rows joined, {c.filled} cells filled, {c.conflicts} conflicts{conflictsText(c)}</p>
               {c.rows.length > 0 && (
                 <div className="report-table-wrap">
                   <table className="report-table">

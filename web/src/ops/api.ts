@@ -95,6 +95,12 @@ export interface MergeReport {
   merged: number
   filled: number
   conflicts: number
+  /** conflicts per column, most first */
+  by_column?: Record<string, number>
+  /** differences per column that are not checked (sample ids): counted, not conflicts */
+  informational?: Record<string, number>
+  /** the file in the database folder with every difference */
+  listing?: string
   rows: Record<string, string | number | null>[]
 }
 

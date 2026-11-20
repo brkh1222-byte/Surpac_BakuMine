@@ -281,6 +281,9 @@ class DrillholeDatabase:
     metadata: DrillholeMetadata = field(default_factory=DrillholeMetadata)
     #: QC rows (blanks, standards, duplicates ...) set aside per interval table, as text
     qc: dict[str, pd.DataFrame] = field(default_factory=dict)
+    #: full listings behind the import reports (``conflicts_<table>``, ``duplicates_<table>``),
+    #: saved as ``<name>.csv`` beside the tables
+    listings: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require(self.collar, COLLAR_COLUMNS, "collar")
@@ -313,8 +316,9 @@ class DrillholeDatabase:
         )
 
     def save(self, folder: str | Path) -> Path:
-        """Write ``<folder>/collar.parquet``, ``survey.parquet``, ``interval_<name>.parquet``
-        and ``database.json``. Returns the folder."""
+        """Write ``<folder>/collar.parquet``, ``survey.parquet``, ``interval_<name>.parquet``,
+        ``qc_<name>.parquet``, the listings (``conflicts_<name>.csv`` ...) and
+        ``database.json``. Returns the folder."""
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         files = {"collar": "collar.parquet", "survey": "survey.parquet"}
@@ -324,6 +328,9 @@ class DrillholeDatabase:
         qc_files = {name: f"qc_{name}.parquet" for name in self.qc}
         for name, table in self.qc.items():
             table.to_parquet(folder / qc_files[name], index=False)
+        listing_files = {name: f"{name}.csv" for name in self.listings}
+        for name, table in self.listings.items():
+            table.to_csv(folder / listing_files[name], index=False)
         document = {
             "format": _FORMAT,
             "version": _FORMAT_VERSION,
@@ -332,6 +339,7 @@ class DrillholeDatabase:
                 "survey": files["survey"],
                 "intervals": {name: files[name] for name in self.intervals},
                 "qc": qc_files,
+                "listings": listing_files,
             },
             "metadata": asdict(self.metadata),
         }
@@ -365,6 +373,11 @@ class DrillholeDatabase:
             qc={
                 name: pd.read_parquet(folder / file)
                 for name, file in tables.get("qc", {}).items()
+            },
+            listings={
+                name: pd.read_csv(folder / file)
+                for name, file in tables.get("listings", {}).items()
+                if (folder / file).is_file()
             },
         )
 

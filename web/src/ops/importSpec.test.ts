@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
+import { conflictsText, droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -39,6 +39,13 @@ describe('import panel helpers', () => {
     // an interval table has depths only: the unit
     expect(sourceSpec(form, true)).toEqual({ options: { length_unit: 'ft' } })
     expect(sourceText({ file: 'gis.xlsx', dip_convention: 'positive_down', length_unit: 'ft' })).toBe('gis.xlsx: dip convention positive_down, length unit ft')
+  })
+
+  it('summarises merge conflicts per column', () => {
+    const report = { precedence: 'first', keys: ['hole_id'], merged: 360, filled: 0, conflicts: 4, rows: [] }
+    expect(conflictsText(report)).toBe('')
+    expect(conflictsText({ ...report, by_column: { au: 3, ag: 1 }, informational: { sample_id: 360 }, listing: 'conflicts_assay.csv' }))
+      .toBe(' (au 3, ag 1); not counted (informational): sample_id 360; every difference is in conflicts_assay.csv')
   })
 
   it('builds the hole filter', () => {
