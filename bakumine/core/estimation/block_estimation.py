@@ -146,6 +146,7 @@ from bakumine.core.blockmodel.attributes import check_name
 from bakumine.core.blockmodel.blocks import BlockModel
 from bakumine.core.blockmodel.constraints import Constraint, constraint_from_dict
 from bakumine.core.drillholes.capping import cap_grades
+from bakumine.core.estimation.dynamic_anisotropy import DynamicAnisotropy, run_dynamic
 from bakumine.core.estimation.idw import inverse_distance
 from bakumine.core.estimation.kriging import krige
 from bakumine.core.estimation.nearest import nearest_neighbour
@@ -239,6 +240,11 @@ class EstimationPass:
     negative_weight_correction : kriging option (see
         :func:`~bakumine.core.estimation.kriging.krige`).
     name : free label used in progress messages and the summary.
+    dynamic : optional
+        :class:`~bakumine.core.estimation.dynamic_anisotropy.DynamicAnisotropy`:
+        per-block angles (and ratios) read from block attributes re-orient the
+        search ellipsoid and, for kriging, the variogram of each block (see
+        that module). ``None`` (default): the fixed ``ellipsoid``.
     """
 
     method: str
@@ -251,8 +257,13 @@ class EstimationPass:
     discretisation: tuple[int, int, int] | None = None
     negative_weight_correction: bool = False
     name: str = ""
+    dynamic: DynamicAnisotropy | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.dynamic, Mapping):
+            object.__setattr__(self, "dynamic", DynamicAnisotropy.from_dict(self.dynamic))
+        if self.dynamic is not None and not isinstance(self.dynamic, DynamicAnisotropy):
+            raise TypeError("dynamic must be a DynamicAnisotropy or None")
         if self.method not in METHODS:
             raise ValueError(f"method must be one of {METHODS}, got {self.method!r}")
         if not isinstance(self.ellipsoid, Ellipsoid):
@@ -360,6 +371,8 @@ class EstimationPass:
             out["discretisation"] = list(self.discretisation)
         if self.negative_weight_correction:
             out["negative_weight_correction"] = True
+        if self.dynamic is not None:
+            out["dynamic"] = self.dynamic.to_dict()
         return out
 
     @classmethod
@@ -384,6 +397,7 @@ class EstimationPass:
             discretisation=None if disc is None else tuple(disc),
             negative_weight_correction=bool(data.get("negative_weight_correction", False)),
             name=data.get("name", ""),
+            dynamic=data.get("dynamic"),
         )
 
 
@@ -1028,6 +1042,26 @@ def _run_estimator(
     return out
 
 
+def _run_dynamic_estimator(
+    p: EstimationPass,
+    smp: _Samples,
+    xyz: np.ndarray,
+    sizes: Any,
+    grid: np.ndarray,
+    units: _Units,
+    sel: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """:func:`_run_estimator` with per-block orientation (dynamic anisotropy)."""
+    assert p.dynamic is not None
+    params = p.dynamic.block_parameters(units.model, units.representative_rows(sel), p.ellipsoid)
+    per_target = np.ndim(sizes) == 2
+
+    def run(fixed: EstimationPass, idx: np.ndarray) -> dict[str, np.ndarray]:
+        return _run_estimator(fixed, smp, xyz[idx], sizes[idx] if per_target else sizes, grid)
+
+    return run_dynamic(p, params, run)
+
+
 class _Units:
     """The things estimated: the target blocks themselves, or their parents.
 
@@ -1064,6 +1098,16 @@ class _Units:
         if len(sizes) and (sizes == sizes[0]).all():
             sizes = sizes[0].copy()
         return self.model.centroids(rows), sizes
+
+    def representative_rows(self, units: np.ndarray) -> np.ndarray:
+        """One block-table row per unit: the block itself, or the parent's
+        first targeted block (used to read per-block dynamic anisotropy)."""
+        if not self.parent_support:
+            return self.rows[units]
+        if not hasattr(self, "_first_row"):
+            _, first = np.unique(self.model.parent[self.rows], return_index=True)
+            self._first_row = self.rows[first]
+        return self._first_row[units]
 
     def to_rows(self, per_unit: np.ndarray) -> np.ndarray:
         return per_unit if self.unit_of_row is None else per_unit[self.unit_of_row]
@@ -1151,6 +1195,9 @@ def _compute_domain(
         summary.sample_max = float(smp.values.max())
     if any(p.search.max_per_hole is not None for p in domain.passes) and smp.holes is None:
         raise ValueError("max_per_hole needs a 'hole_id' column in the sample table")
+    for p in domain.passes:
+        if p.dynamic is not None:
+            p.dynamic.check_model(model)
 
     # ---- buffers (per unit)
     n = units.n
@@ -1180,7 +1227,10 @@ def _compute_domain(
             sel = pending[start : start + chunk_size]
             if len(smp.values):
                 xyz, sizes = units.geometry(sel)
-                res = _run_estimator(p, smp, xyz, sizes, grid)
+                if p.dynamic is None:
+                    res = _run_estimator(p, smp, xyz, sizes, grid)
+                else:
+                    res = _run_dynamic_estimator(p, smp, xyz, sizes, grid, units, sel)
                 ok = res["ok"]
                 hit = sel[ok]
                 buffers["estimate"][hit] = res["estimate"][ok]
