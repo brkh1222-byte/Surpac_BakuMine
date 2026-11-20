@@ -335,6 +335,11 @@ class DrillholeDatabase:
         (folder / _METADATA_FILE).write_text(
             json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+        if self.metadata.recipe is not None:  # also on its own, for `import --recipe`
+            (folder / "import_recipe.json").write_text(
+                json.dumps(self.metadata.recipe, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         return folder
 
     @classmethod

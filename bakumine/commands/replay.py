@@ -4,7 +4,7 @@
 ``jobs.jsonl`` (see :mod:`bakumine.core.joblog`) into the CLI commands that do the same
 thing and runs them into a new project:
 
-    import       bakumine import (archived upload files, --map) + validate + project add
+    import       bakumine import --recipe (archived upload files) + validate + project add
     validate     bakumine validate --allow-errors
     composite    bakumine composite --out WORK/... + project add
     create_model bakumine blockmodel create WORK/... + project add
@@ -107,7 +107,16 @@ def _import(e: dict[str, Any]) -> list[dict[str, Any]]:
     files: dict[str, str] = replay.get("files") or {}
     out = e["outputs"][0]
     folder = _work(e["id"], Path(out["path"]).name)
-    argv = ["import"]
+    if replay.get("recipe"):
+        # the recipe names the archived uploads relative to the source project
+        recipe_file = _work(e["id"], "recipe.json")
+        return [
+            _write(recipe_file, json.dumps(replay["recipe"], indent=2, ensure_ascii=False)),
+            _run("import", "--recipe", recipe_file, "--base", SOURCE, "--out", folder),
+            _run("validate", folder, "--allow-errors"),
+            _add(out, folder),
+        ]
+    argv = ["import"]  # logs written before recipes: files + column maps
     for table, rel in files.items():
         path = f"{SOURCE}/{rel}"
         if table in ("collar", "survey", "assay", "geology"):

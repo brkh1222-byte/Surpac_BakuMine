@@ -108,7 +108,23 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         metavar="NAME=FILE",
         help="any other interval table, stored under NAME (repeatable)",
     )
+    files.add_argument(
+        "--recipe",
+        help="import recipe (JSON, as saved in <database>/import_recipe.json) instead of "
+        "the source file options: replays an import, e.g. on updated files",
+    )
+    files.add_argument(
+        "--base", help="folder the recipe's relative file paths start from (default: its own)"
+    )
     parser.add_argument("--out", help="database folder to write")
+    parser.add_argument(
+        "--save-recipe", metavar="FILE", help="also write the recipe (with the column maps) here"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="read and check everything, print the summary, write no database",
+    )
     parser.add_argument(
         "--map",
         dest="map_file",
@@ -247,14 +263,7 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--numeric-column", action="append", default=[], help="attribute forced to numeric"
     )
     parser.add_argument("--delimiter", default=",", help="CSV delimiter (default: ',')")
-    # options of later import features, at their defaults
-    parser.set_defaults(
-        func=_guarded(run_import),
-        recipe=None,
-        base=None,
-        save_recipe=None,
-        dry_run=False,
-    )
+    parser.set_defaults(func=_guarded(run_import))
 
 
 def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
@@ -281,7 +290,7 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
     from bakumine.core.drillholes.recipe import make_recipe
 
     if not args.collar:
-        raise CommandError("give the collar table with --collar FILE")
+        raise CommandError("give the collar table with --collar FILE (or a --recipe)")
     files: dict[str, list[Path]] = {"collar": [Path(p) for p in args.collar]}
     for name in ("survey", "assay", "geology"):
         if getattr(args, name):
