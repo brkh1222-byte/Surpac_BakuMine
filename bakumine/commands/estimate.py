@@ -1,6 +1,8 @@
 """``bakumine estimate``: run an estimation plan (JSON) on a saved block model.
 
 Composites come from a CSV or Parquet table (as written by ``bakumine composite``).
+The plan is written by hand, by the dialog, or by ``bakumine estimate-plan``
+(:mod:`bakumine.commands.estimate_plan`).
 Geometry named in the plan's block constraints (solids, DTMs) is resolved from
 ``--geometry-dir`` (``<name>_vertices.npy`` + ``<name>_faces.npy``).
 """
@@ -12,6 +14,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+from bakumine.commands import estimate_plan
 from bakumine.commands.blockmodel import CommandError, _guarded, _wrote
 
 HELP = "Estimate an attribute into a block model from composites with a parameter file"
@@ -83,4 +86,5 @@ def run(args: argparse.Namespace) -> int:
 
 COMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None]]] = {
     "estimate": (HELP, configure),
+    **estimate_plan.COMMANDS,
 }
