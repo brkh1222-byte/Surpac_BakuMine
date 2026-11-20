@@ -141,6 +141,12 @@ test('block requests: query string, decoding and the server error message', asyn
   const set = await fetchBlocks({ href: '/api/v1/scene/objects/m/blocks' }, { attributes: ['au'], where: 'au > 1', lod: 'auto', clip: null }, undefined, ok)
   expect(set.count).toBe(CASES[1].shown_rows.length)
   expect(seen[0]).toBe('/api/v1/scene/objects/m/blocks?attributes=au&where=au+%3E+1')
+  // Without `present` every selected block counts as visible.
+  expect(set.valued).toBe(set.selected)
+  expect(set.present).toBeNull()
+  // Hidden missing values: the attribute goes to the server, which leaves those blocks out.
+  expect(blockQueryString({ attributes: ['au'], where: null, lod: 'auto', clip: null, present: null })).toBe('attributes=au')
+  expect(blockQueryString({ attributes: ['au'], where: null, lod: 'auto', clip: null, present: 'au' })).toBe('attributes=au&present=au')
 
   const bad = (async () => new Response(JSON.stringify({ detail: "unknown name 'gold'; available: au, rock" }), { status: 400 })) as unknown as typeof fetch
   const error = await fetchBlocks({ href: '/x' }, { attributes: [], where: 'gold > 1', lod: 'auto', clip: null }, undefined, bad).catch((e: unknown) => e)

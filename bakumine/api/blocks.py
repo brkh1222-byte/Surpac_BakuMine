@@ -20,8 +20,9 @@ definition and the structure columns exactly as :class:`BlockModel` does
                                (i4 when there are more than 32 767 categories)
 
     meta = {object_id, definition, structure: "dense" | "octree", rows: "all" | "listed",
-            n_total, n_selected, n_blocks, selected_volume, lod: "full" | "shell",
-            lod_requested, clipped, where, bytes_per_block,
+            n_total, n_selected, n_visible, n_blocks, selected_volume,
+            lod: "full" | "shell", lod_requested, clipped, where, present,
+            bytes_per_block,
             attributes: [{name, type: "numeric", array, unit} |
                          {name, type: "categorical", array, categories}]}
 
@@ -38,6 +39,18 @@ Selection
 geometry resolver (solids and surfaces by id); nothing is ever passed to ``eval``. The
 rows returned are exactly ``np.flatnonzero(constraint.mask(model, resolver))``.
 
+Blocks without a value
+----------------------
+The viewer normally hides the blocks that have no value of the colour attribute. Then
+what can be seen is "selected AND has a value", and that is the set everything below
+works on: ``present = <attribute>`` intersects the selection with the blocks where the
+attribute is not missing before the level of detail or the clip is applied, and only
+those blocks are sent. Without it a model whose grade exists in the ore alone would be
+reduced to the shell of the whole box - air and waste, all without a value, all hidden -
+and nothing would be drawn. ``n_selected`` and ``selected_volume`` still describe
+``where`` alone; ``n_visible`` counts the selected blocks that have a value (equal to
+``n_selected`` without ``present``).
+
 Level of detail
 ---------------
 ``lod = "shell"`` sends only the *exposed* blocks of the selection: those that could
@@ -48,7 +61,7 @@ count as not full). So every dropped block has all six neighbours selected, what
 sub-blocking; blocks in a partly selected parent, and the layer of whole parents next to
 them, are kept. A solid body of millions of blocks shrinks to its skin: O(n^(2/3)).
 
-``lod = "auto"`` (default) applies the shell when the selection has more than
+``lod = "auto"`` (default) applies the shell when the visible selection has more than
 :data:`AUTO_SHELL_BLOCKS` blocks; ``lod = "full"`` never does.
 
 What the shell does to slicing: the interior is not there, so a section through a shell
@@ -453,6 +466,12 @@ class BlockSelection:
     selected_volume: float
     lod: str
     clipped: bool
+    #: selected blocks that have a value of ``present``; ``n_selected`` without it
+    n_visible: int = -1
+
+    def __post_init__(self) -> None:
+        if self.n_visible < 0:
+            object.__setattr__(self, "n_visible", self.n_selected)
 
 
 def select_blocks(
@@ -460,23 +479,38 @@ def select_blocks(
     where: Constraint | None = None,
     lod: str = "auto",
     clip: Constraint | None = None,
+    present: str | None = None,
 ) -> BlockSelection:
-    """Evaluates ``where`` and applies the level of detail or the ``clip`` constraint."""
+    """Evaluates ``where`` and applies the level of detail or the ``clip`` constraint.
+
+    With ``present`` (an attribute name) only the selected blocks that have a value of it
+    are visible: the shell and the clip are taken of those (module docstring).
+    """
     if lod not in LODS:
         raise BlockQueryError(f"lod must be one of {', '.join(LODS)}")
     model = data.model
     mask = select(data, where)
     n_selected = int(mask.sum())
     volume = float(model.volumes()[mask].sum()) if n_selected else 0.0
+    n_visible = n_selected
+    if present is not None:
+        if present not in model:
+            raise BlockQueryError(
+                f"unknown attribute {present}; available: {', '.join(model.attribute_names)}"
+            )
+        mask = mask & ~model.is_missing(present)
+        n_visible = int(mask.sum())
     applied = "full"
     if clip is not None:
         send = mask & select(data, clip)
-    elif lod == "shell" or (lod == "auto" and n_selected > AUTO_SHELL_BLOCKS):
+    elif lod == "shell" or (lod == "auto" and n_visible > AUTO_SHELL_BLOCKS):
         send = exposed_blocks(model, mask)
         applied = "shell"
     else:
         send = mask
-    return BlockSelection(np.flatnonzero(send), n_selected, volume, applied, clip is not None)
+    return BlockSelection(
+        np.flatnonzero(send), n_selected, volume, applied, clip is not None, n_visible
+    )
 
 
 # ---------------------------------------------------------------------- payload
@@ -489,10 +523,11 @@ def block_payload(
     where: Constraint | None = None,
     lod: str = "auto",
     clip: Constraint | None = None,
+    present: str | None = None,
 ) -> bytes:
     """The "blocks" BKMA payload (layout in the module docstring)."""
     model = data.model
-    selection = select_blocks(data, where, lod, clip)
+    selection = select_blocks(data, where, lod, clip, present)
     rows = selection.rows
     everything = len(rows) == model.n_blocks
     take = slice(None) if everything else rows
@@ -526,12 +561,14 @@ def block_payload(
         "rows": "all" if everything else "listed",
         "n_total": int(model.n_blocks),
         "n_selected": selection.n_selected,
+        "n_visible": selection.n_visible,
         "n_blocks": int(n),
         "selected_volume": selection.selected_volume,
         "lod": selection.lod,
         "lod_requested": lod,
         "clipped": selection.clipped,
         "where": None if where is None else _describe(where),
+        "present": present,
         "bytes_per_block": (sum(a.nbytes for a in arrays.values()) / n) if n else 0.0,
         "attributes": described,
     }

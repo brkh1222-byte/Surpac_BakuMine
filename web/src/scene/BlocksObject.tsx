@@ -10,6 +10,12 @@
  * server answered with a shell, the blocks are requested again with the slab as the
  * `clip` constraint: everything selected inside the slab, interior included. When the
  * whole selection is loaded anyway (`lod: full`), the GPU clipping planes do it alone.
+ *
+ * Blocks without a value: while they are hidden ("No value: Hidden"), what can be seen is
+ * "selected AND has a value of the colour attribute". The request says so (`present`),
+ * and the server takes the shell and the slab of THAT set. Otherwise a model whose grade
+ * exists in the ore only would arrive as the shell of the whole box - air and waste, all
+ * hidden - and nothing would be drawn.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BlockManifestObject, BlockQuery } from '../api/blocks'
@@ -54,6 +60,7 @@ export function BlocksObject({ object, ranges }: BlocksObjectProps) {
 
   const colorBy = model?.colorBy ?? null
   const where = model?.where ?? null
+  const present = model && model.missing === 'hidden' ? colorBy : null
   // Gaps between blocks, or see-through blocks, show the interior: no shell then.
   const lod = model && (model.shrink < 1 || model.opacity < 1) ? 'full' : 'auto'
   // Whether the server last answered with less than the whole selection.
@@ -65,17 +72,17 @@ export function BlocksObject({ object, ranges }: BlocksObjectProps) {
     [needSlab, plane, back, definition],
   )
   const query = useMemo<BlockQuery | null>(
-    () => (model ? { attributes: colorBy ? [colorBy] : [], where, lod, clip } : null),
+    () => (model ? { attributes: colorBy ? [colorBy] : [], where, lod, clip, present } : null),
     // `model` matters only as "registered".
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [!!model, colorBy, where, lod, clip],
+    [!!model, colorBy, where, lod, clip, present],
   )
   // Only the slab moved: answer quickly.
-  const previous = useRef({ where, colorBy, lod })
-  const slabOnly = previous.current.where === where && previous.current.colorBy === colorBy && previous.current.lod === lod
+  const previous = useRef({ where, colorBy, lod, present })
+  const slabOnly = previous.current.where === where && previous.current.colorBy === colorBy && previous.current.lod === lod && previous.current.present === present
   useEffect(() => {
-    previous.current = { where, colorBy, lod }
-  }, [where, colorBy, lod])
+    previous.current = { where, colorBy, lod, present }
+  }, [where, colorBy, lod, present])
 
   const loaded = useBlockSet(object, query, slabOnly ? SLAB_DEBOUNCE_MS : BLOCK_DEBOUNCE_MS)
   const partial = loaded ? loaded.set.lod === 'shell' || loaded.set.clipped : false

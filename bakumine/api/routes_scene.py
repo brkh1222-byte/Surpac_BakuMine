@@ -8,6 +8,7 @@
                                                               &where=<constraint>
                                                               &lod=auto|full|shell
                                                               &clip=<constraint>
+                                                              &present=<attribute>
     GET /api/v1/scene/objects/{id}/blocks/info          JSON: the object's manifest entry
     GET /api/v1/scene/objects/{id}/blocks/detail        JSON: one block; ?row= or ?block_id=
     (report endpoints: routes_report.py)
@@ -184,6 +185,9 @@ def get_blocks(
     clip: Annotated[
         str | None, Query(description="constraint that limits what is sent (section slab)")
     ] = None,
+    present: Annotated[
+        str | None, Query(description="leave out the blocks without a value of this attribute")
+    ] = None,
 ) -> Response:
     data = _block_data(source, object_id)
 
@@ -195,11 +199,15 @@ def get_blocks(
             parse_constraint(where),
             lod,
             parse_constraint(clip, "clip"),
+            present or None,
         )
 
     try:
         payload, etag = payload_cache.get(
-            _cache_key(source, "blocks", object_id, id(data), attributes, where, lod, clip), build
+            _cache_key(
+                source, "blocks", object_id, id(data), attributes, where, lod, clip, present
+            ),
+            build,
         )
     except BlockQueryError as exc:
         raise HTTPException(400, str(exc)) from None

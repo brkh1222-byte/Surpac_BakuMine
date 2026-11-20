@@ -3,7 +3,8 @@
  * slider, category ticks, free expression), spatial conditions (solid, surface,
  * elevation, block index) and how they combine. Every change becomes constraint JSON
  * (blocks/filter.ts) and goes to the server as the `where` parameter; the panel shows
- * what came back: the count, "filtering…" while a request is out, or the engine's error.
+ * what came back: the count (and how many of those have a value of the colour attribute,
+ * when the others are hidden), "filtering…" while a request is out, or the engine's error.
  */
 import { useEffect, useState } from 'react'
 import { formatCount } from '../blocks/format'
@@ -346,7 +347,9 @@ export function FilterPanel({ id }: { id: string }) {
         ) : state === 'loading' ? (
           'filtering…'
         ) : status ? (
-          `${formatCount(status.selected)} of ${formatCount(status.total)} blocks`
+          `${formatCount(status.selected)} of ${formatCount(status.total)} blocks` +
+          // Blocks without a value of the colour attribute are selected but not drawn.
+          (status.valued !== status.selected ? ` · ${formatCount(status.valued)} with ${status.present ?? 'a value'}` : '')
         ) : (
           ''
         )}

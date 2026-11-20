@@ -13,6 +13,12 @@ const WORK_API_PORT = Number(process.env.BAKUMINE_E2E_WORK_API_PORT ?? 8198)
 const WORK_WEB_PORT = 5198
 const WORK_API_URL = `http://127.0.0.1:${WORK_API_PORT}`
 const WORK_PROJECT = path.join(os.tmpdir(), 'bakumine-e2e-workflow-project')
+// A third API on a project with an estimated model (e2e/blocks-project.spec.ts), built from
+// the synthetic gate by scripts/e2e_display_project.py, with its own dev server.
+const DISPLAY_API_PORT = Number(process.env.BAKUMINE_E2E_DISPLAY_API_PORT ?? 8196)
+const DISPLAY_WEB_PORT = 5196
+const DISPLAY_API_URL = `http://127.0.0.1:${DISPLAY_API_PORT}`
+const DISPLAY_PROJECT = path.join(os.tmpdir(), 'bakumine-e2e-display-project')
 
 export default defineConfig({
   testDir: './e2e',
@@ -68,6 +74,21 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       env: { BAKUMINE_API_URL: WORK_API_URL },
+    },
+    {
+      command: `sh -c 'uv run python scripts/e2e_display_project.py "$DISPLAY_PROJECT" && uv run uvicorn bakumine.api:app --host 127.0.0.1 --port ${DISPLAY_API_PORT}'`,
+      cwd: '..',
+      url: `${DISPLAY_API_URL}/api/health`,
+      reuseExistingServer: false,
+      timeout: 300_000,
+      env: { DISPLAY_PROJECT, BAKUMINE_PROJECT: DISPLAY_PROJECT },
+    },
+    {
+      command: `npx vite --host 127.0.0.1 --port ${DISPLAY_WEB_PORT} --strictPort`,
+      url: `http://127.0.0.1:${DISPLAY_WEB_PORT}`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      env: { BAKUMINE_API_URL: DISPLAY_API_URL },
     },
   ],
 })

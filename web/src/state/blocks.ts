@@ -39,10 +39,16 @@ export interface BlockStatus {
   state: BlockLoadState
   /** The server's message for an invalid filter, or a transport error. */
   error: string | null
-  /** Blocks on screen (after the shell or the section slab). */
+  /** Blocks on screen (after hiding those without a value, the shell or the section slab). */
   shown: number
   /** Blocks the filter selects. */
   selected: number
+  /**
+   * Selected blocks that have a value of the colour attribute, when the others are hidden
+   * (`present`: that attribute); all selected blocks otherwise.
+   */
+  valued: number
+  present: string | null
   total: number
   /** Volume of the selected blocks, m3. */
   volume: number
@@ -96,7 +102,7 @@ export function defaultBlockSettings(attribute: BlockAttributeInfo): NumericSett
   return range ? { ...fallback, ...range } : fallback
 }
 
-const EMPTY_STATUS: BlockStatus = { state: 'idle', error: null, shown: 0, selected: 0, total: 0, volume: 0, lod: 'full', clipped: false }
+const EMPTY_STATUS: BlockStatus = { state: 'idle', error: null, shown: 0, selected: 0, valued: 0, present: null, total: 0, volume: 0, lod: 'full', clipped: false }
 
 function clamp(value: number, low: number, high: number, fallback: number): number {
   return Number.isFinite(value) ? Math.min(high, Math.max(low, value)) : fallback

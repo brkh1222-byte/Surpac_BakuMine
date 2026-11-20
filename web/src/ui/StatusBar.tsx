@@ -94,8 +94,12 @@ function BlockSummary() {
     <>
       {Object.entries(status).map(([id, st]) => {
         if (!models[id] || !objects[id]?.visible || !shownCategory || st.total === 0) return null
-        // Fewer blocks drawn than selected: the exposed shell, or a section slab.
-        const part = st.shown !== st.selected ? ` (${formatCount(st.shown)} ${st.clipped ? 'in section' : 'drawn'})` : ''
+        // Fewer blocks drawn than selected: those without a value of the colour attribute
+        // are hidden, and of the rest the exposed shell or a section slab is drawn.
+        const parts: string[] = []
+        if (st.valued !== st.selected) parts.push(`${formatCount(st.valued)} with ${st.present ?? 'a value'}`)
+        if (st.shown !== st.valued) parts.push(`${formatCount(st.shown)} ${st.clipped ? 'in section' : 'drawn'}`)
+        const part = parts.length > 0 ? ` (${parts.join(', ')})` : ''
         const text = `Blocks ${formatCount(st.selected)} / ${formatCount(st.total)}${part} · ${formatVolume(st.volume)}`
         return (
           <span
@@ -105,6 +109,7 @@ function BlockSummary() {
             data-state={st.state}
             data-selected={st.selected}
             data-shown={st.shown}
+            data-valued={st.valued}
             data-total={st.total}
             data-volume={st.volume}
             data-lod={st.lod}

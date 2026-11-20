@@ -1,7 +1,7 @@
 /**
  * Block models over the scene API (bakumine/api/blocks.py):
  *
- *   fetchBlocks(object, { attributes, where, lod, clip })  -> BlockSet     (BKMA)
+ *   fetchBlocks(object, { attributes, where, lod, clip, present })  -> BlockSet  (BKMA)
  *   fetchBlockDetail(object, row)                           -> BlockDetail  (JSON)
  *   fetchBlockInfo(objectId)                                -> BlockManifestObject
  *
@@ -67,6 +67,11 @@ export interface BlockQuery {
   lod: BlockLod
   /** Constraint that limits what is sent (the section slab); counts still follow `where`. */
   clip: string | null
+  /**
+   * Attribute whose missing values are not drawn: only the selected blocks that have a
+   * value of it are visible, and the shell / the clip are taken of those. null = all.
+   */
+  present?: string | null
 }
 
 export interface BlockNumericColumn {
@@ -96,6 +101,10 @@ export interface BlockSet {
   total: number
   /** Blocks the `where` constraint selects (>= count when a shell or a clip applies). */
   selected: number
+  /** Selected blocks that have a value of the `present` attribute (= selected without one). */
+  valued: number
+  /** The `present` attribute the server applied; null = none. */
+  present: string | null
   /** Volume of the selected blocks, m3. */
   selectedVolume: number
   /** What was applied: the exposed shell of the selection, or all of it. */
@@ -156,6 +165,8 @@ export function decodeBlocks(payload: BkmaPayload): BlockSet {
     count: n,
     total: count(meta, 'n_total'),
     selected: count(meta, 'n_selected'),
+    valued: typeof meta.n_visible === 'number' ? count(meta, 'n_visible') : count(meta, 'n_selected'),
+    present: typeof meta.present === 'string' ? meta.present : null,
     selectedVolume: typeof meta.selected_volume === 'number' ? meta.selected_volume : 0,
     lod: meta.lod === 'shell' ? 'shell' : 'full',
     clipped: meta.clipped === true,
@@ -174,6 +185,7 @@ export function blockQueryString(query: BlockQuery): string {
   if (query.where) params.set('where', query.where)
   if (query.lod !== 'auto') params.set('lod', query.lod)
   if (query.clip) params.set('clip', query.clip)
+  if (query.present) params.set('present', query.present)
   return params.toString()
 }
 
