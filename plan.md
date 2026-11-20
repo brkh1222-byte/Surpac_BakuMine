@@ -182,7 +182,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [ ] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
 - [ ] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
 - [ ] ~~CUT: no inputs~~ **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
-- [ ] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
+- [x] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
 - [ ] **P7.T5 Review.** `/code-review high` and `/security-review` on the full diff; fix confirmed findings. *Accept:* no open important findings.
 - [ ] **P7.T6 User guide + one-command start.** `README.md` with install, `make dev`, and a walkthrough of the synthetic project with screenshots. *Accept:* a fresh clone reaches the 3D model by following the README only.
 - [ ] **P7.T7 Honest status report.** `STATUS.md`: what works, what is verified against which reference, what is provisional, what is not done. *Accept:* every unticked box and every **[verify]** item in `research.md` is listed.
@@ -266,6 +266,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 14:30  P6.T1/T6  afc4089 9e56b7b  Project folder (project.json, atomic), `bakumine project init|add|list`, API serves BAKUMINE_PROJECT; report endpoint + CSV + sidebar Report panel, equals CLI report. Orchestrator: api+cli 73 pass, vitest 123 pass after resolving cli.py conflict. Report panel NOT yet seen in a browser (no Playwright test).
 2026-11-20 15:00  P7.T2 (partial)  d1459d6  scripts/run_babbitt.py: ft->m, 3.048 m composites, 100x100x20 m model, manual variogram (auto-fit R2 0.12 rejected), OK 3 passes. Global mean OK vs NN +7.8 % (target 5 %: NOT met; NN biased by hole-end picks), swath corr x 0.33 / y 0.58 / z 0.89, LOHO xval corr 0.29. Test asserts 10 % + 2 of 3 swaths. Left UNTICKED. No domain wireframe, density 2.9 assumed.
 2026-11-20 15:20  scope  --  User: "dont save tokens, just build". Cuts reverted (P4.T10, P5.T7, P6.T7 undo back in scope; P7.T3 still blocked on Surpac inputs). Up to 4 agents, default model.
+2026-11-20 15:50  P7.T4  405a3f4  scripts/bench_perf.py (5M blocks, 20k composites). Orchestrator rerun: IDW 1M 0.54 s (<60), OK 1M 0.70 s (<300), 5M 3-pass 3.6 s, sub-block+code d3 4.5 s, save 0.64 / load 0.49 s. P5.T4 exposed-face path 2 ms/frame (from P5 log). No code changed; nothing missed a target. Random-composite data is easier than real drilling.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
