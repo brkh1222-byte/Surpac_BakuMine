@@ -169,12 +169,12 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
 
-- [ ] **P6.T1 Project.** Create/open a project folder; object tree (database, composites, strings, DTMs, solids, block models, constraints). *Accept:* reopen restores everything.
+- [x] **P6.T1 Project.** Create/open a project folder; object tree (database, composites, strings, DTMs, solids, block models, constraints). *Accept:* reopen restores everything.
 - [ ] **P6.T2 Import wizard.** Column mapping, preview, validation report with click-to-hole. *Accept:* public dataset imported through the UI by a Playwright script.
 - [ ] **P6.T3 Compositing dialog.** *Accept:* result equals CLI.
 - [ ] **P6.T4 Block model dialogs.** Create (with auto-extent), attributes, constraints builder, code blocks with sub-blocking. *Accept:* result equals CLI.
 - [ ] **P6.T5 Estimation dialog.** Method, attribute, domain constraint, ellipsoid (shown live in the 3D scene), variogram parameters, passes; background job with progress and cancel. *Accept:* result equals CLI; cancel leaves the model unchanged.
-- [ ] **P6.T6 Report panel.** Volume/tonnes/grade table with export. *Accept:* equals CLI.
+- [x] **P6.T6 Report panel.** Volume/tonnes/grade table with export. *Accept:* equals CLI.
 - [ ] **P6.T7 Job log and undo.** Every operation logged with its parameters (reproducible as a CLI script); undo for attribute-changing operations via snapshot. *Accept:* replaying the log on a fresh project gives an identical model.
 
 ### Phase 7 — Validation, performance, delivery (H40–H48)
@@ -263,6 +263,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 13:20  P5.T8/T4/T5  b366734 efed50d 58c5a8b  Blocks endpoint (BKMA, no coords on wire, 2-16 B/block), instanced blocks layer with section caps and picking, constraint filter panel (UI counts = server = Python masks). Shell LOD: 2M model first view 16 ms, orbit 2 ms/frame; all 2M as instances 26 fps (plan said 30: NOT met for lod=full). Rotated model on screen and opacity<1 not inspected. Orchestrator: make check 1276 + 118 vitest green after merge; e2e (54) run by agent only.
 2026-11-20 13:40  scope  --  Token budget: cut P4.T10 (stretch), P5.T7, P6.T7 undo (job log kept if cheap), P7.T3 (no Surpac inputs supplied). Remaining tasks run 2 agents at a time, Sonnet for routine work, targeted tests while working + one make check at the end.
 2026-11-20 14:05  Gate A/B CLI  e314a1a 4b67efc  `bakumine estimate`, `blockmodel create|code`, scripts/gate_synthetic.py. Orchestrator reran script: ORE volume -0.047 %, tonnes -0.047 %, metal -2.4 %, OK corr 0.812 (per parent, volume-weighted). Gate A numbers PASS (code review part pending in P7.T5); Gate B PASS.
+2026-11-20 14:30  P6.T1/T6  afc4089 9e56b7b  Project folder (project.json, atomic), `bakumine project init|add|list`, API serves BAKUMINE_PROJECT; report endpoint + CSV + sidebar Report panel, equals CLI report. Orchestrator: api+cli 73 pass, vitest 123 pass after resolving cli.py conflict. Report panel NOT yet seen in a browser (no Playwright test).
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
