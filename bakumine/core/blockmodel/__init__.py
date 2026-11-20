@@ -24,6 +24,11 @@ from bakumine.core.blockmodel.constraints import (
 )
 from bakumine.core.blockmodel.definition import BlockModelDefinition
 from bakumine.core.blockmodel.expressions import ExpressionError, ExpressionWarning
+from bakumine.core.blockmodel.partial import (
+    assign_partial,
+    constraint_volume,
+    partial_fraction,
+)
 from bakumine.core.blockmodel.subblocking import (
     SubblockResult,
     merge_uniform,
@@ -59,3 +64,6 @@ __all__ = [
 
 # sub-blocking on constraints (P3.T5)
 __all__ += ["SubblockResult", "merge_uniform", "subblock_to_constraint"]
+
+# partial percentages (P3.T6)
+__all__ += ["assign_partial", "constraint_volume", "partial_fraction"]
