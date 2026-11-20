@@ -56,6 +56,7 @@ from bakumine.core.estimation._common import (
 )
 from bakumine.core.estimation.rotation import Ellipsoid
 from bakumine.core.estimation.search import SampleSearch, SearchParams
+from bakumine.core.parallel import parallel_njit
 
 __all__ = ["IDWResult", "inverse_distance"]
 
@@ -114,7 +115,7 @@ def _idw_point(d, z, n, power):
     return num / den, 0
 
 
-@njit(parallel=True, cache=True)
+@parallel_njit(cache=True)
 def _idw_kernel(
     indices,
     distances,

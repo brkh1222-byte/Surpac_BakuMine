@@ -28,6 +28,8 @@ import math
 import numpy as np
 from numba import njit, prange
 
+from bakumine.core.parallel import parallel_njit
+
 __all__ = ["TriangleBVH", "TriangleGridXY", "triangle_bounds"]
 
 _EMPTY_I64 = np.empty(0, dtype=np.int64)
@@ -108,7 +110,7 @@ def _grid_point(x, y, x0, y0, invx, invy, nx, ny, start, items, lo, hi, out, pos
     return count
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _grid_query_points(xy, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     n = xy.shape[0]
     offsets = np.zeros(n + 1, dtype=np.int64)
@@ -162,7 +164,7 @@ def _grid_rect(
     return count
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _grid_query_rects(rlo, rhi, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     n = rlo.shape[0]
     offsets = np.zeros(n + 1, dtype=np.int64)
@@ -403,7 +405,7 @@ def _bvh_visit(
     return count
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _bvh_query(node_lo, node_hi, slo, shi, order, leaf_size, first_leaf, qlo, qhi, self_mode):
     n = qlo.shape[0]
     offsets = np.zeros(n + 1, dtype=np.int64)

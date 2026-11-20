@@ -64,6 +64,7 @@ from numba import njit, prange
 from bakumine.core.geometry.mesh import Mesh
 from bakumine.core.geometry.predicates import tri_covers, tri_z
 from bakumine.core.geometry.spatial import TriangleGridXY, _cell
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "ColumnCrossings",
@@ -84,7 +85,7 @@ class OpenMeshWarning(UserWarning):
 # --------------------------------------------------------------------------
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _points_inside(pts, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     n = pts.shape[0]
     out = np.zeros(n, dtype=np.bool_)
@@ -149,7 +150,7 @@ def _column(px, py, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi, out,
     return count
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _columns(xs, ys, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     """Sorted crossing heights of the columns ``(xs[i], ys[j])`` as CSR (column = i*len(ys)+j)."""
     na = xs.shape[0]
@@ -178,7 +179,7 @@ def _columns(xs, ys, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     return offsets, z
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _columns_xy(xy, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     """Same as :func:`_columns` for arbitrary column positions ``xy`` (n, 2)."""
     n = xy.shape[0]
@@ -204,7 +205,7 @@ def _columns_xy(xy, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     return offsets, z
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _fill(offsets, z, na, nb, zk_all):
     """mask[i, j, k] = odd number of crossings strictly above ``zk_all[k]`` (ascending)."""
     nk = zk_all.shape[0]

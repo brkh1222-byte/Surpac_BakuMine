@@ -21,6 +21,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from bakumine.core.geometry.mesh import Mesh
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "ValidationReport",
@@ -489,7 +490,7 @@ def _tri_tri(v, a0, a1, a2, b0, b1, b2):
     return False  # same three vertices: reported as a duplicate face
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _pairs_intersect(v, faces, pairs, skip):
     n = pairs.shape[0]
     out = np.zeros(n, dtype=np.bool_)

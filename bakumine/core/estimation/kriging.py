@@ -144,6 +144,7 @@ from bakumine.core.estimation._common import (
 from bakumine.core.estimation.rotation import Ellipsoid
 from bakumine.core.estimation.search import SampleSearch, SearchParams
 from bakumine.core.estimation.variogram import VariogramModel, lag_covariance
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "STATUS_ESTIMATED",
@@ -287,7 +288,7 @@ def block_covariance(
     )
 
 
-@njit(parallel=True, cache=True)
+@parallel_njit(cache=True)
 def _krige_kernel(
     indices,
     counts,

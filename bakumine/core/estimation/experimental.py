@@ -77,7 +77,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from numba import njit, prange
+from numba import prange
 from scipy.optimize import least_squares
 from scipy.special import ndtri
 
@@ -88,6 +88,7 @@ from bakumine.core.estimation.variogram import (
     VariogramModel,
     _unit_variogram,
 )
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "ESTIMATORS",
@@ -360,7 +361,7 @@ class ExperimentalVariogram:
 # --------------------------------------------------------------------------
 # pair accumulation
 # --------------------------------------------------------------------------
-@njit(parallel=True, cache=True)
+@parallel_njit(cache=True)
 def _accumulate(
     key,
     xyz,

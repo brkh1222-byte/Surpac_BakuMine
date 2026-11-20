@@ -48,10 +48,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from numba import njit, prange
+from numba import prange
 from scipy.spatial import cKDTree
 
 from bakumine.core.estimation.rotation import Ellipsoid
+from bakumine.core.parallel import parallel_njit
 
 __all__ = ["SECTOR_MODES", "SampleSearch", "SearchParams", "SearchResult"]
 
@@ -155,7 +156,7 @@ class SearchResult:
     estimated: np.ndarray
 
 
-@njit(parallel=True, cache=True)
+@parallel_njit(cache=True)
 def _select(
     rows,
     cand_d,

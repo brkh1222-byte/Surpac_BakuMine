@@ -58,7 +58,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from numba import njit, prange
+from numba import prange
 from scipy.interpolate import RBFInterpolator
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
@@ -73,6 +73,7 @@ from bakumine.core.geometry.isosurface import (
     remove_small_components,
 )
 from bakumine.core.geometry.mesh import Mesh
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "KERNELS",
@@ -462,7 +463,7 @@ def estimate_anisotropy(
 # --------------------------------------------------------------------------
 
 
-@njit(parallel=True, cache=True)
+@parallel_njit(cache=True)
 def _rbf_sum(query, nodes, weights, poly, kernel):
     """sum_j w_j phi(|q - x_j|) + poly(q); poly = (c0, cx, cy, cz)."""
     n = query.shape[0]

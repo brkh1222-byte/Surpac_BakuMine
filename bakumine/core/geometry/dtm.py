@@ -31,11 +31,12 @@ import warnings
 from collections.abc import Sequence
 
 import numpy as np
-from numba import njit, prange
+from numba import prange
 
 from bakumine.core.geometry.mesh import Mesh
 from bakumine.core.geometry.predicates import tri_covers, tri_covers_closed, tri_z
 from bakumine.core.geometry.spatial import _cell
+from bakumine.core.parallel import parallel_njit
 
 __all__ = ["DTM", "DuplicatePointWarning", "dtm_from_grid", "dtm_from_points"]
 
@@ -51,7 +52,7 @@ class DuplicatePointWarning(UserWarning):
 # --------------------------------------------------------------------------
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _locate(x, y, v, f, x0, y0, invx, invy, nx, ny, start, items, lo, hi):
     n = x.shape[0]
     z = np.full(n, np.nan)

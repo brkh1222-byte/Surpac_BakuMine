@@ -99,7 +99,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
-from numba import njit, prange
+from numba import prange
 
 from bakumine.core.blockmodel import expressions as _expressions
 from bakumine.core.blockmodel.blocks import BlockModel
@@ -108,6 +108,7 @@ from bakumine.core.geometry.dtm import DTM
 from bakumine.core.geometry.inside import grid_in_solid, points_in_solid
 from bakumine.core.geometry.mesh import Mesh
 from bakumine.core.geometry.section import plane_frame
+from bakumine.core.parallel import parallel_njit
 
 __all__ = [
     "INSIDE",
@@ -265,7 +266,7 @@ def _reference(ref: Any, kind: str) -> str:
 # --------------------------------------------------------------------------
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _tri_box_pairs(vertices, faces, lo, hi, box_index, tri_index):
     """Exact triangle / box overlap (separating axis theorem) for candidate pairs.
 
@@ -343,7 +344,7 @@ def _boxes_hit_mesh(mesh: Mesh, lo: np.ndarray, hi: np.ndarray, eps: float) -> n
     return hit
 
 
-@njit(cache=True, parallel=True)
+@parallel_njit(cache=True)
 def _points_in_polygon(u, v, pu, pv):
     """Even-odd rule; an edge owns its lower end (half-open), so shared edges count once."""
     n = u.shape[0]
