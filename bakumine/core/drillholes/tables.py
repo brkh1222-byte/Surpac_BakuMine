@@ -11,6 +11,9 @@ workbook, and applies the row rules of one source of an import recipe
                               units rows and column-number rows below it;
 * :func:`table_from_grid`   - the data rows under that header;
 * :func:`normalise_hole_ids` - ``DH_02``, ``DH-002`` -> one spelling, with a pattern;
+* :func:`depths_from_sample_ids` - ``to`` = the number at the end of the sample id,
+                              ``from = to - length`` (or an explicit ``a-b``);
+* :func:`classify_qc`       - blanks, standards and duplicates among the samples;
 * :func:`prepare_source`    - all of the above for one source of a recipe.
 
 Nothing here parses assay values: the result is still text, typed by
@@ -44,6 +47,10 @@ from .importer import (
 __all__ = [
     "Header",
     "Prepared",
+    "QC_WORDS",
+    "check_sample_depths",
+    "classify_qc",
+    "depths_from_sample_ids",
     "locate_header",
     "normalise_hole_ids",
     "prepare_source",
@@ -65,6 +72,16 @@ _UNITS = frozenset(
 _KNOWN_HEADERS = frozenset(
     s for kind in _SYNONYMS.values() for names in kind.values() for s in names
 )
+
+#: QC sample kinds and the words (lower case, any language met so far) that announce them
+QC_WORDS: dict[str, tuple[str, ...]] = {
+    "blank": ("blank", "blk", "бланк", "холостая", "холостой", "хоосон"),
+    "standard": ("standard", "standart", "std", "crm", "srm", "стандарт", "эталон"),
+    "duplicate": (
+        "duplicate", "dup", "dupl", "replicate", "rep", "дубликат", "дубль", "давхар",
+        "давтан",
+    ),  # fmt: skip
+}
 
 
 # --------------------------------------------------------------------------------------
@@ -367,6 +384,186 @@ def normalise_hole_ids(
 
 
 # --------------------------------------------------------------------------------------
+# depths from sample numbers
+# --------------------------------------------------------------------------------------
+_SEPARATOR = r"[\s_\-./]"
+_DEPTH = r"\d+(?:\.\d+)?"
+_TRAILING_INT = re.compile(r"(\d+)\D*$")
+
+
+def _hole_prefix(hole: str) -> re.Pattern[str]:
+    """A loose pattern for the hole id at the start of a sample id: letters in any case,
+    numbers with or without leading zeros, any separators (``DH-01`` ~ ``dh_001``)."""
+    parts = re.findall(r"[^\W\d_]+|\d+", hole)
+    body = (_SEPARATOR + "*").join(
+        f"0*{int(p)}" if p.isdigit() else re.escape(p) for p in parts
+    )
+    return re.compile(rf"^\s*{body}(?:{_SEPARATOR}+|$)", re.IGNORECASE)
+
+
+_AUTO_TO = re.compile(rf"^({_DEPTH})$")
+_AUTO_RANGE = re.compile(rf"^({_DEPTH})\s*[-–_]\s*({_DEPTH})$")
+
+
+def _hole_patterns(patterns: Sequence[str], hole: str) -> list[re.Pattern[str]]:
+    number = _TRAILING_INT.search(hole)
+    values = {"hole": re.escape(hole), "holenum": str(int(number.group(1))) if number else ""}
+    compiled = []
+    for pattern in patterns:
+        try:
+            text = re.sub(r"\{(hole|holenum)\}", lambda m: values[m.group(1)], pattern)
+            compiled.append(re.compile(text, re.IGNORECASE))
+        except re.error as exc:
+            raise ValueError(f"sample number pattern {pattern!r}: {exc}") from None
+        if "to" not in compiled[-1].groupindex:
+            raise ValueError(f"sample number pattern {pattern!r} has no (?P<to>...) group")
+    return compiled
+
+
+def depths_from_sample_ids(
+    hole_ids: Sequence[str],
+    sample_ids: Sequence[str],
+    length: float | Sequence[float] = 1.0,
+    patterns: Sequence[str] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(depth_from, depth_to)`` read from sample numbers; NaN where the rule does not apply.
+
+    The default rule: strip the hole id from the start of the sample id when it is there
+    (loosely: ``DH01-152`` belongs to ``DH-01``); what is left must be a number, the
+    depth of the *end* of the sample, ``to``, and ``from = to - length``; or an explicit
+    ``from-to`` pair (``DH01-151-152``). ``length`` is one number or one per row. A row
+    whose ``from`` would be negative or not below ``to`` gets no depths.
+
+    ``patterns`` replaces the default rule with regular expressions tried in order against
+    the whole sample id (case-insensitive, full match). Each needs a ``(?P<to>...)`` group
+    and may have ``(?P<from>...)``; ``{hole}`` stands for the row's hole id and
+    ``{holenum}`` for the number at its end without leading zeros, e.g.
+    ``DH0*{holenum}-{holenum}(?P<to>\\d+)`` for ids that repeat the hole number.
+    """
+    n = len(sample_ids)
+    lengths = np.broadcast_to(np.asarray(length, dtype=np.float64), (n,))
+    start = np.full(n, np.nan)
+    end = np.full(n, np.nan)
+    cache: dict[str, Any] = {}
+    for i, (hole, sample) in enumerate(zip(hole_ids, sample_ids, strict=True)):
+        hole, sample = str(hole).strip(), str(sample).strip()
+        if not sample:
+            continue
+        low = high = None
+        if patterns:
+            if hole not in cache:
+                cache[hole] = _hole_patterns(patterns, hole)
+            for pattern in cache[hole]:
+                match = pattern.fullmatch(sample)
+                if match is not None:
+                    high = float(match.group("to"))
+                    if "from" in pattern.groupindex and match.group("from") is not None:
+                        low = float(match.group("from"))
+                    break
+        else:
+            if hole not in cache:
+                cache[hole] = _hole_prefix(hole) if hole else None
+            prefix = cache[hole].match(sample) if cache[hole] is not None else None
+            rest = sample[prefix.end() :] if prefix else sample
+            single = _AUTO_TO.match(rest)
+            pair = _AUTO_RANGE.match(rest)
+            if single:
+                high = float(single.group(1))
+            elif pair:
+                low, high = float(pair.group(1)), float(pair.group(2))
+        if high is None:
+            continue
+        if low is None:
+            low = high - lengths[i]
+        if np.isfinite(low) and low < high and low >= 0:
+            start[i], end[i] = low, high
+    return start, end
+
+
+def check_sample_depths(
+    hole_ids: Sequence[str], depth_from: np.ndarray, depth_to: np.ndarray
+) -> dict[str, Any]:
+    """How plausible derived intervals are, per hole and in total: rows, first ``from``,
+    last ``to``, repeated intervals, places where the depth goes backwards (in file order)
+    and gaps or overlaps between consecutive samples."""
+    frame = pd.DataFrame(
+        {"hole_id": list(hole_ids), "a": np.asarray(depth_from), "b": np.asarray(depth_to)}
+    ).dropna()
+    holes = []
+    for hole, part in frame.groupby("hole_id", sort=False):
+        a, b = part["a"].to_numpy(), part["b"].to_numpy()
+        step = a[1:] - b[:-1] if len(a) > 1 else np.zeros(0)
+        holes.append(
+            {
+                "hole_id": str(hole),
+                "rows": int(len(part)),
+                "from": float(a.min()),
+                "to": float(b.max()),
+                "duplicates": int(part.duplicated(["a", "b"]).sum()),
+                "backwards": int((np.diff(b) < 0).sum()),
+                "gaps": int((step > 1e-9).sum()),
+                "overlaps": int((step < -1e-9).sum()),
+            }
+        )
+    keys = ("rows", "duplicates", "backwards", "gaps", "overlaps")
+    return {**{k: int(sum(h[k] for h in holes)) for k in keys}, "holes": holes}
+
+
+# --------------------------------------------------------------------------------------
+# QC rows
+# --------------------------------------------------------------------------------------
+def _qc_word(text: str) -> str:
+    """The QC kind a cell announces ("" when none)."""
+    words = [w for w in re.split(r"[\W\d_]+", text.casefold()) if w]
+    for kind, names in QC_WORDS.items():
+        if any(w in names for w in words):
+            return kind
+    return ""
+
+
+_LETTER_SUFFIX = re.compile(r"\d[^\W\d_]{1,3}$")
+
+
+def classify_qc(
+    table: pd.DataFrame,
+    *,
+    columns: Sequence[str] = (),
+    letter_suffix: bool = True,
+) -> np.ndarray:
+    """QC kind of each row of an interval table still in text: ``""`` for a sample, else
+    ``blank`` / ``standard`` / ``duplicate`` / ``other`` / ``letter_suffix``.
+
+    * a QC word (:data:`QC_WORDS`) in ``sample_type``, in ``depth_from`` / ``depth_to``
+      or in one of ``columns``;
+    * any other text in ``depth_from`` / ``depth_to`` where a number belongs: ``other``;
+    * with ``letter_suffix``: a sample id ending in a letter (``190043A``) in a table where
+      at least four fifths of the ids end in a digit.
+    """
+    n = len(table)
+    kinds = np.full(n, "", dtype=object)
+    for column in ("sample_type", *columns):
+        if column in table.columns:
+            found = np.array([_qc_word(str(v)) for v in table[column].tolist()], dtype=object)
+            kinds = np.where((kinds == "") & (found != ""), found, kinds)
+    for column in ("depth_from", "depth_to"):
+        if column not in table.columns:
+            continue
+        for i, value in enumerate(table[column].tolist()):
+            text = str(value).strip()
+            if kinds[i] or not text or _is_number(text) or text in ("-", "--"):
+                continue
+            kinds[i] = _qc_word(text) or "other"
+    if letter_suffix and "sample_id" in table.columns:
+        ids = table["sample_id"].astype(str).str.strip()
+        filled = ids != ""
+        lettered = ids.str.contains(_LETTER_SUFFIX).to_numpy(dtype=bool)
+        digits = ids.str.contains(r"\d$").to_numpy(dtype=bool)
+        if filled.sum() and digits.sum() >= 0.8 * filled.sum():
+            kinds = np.where((kinds == "") & lettered, "letter_suffix", kinds)
+    return kinds
+
+
+# --------------------------------------------------------------------------------------
 # one source of a recipe
 # --------------------------------------------------------------------------------------
 @dataclass
@@ -489,6 +686,8 @@ def prepare_source(
 
     info: dict[str, Any] = {"sheets": sheet_info, "columns": headers}
     qc_rows = pd.DataFrame()
+    if kind == "interval" and len(renamed):
+        renamed, qc_rows = _interval_rules(renamed, spec, name, info, note)
     present = set(renamed.columns) - {SHEET_COLUMN, "__row__"}
     info["rows"] = int(len(renamed))
     info["targets"] = sorted(present)
@@ -499,3 +698,93 @@ def prepare_source(
         info=info,
         notes=notes,
     )
+
+
+def _interval_rules(
+    table: pd.DataFrame, spec: Mapping[str, Any], name: str, info: dict[str, Any], note: Any
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """QC rows and sample-number depths of one interval source. Returns (samples, qc)."""
+    qc_spec = spec.get("qc")
+    if qc_spec is None or qc_spec is True:
+        qc_spec = {}
+    separate = qc_spec is not False and qc_spec.get("mode", "separate") != "off"
+    kinds = np.full(len(table), "", dtype=object)
+    if separate:
+        kinds = classify_qc(
+            table,
+            columns=tuple(qc_spec.get("columns") or ()),
+            letter_suffix=bool(qc_spec.get("letter_suffix", True)),
+        )
+
+    def blank(column: str) -> np.ndarray:
+        if column not in table.columns:
+            return np.ones(len(table), dtype=bool)
+        return table[column].astype(str).str.strip().isin(["", "-", "--"]).to_numpy(dtype=bool)
+
+    rule = spec.get("sample_depth")
+    if rule:
+        rule = {} if rule is True else dict(rule)
+        column = rule.get("column", "sample_id")
+        if column not in table.columns or "hole_id" not in table.columns:
+            raise ValueError(
+                f"{name}: the sample-number rule needs the columns hole_id and {column!r} "
+                "(map the sample number column to it)"
+            )
+        todo = kinds == ""
+        if rule.get("when", "missing") != "always":
+            todo &= blank("depth_from") & blank("depth_to")
+        length: Any = float(rule.get("length", 1.0))
+        length_column = rule.get("length_column")
+        if length_column:
+            if length_column not in table.columns:
+                raise ValueError(f"{name}: no column {length_column!r} for the sample length")
+            given = pd.to_numeric(
+                table[length_column].astype(str).str.replace(",", "."), errors="coerce"
+            ).to_numpy(dtype=np.float64)
+            length = np.where(np.isfinite(given), given, length)[todo]
+        start, end = depths_from_sample_ids(
+            table["hole_id"].to_numpy()[todo],
+            table[column].to_numpy()[todo],
+            length,
+            rule.get("patterns") or None,
+        )
+        for target in ("depth_from", "depth_to"):
+            if target not in table.columns:
+                table[target] = ""
+        ok = np.isfinite(end)
+        rows = np.flatnonzero(todo)
+        for target, values in (("depth_from", start), ("depth_to", end)):
+            table.iloc[rows[ok], table.columns.get_loc(target)] = [
+                repr(float(v)) for v in values[ok]
+            ]
+        failed = rows[~ok]
+        kinds[failed] = "no_depth"
+        check = check_sample_depths(table["hole_id"].to_numpy()[rows[ok]], start[ok], end[ok])
+        check["unmatched"] = int(len(failed))
+        check["unmatched_examples"] = table[column].to_numpy()[failed][:8].tolist()
+        check["preview"] = [
+            {
+                "hole_id": str(table["hole_id"].iat[r]),
+                "sample_id": str(table[column].iat[r]),
+                "depth_from": float(a),
+                "depth_to": float(b),
+            }
+            for r, a, b in zip(rows[ok][:8], start[ok][:8], end[ok][:8], strict=True)
+        ]
+        info["sample_depth"] = check
+        note("depth_from,depth_to", "from_sample_number", int(ok.sum()))
+        note("depth_from,depth_to", "sample_number_not_understood", int(len(failed)),
+             examples=check["unmatched_examples"][:5])  # fmt: skip
+    if separate:
+        no_interval = (kinds == "") & blank("depth_from") & blank("depth_to")
+        kinds[no_interval] = "no_interval"
+    is_qc = kinds != ""
+    qc = table.loc[is_qc].copy()
+    qc.insert(0, "qc_type", kinds[is_qc])
+    qc = qc.rename(columns={SHEET_COLUMN: "sheet", "__row__": "row"})
+    qc = qc.astype(str).reset_index(drop=True)
+    counts = Counter(kinds[is_qc].tolist())
+    info["qc"] = dict(sorted(counts.items()))
+    for what, count in sorted(counts.items()):
+        note("*", f"qc_{what}_set_aside", count)
+    return table.loc[~is_qc].reset_index(drop=True), qc

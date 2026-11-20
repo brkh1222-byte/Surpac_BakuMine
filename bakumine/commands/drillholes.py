@@ -157,6 +157,31 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         metavar="TEMPLATE",
         help="e.g. 'DH-{1:03d}' ({1} = first group of the pattern, {0} = the whole id)",
     )
+    shape.add_argument(
+        "--sample-depth",
+        action="append",
+        default=[],
+        metavar="TABLE",
+        help="where from/to are empty, read them from the sample number: to = the number "
+        "left after the hole id, from = to - sample length (or an explicit 'a-b')",
+    )
+    shape.add_argument(
+        "--sample-length", type=float, default=1.0, help="sample length for --sample-depth"
+    )
+    shape.add_argument(
+        "--sample-pattern",
+        action="append",
+        metavar="REGEX",
+        help="replace the default --sample-depth rule: regex with (?P<to>...) and optional "
+        "(?P<from>...); {hole} and {holenum} stand for the row's hole (repeatable)",
+    )
+    shape.add_argument(
+        "--qc",
+        choices=("separate", "off"),
+        default="separate",
+        help="blank / standard / duplicate rows of interval tables: set aside in a QC "
+        "table (default) or left among the samples",
+    )
     parser.add_argument(
         "--length-unit",
         choices=tuple(LENGTH_UNITS),
@@ -204,10 +229,6 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     # options of later import features, at their defaults
     parser.set_defaults(
         func=_guarded(run_import),
-        sample_depth=[],
-        sample_length=1.0,
-        sample_pattern=None,
-        qc="separate",
         merge_precedence="first",
         merge_tolerance=0.01,
         crs=None,
