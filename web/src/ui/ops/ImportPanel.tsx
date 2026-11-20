@@ -13,7 +13,7 @@
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { conflictsText, droppedText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { conflictsText, droppedText, duplicatesText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -238,6 +238,7 @@ export function ImportPanel() {
   const [excludeHoles, setExcludeHoles] = useState('')
   const [precedence, setPrecedence] = useState('first')
   const [mergeIgnore, setMergeIgnore] = useState('sample_id')
+  const [duplicates, setDuplicates] = useState('keep_first')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -291,7 +292,7 @@ export function ImportPanel() {
         tables: Object.fromEntries(Object.entries(tables).map(([t, sources]) => [t, sources.map((s) => sourceSpec(s.form, s.preview.kind === 'interval'))])),
         options: { length_unit: lengthUnit, convert_to_metres: toMetres, dip_convention: dip, coordinate_order: order, crs: crs.trim() || null },
         hole_id: holeIdRule(holePattern, holeTemplate),
-        merge: { precedence, ignore_columns: holeList(mergeIgnore) },
+        merge: { precedence, ignore_columns: holeList(mergeIgnore), duplicate_intervals: duplicates },
         holes: holeFilter(includeHoles, excludeHoles),
       }
       setResult(await opsApi.importDb(body))
@@ -353,6 +354,7 @@ export function ImportPanel() {
       <Text label="Skip holes" id="import-exclude-holes" value={excludeHoles} onChange={setExcludeHoles} placeholder="none (names or patterns, comma separated)" />
       <Select label="Files disagree" id="import-precedence" value={precedence} onChange={setPrecedence} options={[{ value: 'first', label: 'first file wins' }, { value: 'last', label: 'last file wins' }]} />
       <Text label="Not conflicts" id="import-merge-ignore" value={mergeIgnore} onChange={setMergeIgnore} placeholder="columns whose differences are only counted" />
+      <Select label="Interval twice" id="import-duplicates" value={duplicates} onChange={setDuplicates} options={[{ value: 'keep_first', label: 'keep the first row' }, { value: 'mean', label: 'mean of the rows' }, { value: 'error', label: 'stop the import' }]} />
       <div className="control">
         <button type="button" data-testid="import-run" disabled={busy} onClick={() => void run()}>{busy ? 'Importing…' : 'Import and validate'}</button>
       </div>
@@ -371,6 +373,9 @@ export function ImportPanel() {
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
             <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}</p>
           )))}
+          {Object.entries(result.duplicates ?? {}).map(([t, d]) => (
+            <p className="sidebar-note" key={t} data-testid={`import-duplicates-${t}`}>{duplicatesText(t, d)}</p>
+          ))}
           {Object.entries(result.sources ?? {}).map(([t, entries]) => entries.filter((e) => Object.keys(e).length > 1).map((e) => (
             <p className="sidebar-note" key={`${t}-${e.file}`} data-testid={`import-source-result-${t}`}>{t} {sourceText(e)}</p>
           )))}

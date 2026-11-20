@@ -237,6 +237,15 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--merge-tolerance", type=float, default=0.01, help="numbers closer than this agree"
     )
     shape.add_argument(
+        "--duplicate-intervals",
+        choices=("keep-first", "mean", "error"),
+        default="keep-first",
+        help="an interval that is in a table twice (same hole, from and to: an unmarked "
+        "repeat assay): keep the first row (default), take the mean of the numeric "
+        "attributes, or stop. Counted in the summary; every such row is listed in "
+        "duplicates_<table>.csv",
+    )
+    shape.add_argument(
         "--merge-ignore",
         action="append",
         metavar="COLUMNS",
@@ -543,6 +552,7 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
             "precedence": args.merge_precedence,
             "tolerance": args.merge_tolerance,
             "ignore_columns": _merge_ignore(args.merge_ignore),
+            "duplicate_intervals": args.duplicate_intervals,
         },
         holes=_hole_filter(args),
     )
@@ -585,6 +595,12 @@ def _print_import_reports(db) -> None:
             print(f"    differences not counted as conflicts (informational): {apart}")
         if merged.get("listing"):
             print(f"    every difference: {merged['listing']} in the database folder")
+    for name, repeats in reports.get("duplicates", {}).items():
+        print(
+            f"  {name} duplicate intervals ({repeats['rule'].replace('_', '-')}): "
+            f"{repeats['intervals']} interval(s) in {repeats['holes']} hole(s) were there more "
+            f"than once, {repeats['rows_removed']} row(s) removed; listed in {repeats['listing']}"
+        )
     for name, entries in reports.get("sources", {}).items():
         for entry in entries:
             said = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in entry.items() if k != "file")

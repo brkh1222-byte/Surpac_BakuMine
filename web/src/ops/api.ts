@@ -125,6 +125,15 @@ export interface ValidationResult {
   truncated: boolean
 }
 
+export interface DuplicateReport {
+  rule: string
+  intervals: number
+  rows_removed: number
+  holes: number
+  listing: string
+  examples: { hole_id: string; depth_from: number; depth_to: number; rows: number }[]
+}
+
 export interface SourceReport {
   file: string
   dip_convention?: string
@@ -166,6 +175,8 @@ export interface ImportResult extends ValidationResult {
   sample_depth: Record<string, SampleDepthCheck[]>
   /** per table: total_rows, rows_without_hole_id, collars_without_coordinates (counts) */
   dropped_rows: Record<string, DroppedRows>
+  /** per interval table: intervals that were in it more than once */
+  duplicates: Record<string, DuplicateReport>
   hole_filter: HoleFilterReport | null
   /** per table, per file: what was decided for it (when the files of a table differ) */
   sources: Record<string, SourceReport[]>

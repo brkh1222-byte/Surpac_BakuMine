@@ -9,7 +9,8 @@ the project's job log, so the same import can be run again on updated files with
       "options": {...},                      # ImportOptions fields (units, dip, CRS ...)
       "hole_id": {"pattern": "DH[_-]?0*(\\\\d+)", "template": "DH-{1:02d}"},
       "holes": {"include": ["DH-*"], "exclude": ["DH-07", "*-T"]},   # optional
-      "merge": {"precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"]},
+      "merge": {"precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"],
+                "duplicate_intervals": "keep_first"},
       "tables": {
         "collar": [SOURCE, ...],             # one table from one or more sources
         "survey": [SOURCE, ...],             # optional: else from the collar's azimuth, dip
@@ -56,7 +57,15 @@ from another. Columns named in ``ignore_columns`` (default: the sample id, which
 laboratory file spells its own way) are merged the same way but their differences are
 informational: counted apart, not conflicts. The report (``reports["conflicts"][table]``)
 counts the conflicts per column and lists the first; every difference is in the
-database's ``conflicts_<table>.csv``.
+database's ``conflicts_<table>.csv``. Two intervals of different sources are the same
+interval when their ``from`` is equal and their ``to`` differs by less than ``tolerance``.
+
+An interval that is still there twice (same hole, same from and to: an unmarked laboratory
+repeat) would overlap itself. ``duplicate_intervals`` says what becomes of it:
+``"keep_first"`` (default: the first row stays), ``"mean"`` (the numeric attributes become
+the mean of the rows, text is the first row's) or ``"error"`` (the import stops). The
+count is in ``reports["duplicates"][table]``, every row of every such interval in
+``duplicates_<table>.csv``.
 
 ``holes`` keeps only some holes, in every table (QC rows too): ``include`` and ``exclude``
 are lists of hole names or wildcard patterns (``*``, ``?``, ``[abc]``), compared without
@@ -121,6 +130,7 @@ __all__ = [
     "load_recipe",
     "make_recipe",
     "merge_sources",
+    "resolve_duplicate_intervals",
     "options_from_dict",
     "options_to_dict",
     "run_recipe",
@@ -147,7 +157,8 @@ _KEYS: dict[str, tuple[str, ...]] = {
     "interval": ("hole_id", "depth_from", "depth_to"),
 }
 _MAX_LISTED = 200
-_MERGE_KEYS = frozenset({"precedence", "tolerance", "ignore_columns"})
+_MERGE_KEYS = frozenset({"precedence", "tolerance", "ignore_columns", "duplicate_intervals"})
+DUPLICATE_RULES: tuple[str, ...] = ("keep_first", "mean", "error")
 _TUPLE_OPTIONS = ("missing_tokens", "text_columns", "numeric_columns")
 
 
@@ -316,8 +327,15 @@ def make_recipe(
             checked[name].append(cleaned)
     merge = {
         "precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"],
+        "duplicate_intervals": "keep_first",
         **{k: v for k, v in (merge or {}).items() if v is not None},
     }  # fmt: skip
+    merge["duplicate_intervals"] = str(merge["duplicate_intervals"]).replace("-", "_")
+    if merge["duplicate_intervals"] not in DUPLICATE_RULES:
+        raise ValueError(
+            f"merge duplicate_intervals must be one of {DUPLICATE_RULES}, "
+            f"got {merge['duplicate_intervals']!r}"
+        )
     unknown = sorted(set(merge) - _MERGE_KEYS)
     if unknown:
         raise ValueError(f"unknown merge key(s) {unknown}; known: {sorted(_MERGE_KEYS)}")
@@ -451,6 +469,18 @@ def merge_sources(
     for column in keys:
         if column != "hole_id":
             key_frame[column] = key_frame[column].round(6)
+    if "depth_to" in keys and tolerance > 0:
+        # the same interval with its end written a little differently (12.5 / 12.495)
+        ordered = key_frame.sort_values(list(keys), kind="stable")
+        ends = ordered["depth_to"].to_numpy(dtype=np.float64)
+        new = np.ones(len(ordered), dtype=bool)
+        new[1:] = (
+            (ordered["hole_id"].to_numpy()[1:] != ordered["hole_id"].to_numpy()[:-1])
+            | (ordered["depth_from"].to_numpy()[1:] != ordered["depth_from"].to_numpy()[:-1])
+            | ~(np.diff(ends) < tolerance)
+        )
+        first = np.maximum.accumulate(np.where(new, np.arange(len(ordered)), 0))
+        key_frame.loc[ordered.index, "depth_to"] = ends[first]
     groups = key_frame.groupby(list(keys), sort=False, dropna=True).indices
     table = table.copy()
     values = [c for c in table.columns if c not in keys]
@@ -500,6 +530,59 @@ def merge_sources(
     if drop:
         table = table.drop(index=table.index[drop]).reset_index(drop=True)
     return table, report
+
+
+def resolve_duplicate_intervals(
+    table: pd.DataFrame, rule: str = "keep_first", name: str = "interval"
+) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
+    """Intervals that are in a table more than once (same hole, from and to) made one,
+    by ``rule`` (see the module documentation). Returns ``(table, report, listing)``;
+    the listing holds every row of every such interval with ``kept`` (false for the rows
+    removed) and ``rule``."""
+    keys = ["hole_id", "depth_from", "depth_to"]
+    key_frame = table[keys].copy()
+    for column in keys[1:]:
+        key_frame[column] = key_frame[column].round(6)
+    complete = key_frame.notna().all(axis=1).to_numpy(dtype=bool)
+    repeated = key_frame.duplicated(keep=False).to_numpy(dtype=bool) & complete
+    later = key_frame.duplicated(keep="first").to_numpy(dtype=bool) & complete
+    report: dict[str, Any] = {
+        "rule": rule, "intervals": int((repeated & ~later).sum()),
+        "rows_removed": int(later.sum()),
+        "holes": int(table["hole_id"][repeated].nunique()), "examples": [],
+    }  # fmt: skip
+    if not repeated.any():
+        return table, report, table.iloc[0:0]
+    listing = table.loc[repeated].copy()
+    listing.insert(0, "kept", ~later[repeated])
+    listing.insert(1, "rule", rule)
+    listing = listing.sort_values(keys, kind="stable").reset_index(drop=True)
+    sizes = key_frame.loc[repeated].groupby(keys, sort=False).size()
+    report["examples"] = [
+        {"hole_id": str(k[0]), "depth_from": float(k[1]), "depth_to": float(k[2]), "rows": int(n)}
+        for k, n in list(sizes.items())[:10]
+    ]
+    if rule == "error":
+        shown = "; ".join(
+            f"{e['hole_id']} {e['depth_from']:g}-{e['depth_to']:g} x {e['rows']}"
+            for e in report["examples"][:5]
+        )
+        raise ValueError(
+            f"{name}: {report['intervals']} interval(s) are in the table more than once "
+            f"({shown}); merge them with duplicate_intervals 'keep_first' or 'mean'"
+        )
+    table = table.copy()
+    if rule == "mean":
+        numbers = [
+            c for c in table.columns
+            if c not in keys and pd.api.types.is_float_dtype(table[c])
+        ]  # fmt: skip
+        if numbers:
+            means = table.loc[repeated, numbers].groupby(
+                [key_frame.loc[repeated, k] for k in keys], sort=False
+            ).transform("mean")  # NaN only where every row lacks the value
+            table.loc[repeated, numbers] = means
+    return table.loc[~later].reset_index(drop=True), report, listing
 
 
 def _plain(value: Any) -> Any:
@@ -805,7 +888,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     listings: dict[str, pd.DataFrame] = {}
     reports: dict[str, Any] = {
         "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
-        "dropped_rows": {},
+        "dropped_rows": {}, "duplicates": {},
     }  # fmt: skip
     for name, sources in recipe["tables"].items():
         kind = _kind(name)
@@ -844,6 +927,18 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                          "count": merged[what],
                          **({"values": merged["by_column"]} if what == "conflicts" else {})}
                     )  # fmt: skip
+        if kind == "interval":
+            table, repeats, listed = resolve_duplicate_intervals(
+                table, recipe["merge"]["duplicate_intervals"], name
+            )
+            if repeats["intervals"]:
+                listings[f"duplicates_{name}"] = listed
+                reports["duplicates"][name] = {**repeats, "listing": f"duplicates_{name}.csv"}
+                metadata.notes.append(
+                    {"table": name, "column": "depth_from,depth_to",
+                     "kind": f"duplicate_intervals_{repeats['rule']}",
+                     "count": repeats["rows_removed"]}  # fmt: skip
+                )
         gone: dict[str, Any] = {}
         for part in prepared:
             for reason, count in part.info.get("dropped", {}).items():

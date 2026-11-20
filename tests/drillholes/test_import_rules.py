@@ -149,9 +149,13 @@ def test_qc_rows_are_set_aside_and_kept(tmp_path, tables, clean, depths):
     source["qc"] = {"mode": "off"}
     if depths == "columns":
         kept = run_recipe(recipe_for(paths, source))
+        # ... but for the repeats on the interval of their original: an interval that is
+        # there twice is made one (the first row stays), and that is reported
+        repeats = kept.metadata.reports["duplicates"]["assay"]
+        assert repeats["rows_removed"] == counts["letter_suffix"]
         assert len(kept.intervals["assay"]) == len(clean_db.intervals["assay"]) + sum(
             counts.values()
-        )
+        ) - counts["letter_suffix"]
         assert not kept.qc
 
 

@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { DroppedRows, HoleFilter, HoleFilterReport, HoleIdRule, MergeReport, SourceReport, SourceSpec } from './api'
+import type { DroppedRows, DuplicateReport, HoleFilter, HoleFilterReport, HoleIdRule, MergeReport, SourceReport, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -95,6 +95,13 @@ export function conflictsText(report: MergeReport): string {
   const by = counts(report.by_column)
   const apart = counts(report.informational)
   return `${by ? ` (${by})` : ''}${apart ? `; not counted (informational): ${apart}` : ''}${report.listing ? `; every difference is in ${report.listing}` : ''}`
+}
+
+/** "assay: 12 intervals in 3 holes were there more than once (keep first): 12 rows removed ..." */
+export function duplicatesText(table: string, report: DuplicateReport): string {
+  const first = report.examples[0]
+  const example = first ? `, e.g. ${first.hole_id} ${first.depth_from}–${first.depth_to}` : ''
+  return `${table}: ${report.intervals} interval${report.intervals > 1 ? 's' : ''} in ${report.holes} hole${report.holes > 1 ? 's' : ''} more than once (${report.rule.replace(/_/g, ' ')}): ${report.rows_removed} row${report.rows_removed > 1 ? 's' : ''} removed${example}; listed in ${report.listing}`
 }
 
 /** "gis.xlsx: dip convention positive_down, length unit ft" (what was decided for a file) */

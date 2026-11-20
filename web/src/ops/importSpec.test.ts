@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conflictsText, droppedText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
+import { conflictsText, droppedText, duplicatesText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -46,6 +46,11 @@ describe('import panel helpers', () => {
     expect(conflictsText(report)).toBe('')
     expect(conflictsText({ ...report, by_column: { au: 3, ag: 1 }, informational: { sample_id: 360 }, listing: 'conflicts_assay.csv' }))
       .toBe(' (au 3, ag 1); not counted (informational): sample_id 360; every difference is in conflicts_assay.csv')
+  })
+
+  it('says which intervals were there twice', () => {
+    const report = { rule: 'keep_first', intervals: 3, rows_removed: 3, holes: 2, listing: 'duplicates_assay.csv', examples: [{ hole_id: 'SYN-01', depth_from: 4, depth_to: 5, rows: 2 }] }
+    expect(duplicatesText('assay', report)).toBe('assay: 3 intervals in 2 holes more than once (keep first): 3 rows removed, e.g. SYN-01 4–5; listed in duplicates_assay.csv')
   })
 
   it('builds the hole filter', () => {

@@ -438,6 +438,10 @@ def _import(
             "coordinates": reports.get("coordinates"),
             "dropped_rows": reports.get("dropped_rows", {}),
             "hole_filter": reports.get("hole_filter"),
+            "duplicates": {
+                t: {**d, "examples": d["examples"][:5]}
+                for t, d in reports.get("duplicates", {}).items()
+            },
             "sources": reports.get("sources", {}),
             "units": reports.get("units", {}),
             "survey": reports.get("survey"),
@@ -459,7 +463,7 @@ def _import(
 _LONG = {
     "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
     "recipe", "conflicts", "coordinates", "sample_depth", "survey", "dropped_rows", "units",
-    "hole_filter", "sources",
+    "hole_filter", "sources", "duplicates",
 }  # fmt: skip
 
 
