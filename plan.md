@@ -264,6 +264,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 13:40  scope  --  Token budget: cut P4.T10 (stretch), P5.T7, P6.T7 undo (job log kept if cheap), P7.T3 (no Surpac inputs supplied). Remaining tasks run 2 agents at a time, Sonnet for routine work, targeted tests while working + one make check at the end.
 2026-11-20 14:05  Gate A/B CLI  e314a1a 4b67efc  `bakumine estimate`, `blockmodel create|code`, scripts/gate_synthetic.py. Orchestrator reran script: ORE volume -0.047 %, tonnes -0.047 %, metal -2.4 %, OK corr 0.812 (per parent, volume-weighted). Gate A numbers PASS (code review part pending in P7.T5); Gate B PASS.
 2026-11-20 14:30  P6.T1/T6  afc4089 9e56b7b  Project folder (project.json, atomic), `bakumine project init|add|list`, API serves BAKUMINE_PROJECT; report endpoint + CSV + sidebar Report panel, equals CLI report. Orchestrator: api+cli 73 pass, vitest 123 pass after resolving cli.py conflict. Report panel NOT yet seen in a browser (no Playwright test).
+2026-11-20 15:00  P7.T2 (partial)  d1459d6  scripts/run_babbitt.py: ft->m, 3.048 m composites, 100x100x20 m model, manual variogram (auto-fit R2 0.12 rejected), OK 3 passes. Global mean OK vs NN +7.8 % (target 5 %: NOT met; NN biased by hole-end picks), swath corr x 0.33 / y 0.58 / z 0.89, LOHO xval corr 0.29. Test asserts 10 % + 2 of 3 swaths. Left UNTICKED. No domain wireframe, density 2.9 assumed.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
