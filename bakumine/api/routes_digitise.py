@@ -120,6 +120,8 @@ class _Memory:
 
 
 _memory = _Memory()
+#: project writes are check-then-act (look up, then add or replace): one at a time
+_project_writes = threading.Lock()
 
 
 def _project(source: SceneSource):
@@ -162,17 +164,19 @@ def save_text(source: SceneSource, name: str, text: str) -> str | None:
             _memory.texts[(id(source), name)] = text
         return None
     object_id = _set_object_id(name)
-    try:
-        path = project.path_of(object_id)
-    except KeyError:
-        with tempfile.TemporaryDirectory() as folder:
-            file = Path(folder) / f"{name}.str"
-            file.write_text(text, encoding="utf-8", newline="\n")
-            project.add("string", file, name=name, object_id=object_id)
-        return object_id
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8", newline="\n")
-    tmp.replace(path)
+    with _project_writes:
+        project = type(project).open(project.folder)  # what other writers have added
+        try:
+            path = project.path_of(object_id)
+        except KeyError:
+            with tempfile.TemporaryDirectory() as folder:
+                file = Path(folder) / f"{name}.str"
+                file.write_text(text, encoding="utf-8", newline="\n")
+                project.add("string", file, name=name, object_id=object_id)
+            return object_id
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(text, encoding="utf-8", newline="\n")
+        tmp.replace(path)
     return object_id
 
 
@@ -187,11 +191,12 @@ def add_solid(source: SceneSource, name: str, mesh: Mesh) -> str:
     if project is not None:
         from bakumine.core.io.obj import write_obj
 
-        if any(o.id == object_id for o in project.list()):
-            if project.get(object_id).kind != "solid":
-                raise HTTPException(409, f"object {object_id!r} exists and is not a solid")
-            project.remove(object_id)
-        with tempfile.TemporaryDirectory() as folder:
+        with _project_writes, tempfile.TemporaryDirectory() as folder:
+            project = type(project).open(project.folder)  # what other writers have added
+            if any(o.id == object_id for o in project.list()):
+                if project.get(object_id).kind != "solid":
+                    raise HTTPException(409, f"object {object_id!r} exists and is not a solid")
+                project.remove(object_id)
             file = Path(folder) / f"{object_id}.obj"
             write_obj(file, mesh, decimals=None, comment="solid from digitised sections")
             project.add("solid", file, name=name, object_id=object_id)

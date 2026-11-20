@@ -215,6 +215,36 @@ class _FakeProject:
         return SimpleNamespace(kind="composite")
 
 
+# ---------------------------------------------------------------------- concurrency
+
+
+def test_concurrent_saves_of_a_new_string_set_and_solid(project):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, folder = project
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def square(z):
+        return [[0, 0, z], [10, 0, z], [10, 10, z], [0, 10, z]]
+
+    body = {"strings": [{"id": f"s{z}", "section": f"z{z}", "closed": True,
+                         "points": square(z)} for z in (0, 10, 20)]}  # fmt: skip
+    for trial in range(3):
+        with ThreadPoolExecutor(8) as pool:
+            codes = list(pool.map(lambda name: client.put(
+                "/api/v1/digitise/strings", params={"set": name}, json=body
+            ).status_code, [f"t{trial}"] * 8))  # fmt: skip
+        assert codes == [200] * 8
+    with ThreadPoolExecutor(6) as pool:
+        codes = list(pool.map(lambda _: client.post(
+            "/api/v1/digitise/solid", json={"set": "t0", "name": "S"}
+        ).status_code, range(6)))  # fmt: skip
+    assert codes == [200] * 6
+    project_ = Project.open(folder)
+    assert [o.id for o in project_.list("solid")] == ["s"]
+    assert len(project_.list("string")) == 3
+
+
 # ---------------------------------------------------------------------- request guard
 
 
