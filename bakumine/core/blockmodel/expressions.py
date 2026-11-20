@@ -414,10 +414,20 @@ class _Evaluator:
         if name == "round":
             digits = 0
             if len(values) == 2:
-                if np.ndim(values[1]) != 0 or values[1] != np.rint(values[1]):
+                d = values[1]
+                if np.ndim(d) != 0 or not np.isfinite(d) or d != np.rint(d):
                     raise ExpressionError("round(a, digits): digits must be a whole constant")
-                digits = int(values[1])
-            return np.round(values[0], digits)
+                # beyond +-400 the result no longer changes; keeps numpy's int64 safe
+                digits = int(np.clip(d, -400, 400))
+            x = np.asarray(values[0], dtype=np.float64)
+            with np.errstate(over="ignore", invalid="ignore"):
+                out = np.round(x, digits)
+            # 10**digits (or x * 10**digits) overflowed: x already has no digits to
+            # drop (digits > 0) or rounds to zero (digits < 0)
+            lost = ~np.isfinite(out) & np.isfinite(x)
+            if lost.any():
+                out = np.where(lost, x if digits > 0 else 0.0, out)
+            return out if np.ndim(values[0]) else out[()]
         out = _UNARY_MATH[name](values[0])
         self.count_invalid(out, values[0])
         return out

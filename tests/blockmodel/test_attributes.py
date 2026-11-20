@@ -546,3 +546,38 @@ def test_expression_engine_is_usable_without_a_model():
     seen = []
     parse("a + a * a").evaluate(lambda name: seen.append(name) or np.ones(2))
     assert seen == ["a"]  # each name looked up once
+
+
+# ---- P7.T5 regression: round() with extreme digits
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("round(au, 400)", [0.2, 1.0, np.nan, 3.0, 1e10]),
+        ("round(au, 300)", [0.2, 1.0, np.nan, 3.0, 1e10]),
+        ("round(au, -400)", [0.0, 0.0, np.nan, 0.0, 0.0]),
+        ("round(au, 2)", [0.2, 1.0, np.nan, 3.0, 1e10]),
+    ],
+)
+def test_round_extreme_digits(source, expected):
+    au = np.array([0.2, 1.0, np.nan, 3.0, 1e10])
+    out = parse(source).evaluate({"au": au})
+    np.testing.assert_array_equal(out.values, expected)
+    assert out.n_invalid == 0
+
+
+def test_round_extreme_scalar():
+    assert parse("round(1e300, -400)").evaluate({}).values == 0.0
+
+
+@pytest.mark.parametrize(
+    ("digits", "expected"), [("1e300", 1.5), ("-10**30", 0.0), ("10**400", None), ("nan", None)]
+)
+def test_round_huge_digits(digits, expected):
+    """Huge whole digits behave like +-400; inf / NaN digits are an ExpressionError
+    (previously OverflowError escaped the CLI and API error handlers)."""
+    expression = parse(f"round(au, {digits})")
+    if expected is None:
+        with pytest.raises(ExpressionError):
+            expression.evaluate({"au": np.array([1.5])})
+    else:
+        assert expression.evaluate({"au": np.array([1.5])}).values[0] == expected
