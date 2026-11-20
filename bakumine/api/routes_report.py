@@ -26,13 +26,17 @@ router = APIRouter(prefix="/api/v1", tags=["report"])
 Source = Annotated[SceneSource, Depends(get_scene_source)]
 
 
+#: each cut-off is a pass over the model (20 000 took 100 s on 400k blocks): keep it bounded
+MAX_CUTOFFS = 200
+
+
 class ReportRequest(BaseModel):
     where: str | None = Field(None, description="constraint JSON or an attribute expression")
-    group_by: list[str] = []
-    cutoffs: list[float] | None = None
+    group_by: list[str] = Field([], max_length=8)
+    cutoffs: list[float] | None = Field(None, max_length=MAX_CUTOFFS)
     cutoff_attribute: str | None = None
     #: attribute names, each optionally ``name:unit`` (g/t, ppm, %)
-    grade_attributes: list[str] = []
+    grade_attributes: list[str] = Field([], max_length=64)
     #: density attribute name or a constant in t/m3
     density: str | float | None = None
     partial: str | None = None

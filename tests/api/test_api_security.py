@@ -148,6 +148,73 @@ def test_malformed_requests_are_client_errors(project):
     assert r.status_code == 200, r.text
 
 
+# ---------------------------------------------------------------------- resource limits
+
+
+def test_requests_too_large_to_run_are_refused(project, monkeypatch):
+    from bakumine.api.routes_report import MAX_CUTOFFS
+
+    client, folder = project
+    model = _model(client)
+    r = client.post(
+        "/api/v1/ops/models",
+        json={"origin": [0, 0, 0], "size": [1, 1, 1], "shape": [1000, 1000, 101]},
+    )
+    assert r.status_code == 400 and "at most" in r.json()["detail"]
+    r = client.post(
+        f"/api/v1/scene/objects/{model}/report",
+        json={"cutoffs": [0.1 * i for i in range(MAX_CUTOFFS + 1)], "cutoff_attribute": "x"},
+    )
+    assert r.status_code == 422
+    plan = {"attribute": "au", "method": "idw"}
+    for extra in ({"discretisation": [100, 100, 100]}, {"passes": [{"max_samples": 10**8}]}):
+        r = client.post("/api/v1/ops/estimate",
+                        json={"model": model, "composites": "c", "plan": plan | extra})  # fmt: skip
+        assert r.status_code == 400 and "at most" in r.json()["detail"], r.text
+    # unknown composites: refused before a job starts
+    r = client.post("/api/v1/ops/estimate", json={"model": model, "composites": "c", "plan": plan})
+    assert r.status_code == 400 and "no composites" in r.json()["detail"]
+
+
+def test_jobs_are_bounded(project, monkeypatch):
+    from bakumine.api import operations
+
+    client, folder = project
+    monkeypatch.setattr(operations, "_jobs", {})
+    monkeypatch.setattr(operations, "MAX_FINISHED_JOBS", 3)
+    for _ in range(5):
+        done = operations.Job("estimate")
+        done.status = "done"
+        operations._jobs[done.id] = done
+    running = [operations.Job("estimate") for _ in range(operations.MAX_RUNNING_JOBS)]
+    for job in running:
+        job.status = "running"
+        operations._jobs[job.id] = job
+    # one more is refused while MAX_RUNNING_JOBS run (409); old finished jobs are dropped
+    monkeypatch.setattr(operations, "build_plan", lambda spec: None)
+    monkeypatch.setattr(operations, "_model_path", lambda folder, model: None)
+    monkeypatch.setattr(operations.Project, "open", lambda folder: _FakeProject())
+    with pytest.raises(operations.BusyError):
+        operations.start_estimation(_Source(folder), "m", "c", {})
+    running[0].status = "done"
+    monkeypatch.setattr(operations, "run_estimation", lambda *a, **k: {"cancelled": False})
+    job = operations.start_estimation(_Source(folder), "m", "c", {})
+    finished = [j for j in operations._jobs.values() if j.status not in ("queued", "running")]
+    assert len(finished) <= 3 and job.id in operations._jobs
+
+
+class _Source:
+    def __init__(self, folder):
+        self.folder = folder
+
+
+class _FakeProject:
+    def get(self, object_id):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(kind="composite")
+
+
 # ---------------------------------------------------------------------- request guard
 
 

@@ -26,6 +26,12 @@ UPLOADS = "uploads"
 INPUTS = "inputs"
 MAX_ISSUES = 500
 PREVIEW_ROWS = 8
+#: limits on what one request may ask for (memory and time of a local server)
+MAX_MODEL_BLOCKS = 100_000_000  # parent blocks of a new model (about 1.2 GB)
+MAX_DISCRETISATION = 1000  # points per block (nx * ny * nz)
+MAX_SAMPLES = 1000  # samples per estimate
+MAX_RUNNING_JOBS = 4
+MAX_FINISHED_JOBS = 100  # older finished jobs are forgotten
 
 
 class OperationError(ValueError):
@@ -576,6 +582,10 @@ def _create(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict
             origin = _triple(request.get("origin"), "origin")
             shape = tuple(int(v) for v in _triple(request.get("shape"), "shape"))
             definition = BlockModelDefinition(origin, size, shape, **options)
+        if definition.n_parents > MAX_MODEL_BLOCKS:
+            raise OperationError(
+                f"{definition.n_parents:,} blocks: at most {MAX_MODEL_BLOCKS:,} per model"
+            )
         model = BlockModel(definition)
         with tempfile.TemporaryDirectory() as tmp:
             header = save_model(model, Path(tmp) / "model")
@@ -729,9 +739,13 @@ def build_plan(spec: dict[str, Any]) -> Any:
         discretisation = (
             tuple(int(x) for x in spec["discretisation"]) if spec.get("discretisation") else None
         )
+        if discretisation is not None and np.prod(discretisation) > MAX_DISCRETISATION:
+            raise OperationError(f"discretisation: at most {MAX_DISCRETISATION} points per block")
         passes = []
         for i, p in enumerate(spec.get("passes") or [{}]):
             per_hole = p.get("max_per_hole")
+            if int(p.get("max_samples", 16)) > MAX_SAMPLES:
+                raise OperationError(f"max_samples: at most {MAX_SAMPLES}")
             passes.append(
                 EstimationPass(
                     method,
@@ -846,9 +860,21 @@ def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[
     """Validate the request, then run the estimation on a worker thread."""
     plan = build_plan(spec)
     _model_path(source.folder, model_id)
-    _claim(model_id)
+    project = Project.open(source.folder)
+    try:
+        if project.get(composites_id).kind != "composite":
+            raise KeyError(composites_id)
+    except KeyError:
+        raise OperationError(f"no composites {composites_id!r}") from None
     job = Job("estimate")
     with _jobs_lock:
+        running = sum(j.status in ("queued", "running") for j in _jobs.values())
+        if running >= MAX_RUNNING_JOBS:
+            raise BusyError(f"{running} jobs are running; wait for one to finish")
+        _claim(model_id)
+        finished = [k for k, j in _jobs.items() if j.status not in ("queued", "running")]
+        for key in finished[: max(0, len(finished) - MAX_FINISHED_JOBS + 1)]:
+            del _jobs[key]
         _jobs[job.id] = job
     folder = source.folder
     rec = joblog.Recorder(
