@@ -65,8 +65,8 @@ Without a project, the viewer opens the **synthetic demo deposit** (`data/synthe
 ## Walkthrough A: the synthetic project in the browser
 
 The sidebar panels (Import, Composite, Block model, Estimation, Report) work on a **project
-folder**, so first make one with the ore solid and the topography in it (there is no
-mesh-import dialog yet):
+folder**, so first make one with the ore solid and the topography in it (the *Surfaces and
+solids* panel can also import both files from the browser, see below):
 
 ```sh
 uv run bakumine project init ~/bakumine-demo --name "Synthetic walkthrough"
@@ -185,6 +185,32 @@ BAKUMINE_PROJECT=~/bakumine-cli make dev
 
 Without `BAKUMINE_PROJECT` the server shows the read-only demo, and the workflow panels
 report that no project is served.
+
+## Surfaces and solids from the data
+
+When there is no topography or wireframe yet, both can be made from the drillholes, from
+the command line or in the sidebar (*Surfaces and solids*, *Implicit solid*):
+
+```sh
+# topography: collars (+ point tables, strings, breaklines), extended 200 m beyond the data
+uv run bakumine surface from-points --database DB --points survey.csv --breaklines crest.str \
+    --extend-padding 200 --project PATH --name Topography
+# an existing surface or solid file (DXF, OBJ, PLY, Surpac text .dtm with its .str)
+uv run bakumine surface import pit.dxf --kind dtm --project PATH
+# a solid of the intervals logged ORE; the body dips 70 degrees towards 090
+uv run bakumine solid implicit DB --column rock --code ORE --dip 70 --dip-azimuth 90 \
+    --ratios 4:3:1 --max-extrapolation 60 --topography PATH/dtm/topography.obj --project PATH
+```
+
+`--out FILE` and `--geometry-dir DIR` write the mesh instead of (or as well as) adding it to
+a project. The extension adds points on a rectangle (the box of the data plus a padding,
+`--extend-rectangle`, or `--extend-model`) at the elevation of the nearest data point, or
+at `--extend-z`. An implicit solid needs the orientation of the body: `--dip`,
+`--dip-azimuth`, optional `--pitch` and `--ratios` (along strike : down dip : across), or
+`--angles bearing,plunge,dip`. `--anisotropy auto` estimates the plane from one point per
+intercept and prints what it used; check it, because few or long intercepts do not fix a
+plane. The Estimation panel takes the same dip / dip azimuth / pitch input for the search
+ellipsoid, and up to three variogram structures each with its own ranges and orientation.
 
 ## Real-data example
 

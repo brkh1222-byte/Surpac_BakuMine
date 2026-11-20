@@ -700,13 +700,37 @@ def _code(source: Any, model_id: str, request: dict[str, Any], rec: joblog.Recor
 # ------------------------------------------------------------------ estimation
 
 
+#: nested variogram structures of one model (besides the nugget)
+MAX_STRUCTURES = 3
+
+
+def _orientation(item: dict[str, Any], default: Any, what: str) -> tuple[float, ...]:
+    """Angles of ``item``: ``angles`` [bearing, plunge, dip], or ``plane`` {dip, dip_azimuth,
+    pitch} (see :mod:`bakumine.core.estimation.orientation`); else ``default``."""
+    from bakumine.core.estimation.orientation import angles_from_plane
+
+    plane = item.get("plane")
+    if plane:
+        if item.get("angles"):
+            raise OperationError(f"{what}: give angles or a plane, not both")
+        try:
+            return angles_from_plane(
+                float(plane["dip"]), float(plane["dip_azimuth"]), float(plane.get("pitch") or 0.0)
+            )
+        except KeyError as exc:
+            raise OperationError(f"{what} plane needs {exc.args[0]}") from None
+    return _triple(item.get("angles") or default, f"{what} angles")
+
+
 def build_plan(spec: dict[str, Any]) -> Any:
     """An :class:`EstimationPlan` from the dialog's request.
 
     ``spec``: attribute, value_column, method (nn / idw / ok), power, ellipsoid {radii
-    [major, semi, minor], angles [bearing, plunge, dip]}, variogram {nugget, structures
-    [{type, sill, ranges?, angles?}]}, domain {name, block_constraint, sample_filter},
-    passes [{name, radius_factor, min_samples, max_samples, max_per_hole}], discretisation.
+    [major, semi, minor], angles [bearing, plunge, dip] or plane {dip, dip_azimuth, pitch?}},
+    variogram {nugget, structures [{type, sill, ranges?, angles? or plane?}]} (up to three
+    structures; ranges and orientation default to the ellipsoid's), domain {name,
+    block_constraint, sample_filter}, passes [{name, radius_factor, min_samples,
+    max_samples, max_per_hole}], discretisation.
     """
     from bakumine.core.estimation.block_estimation import (
         EstimationDomain,
@@ -721,15 +745,17 @@ def build_plan(spec: dict[str, Any]) -> Any:
         method = str(spec.get("method", "ok")).lower()
         e = spec.get("ellipsoid") or {}
         radii = _triple(e.get("radii", (100, 100, 100)), "ellipsoid radii")
-        angles = _triple(e.get("angles", (0, 0, 0)), "ellipsoid angles")
+        angles = _orientation(e, (0, 0, 0), "ellipsoid")
         ellipsoid = Ellipsoid.from_radii(radii, angles)  # type: ignore[arg-type]
         model = None
         if method == "ok":
             v = spec.get("variogram") or {}
             structures = []
+            if len(v.get("structures") or []) > MAX_STRUCTURES:
+                raise OperationError(f"at most {MAX_STRUCTURES} variogram structures")
             for s in v.get("structures") or []:
                 s_radii = _triple(s.get("ranges") or radii, "structure ranges")
-                s_angles = _triple(s.get("angles") or angles, "structure angles")
+                s_angles = _orientation(s, angles, "structure")
                 structures.append(
                     Structure(s.get("type", "spherical"), float(s["sill"]), s_radii, s_angles)  # type: ignore[arg-type]
                 )

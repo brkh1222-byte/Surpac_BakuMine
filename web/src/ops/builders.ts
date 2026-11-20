@@ -1,4 +1,5 @@
 /** Request bodies of the dialogs, built from form state (pure, unit-tested). */
+import { parsePlane } from './orientation'
 
 export function nums(text: string): number[] | null {
   const out: number[] = []
@@ -107,16 +108,44 @@ export interface PassForm {
   maxPerHole: string
 }
 
-export interface StructureForm {
-  type: string
-  sill: string
+/** How an orientation is entered: rotation angles, or the dip / dip azimuth / pitch of a plane. */
+export interface OrientationForm {
+  /** 'angles' (bearing, plunge, dip) or 'plane'; a structure may also be 'search' (same as the search ellipsoid). */
+  orientation?: 'search' | 'angles' | 'plane'
+  angles?: string
+  dip?: string
+  dipAzimuth?: string
+  pitch?: string
 }
 
-export interface EstimateForm {
+export interface StructureForm extends OrientationForm {
+  type: string
+  sill: string
+  /** Major, semi-major, minor range; blank = the radii of the search ellipsoid. */
+  ranges?: string
+}
+
+export const MAX_STRUCTURES = 3
+export const STRUCTURE_TYPES = ['spherical', 'exponential', 'gaussian']
+
+/** `{angles}` or `{plane}` of an orientation form, `{}` for 'search'; a string is an error. */
+export function orientationSpec(f: OrientationForm, what: string): Record<string, unknown> | string {
+  if (f.orientation === 'search') return {}
+  if (f.orientation === 'plane') {
+    const plane = parsePlane(f.dip ?? '', f.dipAzimuth ?? '', f.pitch ?? '')
+    return typeof plane === 'string' ? `${what}: ${plane}` : { plane }
+  }
+  const angles = nums(f.angles ?? '')
+  if (!angles || angles.length !== 3) return `${what}: three numbers (bearing, plunge, dip)`
+  return { angles }
+}
+
+export interface EstimateForm extends OrientationForm {
   attribute: string
   method: 'nn' | 'idw' | 'ok'
   power: string
   radii: string
+  /** Search ellipsoid angles (bearing, plunge, dip); used unless `orientation` is 'plane'. */
   angles: string
   nugget: string
   structures: StructureForm[]
@@ -130,20 +159,35 @@ export interface EstimateForm {
 export function buildEstimateSpec(f: EstimateForm): Record<string, unknown> | string {
   if (!f.attribute) return 'Pick the grade attribute'
   const radii = nums(f.radii)
-  const angles = nums(f.angles)
   if (!radii || radii.length !== 3 || radii.some((r) => r <= 0)) return 'Radii: three positive numbers (major, semi-major, minor)'
-  if (!angles || angles.length !== 3) return 'Angles: three numbers (bearing, plunge, dip)'
+  const plane = f.orientation === 'plane'
+  const orientation = orientationSpec({ ...f, orientation: plane ? 'plane' : 'angles' }, plane ? 'Search ellipsoid' : 'Angles')
+  if (typeof orientation === 'string') return orientation
   const spec: Record<string, unknown> = {
     attribute: f.attribute,
     method: f.method,
-    ellipsoid: { radii, angles },
+    ellipsoid: { radii, ...orientation },
   }
   if (f.method === 'idw') spec.power = Number(f.power) || 2
   if (f.method === 'ok') {
-    const structures = f.structures.filter((s) => s.sill.trim() !== '')
-    if (structures.length === 0) return 'Kriging needs at least one variogram structure with a sill'
-    if (structures.some((s) => !Number.isFinite(Number(s.sill)) || Number(s.sill) < 0)) return 'Sill must be a number'
-    spec.variogram = { nugget: Number(f.nugget) || 0, structures: structures.map((s) => ({ type: s.type, sill: Number(s.sill) })) }
+    const used = f.structures.map((s, i) => ({ s, label: `Structure ${i + 1}` })).filter(({ s }) => s.sill.trim() !== '')
+    if (used.length === 0) return 'Kriging needs at least one variogram structure with a sill'
+    if (used.length > MAX_STRUCTURES) return `At most ${MAX_STRUCTURES} variogram structures`
+    const structures: Record<string, unknown>[] = []
+    for (const { s, label } of used) {
+      if (!Number.isFinite(Number(s.sill)) || Number(s.sill) < 0) return 'Sill must be a number'
+      const out: Record<string, unknown> = { type: s.type, sill: Number(s.sill) }
+      if ((s.ranges ?? '').trim()) {
+        const ranges = nums(s.ranges ?? '')
+        if (!ranges || ranges.length !== 3 || ranges.some((r) => r <= 0)) return `${label}: ranges are three positive numbers (major, semi-major, minor)`
+        out.ranges = ranges
+      }
+      // a structure follows the search ellipsoid unless it is given its own orientation
+      const own = orientationSpec({ ...s, orientation: s.orientation ?? 'search' }, label)
+      if (typeof own === 'string') return own
+      structures.push({ ...out, ...own })
+    }
+    spec.variogram = { nugget: Number(f.nugget) || 0, structures }
   }
   const domain: Record<string, unknown> = { name: f.domainName.trim() || 'all' }
   if (f.blockWhere.trim()) domain.block_constraint = { type: 'attribute', expression: f.blockWhere.trim() }

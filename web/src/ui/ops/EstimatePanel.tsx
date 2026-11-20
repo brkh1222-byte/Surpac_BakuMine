@@ -3,22 +3,33 @@
  * sample filter, search ellipsoid, variogram and passes. The run is a background job
  * (`bakumine.core.estimation` with its progress and cancel hooks): the panel polls progress and
  * can cancel; a cancelled run leaves the model unchanged.
+ *
+ * The variogram is a nugget and up to three nested structures, each with its own type, sill,
+ * ranges and orientation; ranges and orientation left alone follow the search ellipsoid.
+ * Orientations (search ellipsoid and structures) are entered as bearing / plunge / dip or as
+ * the dip / dip azimuth / pitch of a plane (`ops/orientation.ts`).
  */
 import { useEffect, useRef, useState } from 'react'
 import { ofKind, opsApi, useOps, type JobState } from '../../ops/api'
-import { buildEstimateSpec, type EstimateForm, type PassForm } from '../../ops/builders'
+import { MAX_STRUCTURES, STRUCTURE_TYPES, buildEstimateSpec, type EstimateForm, type PassForm, type StructureForm } from '../../ops/builders'
+import { PlaneHint } from './ImplicitSolidPanel'
 import { Error, Panel, Select, Text, message, opts } from './common'
 
 const pass = (name: string, factor: string, min: string): PassForm => ({ name, radiusFactor: factor, minSamples: min, maxSamples: '16', maxPerHole: '' })
+const structure = (sill: string): StructureForm => ({ type: 'spherical', sill, ranges: '', orientation: 'search', angles: '', dip: '', dipAzimuth: '', pitch: '' })
 
 const INITIAL: EstimateForm = {
   attribute: '',
   method: 'ok',
   power: '2',
   radii: '100, 100, 100',
+  orientation: 'angles',
   angles: '0, 0, 0',
+  dip: '',
+  dipAzimuth: '',
+  pitch: '',
   nugget: '0',
-  structures: [{ type: 'spherical', sill: '1' }, { type: 'spherical', sill: '' }],
+  structures: [structure('1'), structure('')],
   domainName: '',
   blockWhere: '',
   sampleColumn: '',
@@ -42,6 +53,7 @@ export function EstimatePanel() {
   // composited attributes are the columns that have a `<name>_coverage` partner
   const grades = comp?.columns?.filter((c) => comp.columns?.includes(`${c}_coverage`)) ?? []
   const patch = (p: Partial<EstimateForm>) => setForm((f) => ({ ...f, ...p }))
+  const patchStructure = (i: number, p: Partial<StructureForm>) => patch({ structures: form.structures.map((x, j) => (j === i ? { ...x, ...p } : x)) })
   const patchPass = (i: number, p: Partial<PassForm>) => patch({ passes: form.passes.map((x, j) => (j === i ? { ...x, ...p } : x)) })
   const running = job?.status === 'queued' || job?.status === 'running'
 
@@ -104,19 +116,42 @@ export function EstimatePanel() {
 
       <h4 className="ops-heading">Search ellipsoid</h4>
       <Text label="Radii (m)" id="estimate-radii" value={form.radii} onChange={(v) => patch({ radii: v })} placeholder="major, semi-major, minor" />
-      <Text label="Angles (deg)" id="estimate-angles" value={form.angles} onChange={(v) => patch({ angles: v })} placeholder="bearing, plunge, dip" />
+      <Select label="Orientation" id="estimate-orientation" value={form.orientation ?? 'angles'} onChange={(v) => patch({ orientation: v as 'angles' | 'plane' })} options={[{ value: 'angles', label: 'bearing / plunge / dip' }, { value: 'plane', label: 'dip / dip azimuth / pitch' }]} />
+      {form.orientation === 'plane' ? (
+        <>
+          <Text label="Dip" id="estimate-dip" value={form.dip ?? ''} onChange={(v) => patch({ dip: v })} placeholder="0 to 90, from horizontal" />
+          <Text label="Dip azimuth" id="estimate-dip-azimuth" value={form.dipAzimuth ?? ''} onChange={(v) => patch({ dipAzimuth: v })} placeholder="direction the plane dips towards" />
+          <Text label="Pitch" id="estimate-pitch" value={form.pitch ?? ''} onChange={(v) => patch({ pitch: v })} placeholder="0 = major axis along strike" />
+          <PlaneHint dip={form.dip ?? ''} dipAzimuth={form.dipAzimuth ?? ''} pitch={form.pitch ?? ''} id="estimate-plane-hint" />
+        </>
+      ) : (
+        <Text label="Angles (deg)" id="estimate-angles" value={form.angles} onChange={(v) => patch({ angles: v })} placeholder="bearing, plunge, dip" />
+      )}
 
       {form.method === 'ok' && (
         <>
           <h4 className="ops-heading">Variogram</h4>
           <Text label="Nugget" id="estimate-nugget" value={form.nugget} onChange={(v) => patch({ nugget: v })} />
           {form.structures.map((s, i) => (
-            <div key={i} className="ops-block">
-              <Select label={`Structure ${i + 1}`} id={`estimate-structure-${i}-type`} value={s.type} onChange={(v) => patch({ structures: form.structures.map((x, j) => (j === i ? { ...x, type: v } : x)) })} options={opts(['spherical', 'exponential'])} />
-              <Text label="Sill" id={`estimate-structure-${i}-sill`} value={s.sill} onChange={(v) => patch({ structures: form.structures.map((x, j) => (j === i ? { ...x, sill: v } : x)) })} placeholder={i === 0 ? '' : '(blank = unused)'} />
+            <div key={i} className="ops-block" data-testid={`estimate-structure-${i}`}>
+              <Select label={`Structure ${i + 1}`} id={`estimate-structure-${i}-type`} value={s.type} onChange={(v) => patchStructure(i, { type: v })} options={opts(STRUCTURE_TYPES)} />
+              <Text label="Sill" id={`estimate-structure-${i}-sill`} value={s.sill} onChange={(v) => patchStructure(i, { sill: v })} placeholder={i === 0 ? '' : '(blank = unused)'} />
+              <Text label="Ranges (m)" id={`estimate-structure-${i}-ranges`} value={s.ranges ?? ''} onChange={(v) => patchStructure(i, { ranges: v })} placeholder="major, semi-major, minor (blank = search radii)" />
+              <Select label="Orientation" id={`estimate-structure-${i}-orientation`} value={s.orientation ?? 'search'} onChange={(v) => patchStructure(i, { orientation: v as StructureForm['orientation'] })} options={[{ value: 'search', label: 'same as the search ellipsoid' }, { value: 'angles', label: 'bearing / plunge / dip' }, { value: 'plane', label: 'dip / dip azimuth / pitch' }]} />
+              {s.orientation === 'angles' && <Text label="Angles (deg)" id={`estimate-structure-${i}-angles`} value={s.angles ?? ''} onChange={(v) => patchStructure(i, { angles: v })} placeholder="bearing, plunge, dip" />}
+              {s.orientation === 'plane' && (
+                <>
+                  <Text label="Dip" id={`estimate-structure-${i}-dip`} value={s.dip ?? ''} onChange={(v) => patchStructure(i, { dip: v })} />
+                  <Text label="Dip azimuth" id={`estimate-structure-${i}-dip-azimuth`} value={s.dipAzimuth ?? ''} onChange={(v) => patchStructure(i, { dipAzimuth: v })} />
+                  <Text label="Pitch" id={`estimate-structure-${i}-pitch`} value={s.pitch ?? ''} onChange={(v) => patchStructure(i, { pitch: v })} placeholder="0 = major axis along strike" />
+                  <PlaneHint dip={s.dip ?? ''} dipAzimuth={s.dipAzimuth ?? ''} pitch={s.pitch ?? ''} id={`estimate-structure-${i}-plane-hint`} />
+                </>
+              )}
+              {form.structures.length > 1 && <div className="control"><button type="button" data-testid={`estimate-structure-${i}-remove`} onClick={() => patch({ structures: form.structures.filter((_, j) => j !== i) })}>Remove structure</button></div>}
             </div>
           ))}
-          <p className="sidebar-note">Ranges and orientation follow the ellipsoid.</p>
+          {form.structures.length < MAX_STRUCTURES && <div className="control"><button type="button" data-testid="estimate-add-structure" onClick={() => patch({ structures: [...form.structures, structure('')] })}>Add structure</button></div>}
+          <p className="sidebar-note">Each structure has its own ranges and orientation; left blank they follow the search ellipsoid. Exponential and gaussian ranges are practical ranges (95 % of the sill).</p>
         </>
       )}
 
