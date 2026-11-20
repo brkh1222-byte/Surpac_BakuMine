@@ -5,10 +5,13 @@
 import { Vector3, type BufferGeometry, type Object3D, type Scene, type WebGLRenderer } from 'three'
 import { outlineCount, outlinePoints } from '../section/outline'
 import { outlineClient, type OutlineStats } from '../section/outlineClient'
+import type { SnapTarget } from '../digitise/snap'
 import { useBlocks } from '../state/blocks'
+import { useDigitise } from '../state/digitise'
 import { useSection } from '../state/section'
 import { useViewer } from '../state/store'
 import { SECTION_PLANES, sectionClipActive, updateSectionPlanes } from './clipping'
+import { currentSnapTargets } from './DigitiseLayer'
 import { buildMockData } from './mockData'
 import { getOrigin, worldToRender, type Vec3 } from './origin'
 import { view, type BlockLayerDebug, type CameraState, type StandardView } from './view'
@@ -108,6 +111,9 @@ export interface DebugHandle {
   /** WebGL renderer string and the draw calls / triangles of the last frame. */
   renderInfo: () => { renderer: string; calls: number; triangles: number; lines: number; points: number }
   blockStore: typeof useBlocks
+  /** Section digitising state, and the snap targets of the current section and slab. */
+  digitise: typeof useDigitise
+  snapTargets: () => SnapTarget[]
   /** What each blocks layer draws now (count, sizes, timings), by object id. */
   blocks: () => Record<string, Omit<BlockLayerDebug, 'block'>>
   /** Instance `k` of a blocks layer: row, world centroid, size, level. */
@@ -375,6 +381,11 @@ export function installDebugHandle(gl: WebGLRenderer, scene: Scene): () => void 
       return { renderer, calls, triangles, lines, points }
     },
     blockStore: useBlocks,
+    digitise: useDigitise,
+    snapTargets: () => {
+      const s = useSection.getState()
+      return s.enabled ? currentSnapTargets(s.plane, s.front, s.back) : []
+    },
     blocks: () =>
       Object.fromEntries(
         [...view.blocks].map(([id, b]) => {

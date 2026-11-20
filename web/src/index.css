@@ -1256,3 +1256,143 @@ input {
 
 .ops-heading { font-size: 12px; margin: 8px 0 2px; opacity: 0.8; }
 .ops-block { border-left: 2px solid var(--border, #8884); padding-left: 6px; margin: 4px 0; display: flex; flex-direction: column; gap: 4px; }
+/* ---- Digitise panel ---------------------------------------------------------------- */
+
+.digitise-panel {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.digitise-panel header .section-row .group button {
+  flex: none;
+}
+
+.digitise-help,
+.digitise-where {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.digitise-where {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.digitise-tools button {
+  flex: 1;
+}
+
+.digitise-snap {
+  font-size: 11px;
+}
+
+.digitise-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.digitise-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+.digitise-list li.is-active {
+  background: var(--panel-hover);
+}
+
+.digitise-list li.is-elsewhere {
+  opacity: 0.6;
+}
+
+.digitise-list .digitise-name {
+  font-weight: 600;
+}
+
+.digitise-list .digitise-meta {
+  flex: 1;
+  color: var(--text-muted);
+}
+
+.digitise-list button {
+  height: 18px;
+  padding: 0 5px;
+}
+
+.digitise-empty {
+  color: var(--text-muted);
+}
+
+.digitise-swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 1px;
+  background: #ffd166;
+}
+
+.digitise-swatch[data-closed='true'] {
+  background: #4ade80;
+}
+
+.digitise-saved {
+  border-left: 2px solid var(--line);
+  padding-left: 4px;
+}
+
+.digitise-link {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.digitise-build {
+  align-items: flex-end;
+}
+
+.digitise-build .section-field {
+  flex: 1;
+}
+
+.digitise-result {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.digitise-result dt {
+  color: var(--text-muted);
+}
+
+.digitise-result dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.digitise-result .is-ok {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.digitise-result .is-bad {
+  color: #f87171;
+  font-weight: 600;
+}
+
+.digitise-message {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.digitise-message.is-error {
+  color: #f87171;
+}

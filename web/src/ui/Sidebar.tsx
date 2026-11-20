@@ -4,6 +4,7 @@ import { CompositePanel } from './ops/CompositePanel'
 import { EstimatePanel } from './ops/EstimatePanel'
 import { ImportPanel } from './ops/ImportPanel'
 import { ModelPanel } from './ops/ModelPanel'
+import { DigitisePanel } from './DigitisePanel'
 import { ObjectControls } from './ObjectControls'
 import { ReportPanel } from './ReportPanel'
 import { SectionPanel } from './SectionPanel'
@@ -119,6 +120,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
         </>
       )}
       <SectionPanel />
+      <DigitisePanel api={mode === 'api'} />
       <ReportPanel />
     </aside>
   )

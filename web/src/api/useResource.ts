@@ -51,6 +51,19 @@ export function retryFailed(): void {
   bump()
 }
 
+/** Forgets the given resources (their data changed on the server); mounted hooks reload them. */
+export function reloadResources(...keys: string[]): void {
+  for (const key of keys) cache.delete(key)
+  bump()
+}
+
+/** Puts fresh data under `key` (fetched by the caller): no loading gap for mounted hooks. */
+export function replaceResource<T>(key: string, data: T): void {
+  const settled: Resource<T> = { status: 'ready', data, error: null }
+  cache.set(key, { promise: Promise.resolve(), settled })
+  bump()
+}
+
 /** Forgets everything (project closed / tests). */
 export function clearResources(): void {
   cache.clear()

@@ -353,7 +353,11 @@ export function DrillholesLayer({ object, set, colorBy }: DrillholesLayerProps) 
   // "Section through this hole" reads the trace from here.
   useEffect(() => {
     view.holeTraces.set(object.id, (h) => pieces.positions.subarray(pieces.holeOffsets[h] * 6, pieces.holeOffsets[h + 1] * 6))
-    return () => void view.holeTraces.delete(object.id)
+    view.holePieces.set(object.id, pieces)
+    return () => {
+      view.holeTraces.delete(object.id)
+      view.holePieces.delete(object.id)
+    }
   }, [pieces, object.id])
 
   // ---- labels: DOM overlay, decluttered every rendered frame

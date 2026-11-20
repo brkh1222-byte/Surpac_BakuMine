@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { Object3D, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { rayPlane, toPlane } from '../section/plane'
 import { useBlocks } from '../state/blocks'
+import { useDigitise } from '../state/digitise'
 import { useDisplay } from '../state/display'
 import { sectionExtent, useSection } from '../state/section'
 import { allBounds, useViewer } from '../state/store'
@@ -13,6 +14,7 @@ import { LegendStack } from '../ui/Legend'
 import { CameraRig } from './CameraRig'
 import { insideSectionSlab, sectionClipActive, updateSectionPlanes } from './clipping'
 import { installDebugHandle } from './debug'
+import { DigitiseLayer } from './DigitiseLayer'
 import { SceneContent } from './layers'
 import { MockLayer } from './MockLayer'
 import { getOrigin, renderToWorld } from './origin'
@@ -180,6 +182,8 @@ function CursorProbe() {
       const start = down
       down = null
       if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return
+      // While digitising, clicks place vertices (scene/DigitiseLayer.tsx), not select.
+      if (useDigitise.getState().active) return
       const section = useSection.getState()
       if (section.draft) {
         // First click: one end of the section line; second click: the other end.
@@ -258,9 +262,10 @@ export function Viewport({ mode }: { mode: SceneMode }) {
   const debug = mode === 'mock' || mode === 'perf' || import.meta.env.DEV
   const ghost = useSection((s) => s.enabled && s.mode === 'ghost')
   const drawing = useSection((s) => s.draft !== null)
+  const digitising = useDigitise((s) => s.active)
 
   return (
-    <div className={'viewport' + (drawing ? ' is-drawing' : '')} data-testid="viewport">
+    <div className={'viewport' + (drawing || digitising ? ' is-drawing' : '')} data-testid="viewport">
       {/* `flat`: no tone mapping, so data colours on screen match their legend exactly. */}
       <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true }} data-testid="scene-canvas">
         <color attach="background" args={[colors.background]} />
@@ -279,6 +284,7 @@ export function Viewport({ mode }: { mode: SceneMode }) {
         </SceneContent>
         <SectionIndicator />
         <SectionCamera />
+        <DigitiseLayer />
         {ghost && <GhostRenderer />}
         <CursorProbe />
         {debug && <DebugHandle />}
@@ -306,6 +312,11 @@ export function Viewport({ mode }: { mode: SceneMode }) {
       {drawing && (
         <div className="viewport-hint" data-testid="section-hint" role="status">
           Click the two ends of the section line · Esc cancels
+        </div>
+      )}
+      {digitising && !drawing && (
+        <div className="viewport-hint" data-testid="digitise-hint" role="status">
+          Digitising: click adds · first vertex closes · drag moves · right-click deletes · Ctrl+Z undoes
         </div>
       )}
       <div className="scale" title="Scale at the view centre">

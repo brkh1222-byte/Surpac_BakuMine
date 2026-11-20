@@ -103,6 +103,8 @@ export const view = {
   },
   /** World xyz of a hole's trace (flat triples, collar first), by drillhole object id. */
   holeTraces: new Map<string, (hole: number) => Float64Array>(),
+  /** Drawn pieces of each drillhole object (section digitising snaps to them). */
+  holePieces: new Map<string, import('../drillholes/pieces').DrillholePieces>(),
   /** By block model object id. */
   blocks: new Map<string, BlockLayerDebug>(),
 }
