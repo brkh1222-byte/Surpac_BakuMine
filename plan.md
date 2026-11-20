@@ -150,7 +150,7 @@ Read `research.md` §7. This phase decides whether the product is credible; it g
 - [x] **P4.T7 Multi-pass estimation per domain.** Run a list of passes under a constraint, composites filtered by domain, fill only unestimated blocks, store pass number. *Accept:* no block uses samples from another domain; pass attribute consistent.
 - [x] **P4.T8 Experimental variogram (minimal).** Directional, lag/tolerance parameters, output table + a least-squares auto-fit to seed kriging parameters. No UI beyond a simple chart. *Accept:* recovers the synthetic field's range within 20% and nugget ratio within 0.1.
 - [x] **P4.T9 Validation tools.** Swath table (blocks vs composites along X/Y/Z), global mean comparison vs NN, leave-one-out cross-validation. *Accept:* run on synthetic; OK beats IDW beats NN in RMSE against truth, and this is asserted in a test.
-- [ ] ~~CUT~~ **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
+- [ ] **P4.T10 (stretch) Dynamic anisotropy.** Per-block bearing/dip/plunge attributes drive the ellipsoid. *Accept:* folded synthetic case RMSE lower than fixed ellipsoid.
 
 **Gate B:** full synthetic run. Estimated model vs truth: OK correlation with true block grades > 0.75 inside the ore domain; global tonnes and metal within 5% of truth; all P4 reference comparisons green.
 
@@ -164,7 +164,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [x] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
 - [x] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
 - [x] **P5.T6 Section tools.** Clipping plane at any orientation with thickness (slab), step forward/back, section view locks camera normal to plane; drillholes, mesh outlines and blocks all clip together. *Accept:* screenshot test on synthetic section matches expected composition.
-- [ ] ~~CUT~~ **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
+- [ ] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
 - [x] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
 
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
@@ -265,6 +265,7 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 14:05  Gate A/B CLI  e314a1a 4b67efc  `bakumine estimate`, `blockmodel create|code`, scripts/gate_synthetic.py. Orchestrator reran script: ORE volume -0.047 %, tonnes -0.047 %, metal -2.4 %, OK corr 0.812 (per parent, volume-weighted). Gate A numbers PASS (code review part pending in P7.T5); Gate B PASS.
 2026-11-20 14:30  P6.T1/T6  afc4089 9e56b7b  Project folder (project.json, atomic), `bakumine project init|add|list`, API serves BAKUMINE_PROJECT; report endpoint + CSV + sidebar Report panel, equals CLI report. Orchestrator: api+cli 73 pass, vitest 123 pass after resolving cli.py conflict. Report panel NOT yet seen in a browser (no Playwright test).
 2026-11-20 15:00  P7.T2 (partial)  d1459d6  scripts/run_babbitt.py: ft->m, 3.048 m composites, 100x100x20 m model, manual variogram (auto-fit R2 0.12 rejected), OK 3 passes. Global mean OK vs NN +7.8 % (target 5 %: NOT met; NN biased by hole-end picks), swath corr x 0.33 / y 0.58 / z 0.89, LOHO xval corr 0.29. Test asserts 10 % + 2 of 3 swaths. Left UNTICKED. No domain wireframe, density 2.9 assumed.
+2026-11-20 15:20  scope  --  User: "dont save tokens, just build". Cuts reverted (P4.T10, P5.T7, P6.T7 undo back in scope; P7.T3 still blocked on Surpac inputs). Up to 4 agents, default model.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
