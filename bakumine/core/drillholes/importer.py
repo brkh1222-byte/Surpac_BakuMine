@@ -19,14 +19,25 @@ Import rules (all controlled by :class:`ImportOptions`, none by dataset special 
   ``-99`` apply to attribute columns only (a coordinate or a dip of -99 is left alone and
   is the validator's business).
 * Below-detection values such as ``<0.01`` follow one user-chosen rule: NaN, half the
-  limit, or the limit.
+  limit, or the limit. ``>100`` becomes the limit (or NaN), ``0,25`` is read as 0.25.
+  Any other text in a mostly numeric column (``LNR``, ``IS`` ...) becomes NaN. Every
+  kind is counted in the notes, by value.
 * ``coordinate_order`` converts files whose coordinate columns are in another axis order
   (Surpac writes ``Y, X, Z``) at this boundary; inside, ``x`` is always east.
 * ``length_unit`` records the unit of coordinates and depths. With
   ``convert_to_metres=True`` coordinates *and* depths are converted together.
 * ``dip_convention`` is recorded; ``normalise_dip=True`` rewrites dips as negative-down.
+  ``"auto"`` decides from the signs (all positive -> positive down) and says so.
+* Collars given as longitude / latitude (decimal, text or degrees-minutes-seconds columns)
+  are projected (``crs``, default the UTM zone of the data); see
+  :mod:`bakumine.core.drillholes.coordinates`.
+* Without a survey table, a collar table with ``azimuth`` and ``dip`` gives one station
+  per hole at depth 0.
 * A collar without ``max_depth`` gets it from the deepest interval of the hole.
 * Numeric attributes are ``float64``; text attributes are strings.
+
+Messy sources (one sheet per hole, two-row headers, depths in the sample number, QC rows,
+several files per table) are described by a recipe: :mod:`bakumine.core.drillholes.recipe`.
 
 The database is saved as a folder: one Parquet file per table + ``database.json``.
 """
@@ -36,6 +47,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -47,6 +59,7 @@ import pandas as pd
 from .desurvey import DIP_CONVENTIONS, HoleTraces, desurvey
 
 __all__ = [
+    "ABOVE_DETECTION_RULES",
     "BELOW_DETECTION_RULES",
     "COLLAR_COLUMNS",
     "DEFAULT_MISSING_TOKENS",
@@ -60,6 +73,7 @@ __all__ = [
     "TableSource",
     "import_drillholes",
     "import_table",
+    "finish_database",
     "load_database",
     "read_raw_table",
     "suggest_column_map",
@@ -94,6 +108,14 @@ _LENGTH_COLUMNS: dict[str, tuple[str, ...]] = {
 LENGTH_UNITS: dict[str, float] = {"m": 1.0, "ft": 0.3048, "ftUS": 1200.0 / 3937.0}
 
 BELOW_DETECTION_RULES: tuple[str, ...] = ("nan", "half", "limit")
+ABOVE_DETECTION_RULES: tuple[str, ...] = ("limit", "nan")
+
+#: Optional collar columns that give the position as longitude / latitude.
+GEOGRAPHIC_COLUMNS: tuple[str, ...] = (
+    "lon", "lat", "lon_deg", "lon_min", "lon_sec", "lat_deg", "lat_min", "lat_sec",
+)  # fmt: skip
+#: Attributes that are identifiers: always text, also when every cell is a number.
+ID_COLUMNS: tuple[str, ...] = ("sample_id", "sample_type")
 
 #: Default missing-value tokens. Text tokens are compared case-insensitively after
 #: stripping; numeric tokens are compared by value on attribute columns only.
@@ -118,6 +140,8 @@ _METADATA_FILE = "database.json"
 _TABLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]*$")
 _NUMBER = r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?"
 _BELOW_DETECTION = re.compile(rf"^<\s*=?\s*({_NUMBER})$")
+_ABOVE_DETECTION = re.compile(rf"^>\s*=?\s*({_NUMBER})$")
+_DECIMAL_COMMA = re.compile(r"^([<>]?\s*=?\s*[+-]?\d+),(\d+)$")
 
 
 # --------------------------------------------------------------------------------------
@@ -130,14 +154,24 @@ class ImportOptions:
     ``length_unit``         unit of coordinates and depths in the files (``m``, ``ft``,
                             ``ftUS``).
     ``convert_to_metres``   convert coordinates and depths to metres on import.
-    ``dip_convention``      sign convention of the dips in the files.
+    ``dip_convention``      sign convention of the dips in the files; ``"auto"`` takes
+                            ``positive_down`` when no dip is negative (reported).
     ``normalise_dip``       store dips as ``negative_down`` (negates ``positive_down``).
     ``coordinate_order``    a permutation of ``"xyz"``. Letter *i* names the true axis held
                             by the column that the column map calls ``"xyz"[i]``. Use
                             ``"yxz"`` for a file whose first coordinate column (the one
-                            mapped to ``x``) is the northing.
+                            mapped to ``x``) is the northing. ``"auto"`` swaps x and y
+                            when the column mapped to ``x`` clearly holds northings
+                            (or agrees with the longitude / latitude that way); reported.
     ``missing_tokens``      values meaning "no data" (see module docstring).
     ``below_detection``     rule for ``<limit`` cells: ``"nan"``, ``"half"`` or ``"limit"``.
+    ``above_detection``     rule for ``>limit`` cells: ``"limit"`` or ``"nan"``.
+    ``decimal_comma``       read ``0,25`` as 0.25.
+    ``crs``                 projected CRS for collars given as longitude / latitude
+                            (``"EPSG:32647"``); ``None`` or ``"utm"`` = the UTM zone of the
+                            data. ``geographic_crs`` is the CRS of the longitudes.
+    ``coordinate_tolerance``  metres; rows whose projected columns differ from their own
+                            longitude / latitude by more are reported.
     ``derive_max_depth``    fill a missing ``max_depth`` from the hole's deepest interval.
     ``text_columns`` / ``numeric_columns``
                             canonical attribute names forced to text / to float64;
@@ -154,6 +188,11 @@ class ImportOptions:
     coordinate_order: str = "xyz"
     missing_tokens: tuple[str | float, ...] = DEFAULT_MISSING_TOKENS
     below_detection: BelowDetection = "half"
+    above_detection: str = "limit"
+    decimal_comma: bool = True
+    crs: str | None = None
+    geographic_crs: str = "EPSG:4326"
+    coordinate_tolerance: float = 30.0
     derive_max_depth: bool = True
     text_columns: tuple[str, ...] = ()
     numeric_columns: tuple[str, ...] = ()
@@ -166,13 +205,20 @@ class ImportOptions:
             raise ValueError(
                 f"length_unit must be one of {tuple(LENGTH_UNITS)}, got {self.length_unit!r}"
             )
-        if self.dip_convention not in DIP_CONVENTIONS:
+        if self.dip_convention not in (*DIP_CONVENTIONS, "auto"):
             raise ValueError(
-                f"dip_convention must be one of {DIP_CONVENTIONS}, got {self.dip_convention!r}"
+                f"dip_convention must be one of {(*DIP_CONVENTIONS, 'auto')}, "
+                f"got {self.dip_convention!r}"
             )
-        if sorted(self.coordinate_order) != ["x", "y", "z"]:
+        if self.coordinate_order != "auto" and sorted(self.coordinate_order) != ["x", "y", "z"]:
             raise ValueError(
-                f"coordinate_order must be a permutation of 'xyz', got {self.coordinate_order!r}"
+                "coordinate_order must be a permutation of 'xyz' or 'auto', "
+                f"got {self.coordinate_order!r}"
+            )
+        if self.above_detection not in ABOVE_DETECTION_RULES:
+            raise ValueError(
+                f"above_detection must be one of {ABOVE_DETECTION_RULES}, "
+                f"got {self.above_detection!r}"
             )
         if self.below_detection not in BELOW_DETECTION_RULES:
             raise ValueError(
@@ -214,6 +260,12 @@ class DrillholeMetadata:
     sources: dict[str, str] = field(default_factory=dict)
     #: what the importer changed or could not read: dicts with table, column, kind, count
     notes: list[dict[str, Any]] = field(default_factory=list)
+    #: projected CRS of the collars when they were converted from longitude / latitude
+    crs: str | None = None
+    #: the import recipe (see ``bakumine.core.drillholes.recipe``), for replay
+    recipe: dict[str, Any] | None = None
+    #: import reports: QC rows, sample-number depths, merge conflicts, coordinate check
+    reports: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -224,6 +276,8 @@ class DrillholeDatabase:
     survey: pd.DataFrame
     intervals: dict[str, pd.DataFrame] = field(default_factory=dict)
     metadata: DrillholeMetadata = field(default_factory=DrillholeMetadata)
+    #: QC rows (blanks, standards, duplicates ...) set aside per interval table, as text
+    qc: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require(self.collar, COLLAR_COLUMNS, "collar")
@@ -264,6 +318,9 @@ class DrillholeDatabase:
         files.update({name: f"interval_{name}.parquet" for name in self.intervals})
         for name, table in self.tables.items():
             table.to_parquet(folder / files[name], index=False)
+        qc_files = {name: f"qc_{name}.parquet" for name in self.qc}
+        for name, table in self.qc.items():
+            table.to_parquet(folder / qc_files[name], index=False)
         document = {
             "format": _FORMAT,
             "version": _FORMAT_VERSION,
@@ -271,6 +328,7 @@ class DrillholeDatabase:
                 "collar": files["collar"],
                 "survey": files["survey"],
                 "intervals": {name: files[name] for name in self.intervals},
+                "qc": qc_files,
             },
             "metadata": asdict(self.metadata),
         }
@@ -296,6 +354,10 @@ class DrillholeDatabase:
                 name: pd.read_parquet(folder / file) for name, file in tables["intervals"].items()
             },
             metadata=DrillholeMetadata(**document["metadata"]),
+            qc={
+                name: pd.read_parquet(folder / file)
+                for name, file in tables.get("qc", {}).items()
+            },
         )
 
 
@@ -308,6 +370,26 @@ def _require(frame: pd.DataFrame, columns: Iterable[str], name: str) -> None:
     missing = [c for c in columns if c not in frame.columns]
     if missing:
         raise ValueError(f"{name} table is missing columns {missing}; has {list(frame.columns)}")
+
+
+#: collar columns besides the canonical ones that are read as numbers without sentinels
+_COLLAR_NUMBERS: tuple[str, ...] = (*GEOGRAPHIC_COLUMNS, "azimuth", "dip")
+
+
+def has_geographic(columns: Iterable[str]) -> bool:
+    """True when the columns give longitude and latitude (decimal / text or as degrees ...)."""
+    names = set(columns)
+    return {"lon", "lat"} <= names or {"lon_deg", "lat_deg"} <= names
+
+
+def missing_required(kind: str, present: Iterable[str]) -> list[str]:
+    """Required canonical columns that ``present`` lacks. A collar table with longitude and
+    latitude needs no ``x`` and ``y``."""
+    names = set(present)
+    missing = [c for c in _REQUIRED[kind] if c not in names]
+    if kind == "collar" and has_geographic(names):
+        missing = [c for c in missing if c not in ("x", "y")]
+    return missing
 
 
 def _check_table_name(name: str) -> None:
@@ -349,7 +431,7 @@ def read_raw_table(
     delimiter: str | None = ",",
     encoding: str = "utf-8-sig",
 ) -> pd.DataFrame:
-    """Read a CSV or XLSX file with every cell as text (blank cells are ``""``).
+    """Read a CSV or XLSX / XLS file with every cell as text (blank cells are ``""``).
 
     Nothing is interpreted here: no NaN detection, no number parsing. Without a header
     the columns are named ``0, 1, 2, ...``. Rows that are entirely blank are dropped.
@@ -357,14 +439,14 @@ def read_raw_table(
     path = Path(path)
     suffix = path.suffix.lower()
     head = 0 if header else None
-    if suffix in (".xlsx", ".xlsm"):
+    if suffix in (".xlsx", ".xlsm", ".xls"):
         frame = pd.read_excel(
             path,
             sheet_name=0 if sheet is None else sheet,
             header=head,
             dtype=object,
             na_filter=False,
-            engine="openpyxl",
+            engine="xlrd" if suffix == ".xls" else "openpyxl",
         )
     elif suffix in (".csv", ".txt", ".tsv", ".dat"):
         frame = pd.read_csv(
@@ -426,6 +508,10 @@ class _Parsed:
     unparseable: np.ndarray  # bool, cells that are neither missing nor a number
     below_detection: int
     sentinels: int
+    above_detection: int = 0
+    decimal_commas: int = 0
+    #: non-blank missing tokens met ("-", "n/a" ...), by value
+    missing: dict[str, int] = field(default_factory=dict)
 
 
 def _parse_numeric(
@@ -433,28 +519,47 @@ def _parse_numeric(
     text_tokens: set[str],
     sentinels: np.ndarray,
     rule: str,
+    above: str = "limit",
+    decimal_comma: bool = True,
 ) -> _Parsed:
-    """Text cells -> float64. Missing -> NaN; ``<limit`` by ``rule``; garbage -> NaN + flag."""
+    """Text cells -> float64. Missing -> NaN; ``<limit`` by ``rule``; ``>limit`` by ``above``;
+    ``0,25`` -> 0.25; anything else -> NaN + flag."""
     stripped = cells.str.strip()
+    commas = 0
+    if decimal_comma:
+        has = stripped.str.contains(",", regex=False).to_numpy(dtype=bool)
+        if has.any():
+            fixed = stripped[has].str.replace(_DECIMAL_COMMA, r"\1.\2", regex=True)
+            commas = int((fixed != stripped[has]).sum())
+            stripped = stripped.copy()
+            stripped[has] = fixed
     missing = stripped.str.casefold().isin(text_tokens).to_numpy(dtype=bool)
+    tokens = Counter(stripped[missing & (stripped != "").to_numpy(dtype=bool)].tolist())
     values = np.array(
         pd.to_numeric(stripped.where(~missing), errors="coerce"), dtype=np.float64, copy=True
     )
     values[missing] = np.nan
     candidates = np.flatnonzero(np.isnan(values) & ~missing)
     unparseable = np.zeros(len(cells), dtype=bool)
-    below = 0
+    below = over = 0
     for i in candidates:  # only the cells pandas could not read as a number
-        match = _BELOW_DETECTION.match(stripped.iat[i])
-        if match is None:
-            unparseable[i] = True
+        text = stripped.iat[i]
+        match = _BELOW_DETECTION.match(text)
+        if match is not None:
+            limit = float(match.group(1))
+            below += 1
+            values[i] = {"nan": np.nan, "half": 0.5 * limit, "limit": limit}[rule]
             continue
-        limit = float(match.group(1))
-        below += 1
-        values[i] = {"nan": np.nan, "half": 0.5 * limit, "limit": limit}[rule]
+        match = _ABOVE_DETECTION.match(text)
+        if match is not None:
+            over += 1
+            values[i] = float(match.group(1)) if above == "limit" else np.nan
+            continue
+        if text.casefold() not in ("nan", "+nan", "-nan"):
+            unparseable[i] = True
     hit = np.isin(values, sentinels) if sentinels.size else np.zeros(len(cells), dtype=bool)
     values[hit] = np.nan
-    return _Parsed(values, unparseable, below, int(hit.sum()))
+    return _Parsed(values, unparseable, below, int(hit.sum()), over, commas, dict(tokens))
 
 
 def _parse_text(cells: pd.Series, text_tokens: set[str]) -> pd.Series:
@@ -533,7 +638,7 @@ def import_table(
     resolved = _resolve_column_map(headers, column_map, header, name)
     canonical = _CANONICAL[kind]
     present = set(resolved.values())
-    missing = [c for c in _REQUIRED[kind] if c not in present]
+    missing = missing_required(kind, present)
     if missing:
         raise ValueError(
             f"{name}: the column map gives no source for {missing}; mapped: {sorted(present)}"
@@ -569,40 +674,72 @@ def import_table(
         if target == "hole_id":
             out[target] = cells.str.strip().astype("str")
             continue
-        if target in canonical:  # coordinates, depths, angles: numeric, no sentinels
-            parsed = _parse_numeric(cells, text_tokens, no_sentinels, "nan")
-            note(target, "unparseable_set_to_nan", int(parsed.unparseable.sum()))
-            note(target, "below_detection_set_to_nan", parsed.below_detection)
+        if target in canonical or (kind == "collar" and target in _COLLAR_NUMBERS):
+            # coordinates, depths, angles: numeric, no sentinels
+            parsed = _parse_numeric(
+                cells, text_tokens, no_sentinels, "nan", "nan", options.decimal_comma
+            )
+            if kind == "collar" and target in ("lon", "lat") and parsed.unparseable.any():
+                out[target] = _parse_text(cells, text_tokens)  # "98 47 11.0", parsed later
+                continue
+            note(
+                target,
+                "unparseable_set_to_nan",
+                int(parsed.unparseable.sum()),
+                examples=sorted(set(cells[parsed.unparseable].str.strip()))[:5],
+            )
+            note(
+                target,
+                "below_detection_set_to_nan",
+                parsed.below_detection + parsed.above_detection,
+            )
+            note(target, "decimal_comma", parsed.decimal_commas)
             out[target] = parsed.values
             continue
-        if target in options.text_columns:
+        if target in options.text_columns or (
+            target in ID_COLUMNS and target not in options.numeric_columns
+        ):
             out[target] = _parse_text(cells, text_tokens)
             continue
-        parsed = _parse_numeric(cells, text_tokens, sentinels, options.below_detection)
-        if parsed.unparseable.any() and target not in options.numeric_columns:
-            # A mostly numeric column with a few odd cells (">10", "IS") becomes text, and
-            # compositing / estimation then skip it: say so instead of dropping it silently.
-            n_bad = int(parsed.unparseable.sum())
-            n_numbers = int(np.isfinite(parsed.values).sum()) + parsed.below_detection
-            if n_numbers > n_bad:
-                note(
-                    target,
-                    "numeric_column_read_as_text",
-                    n_bad,
-                    examples=sorted(set(cells[parsed.unparseable].str.strip()))[:5],
-                    hint="list the column in numeric_columns to read it as numbers "
-                    "(those cells become NaN)",
-                )
-            out[target] = _parse_text(cells, text_tokens)
+        parsed = _parse_numeric(
+            cells,
+            text_tokens,
+            sentinels,
+            options.below_detection,
+            options.above_detection,
+            options.decimal_comma,
+        )
+        n_bad = int(parsed.unparseable.sum())
+        n_numbers = (
+            int(np.isfinite(parsed.values).sum())
+            + parsed.sentinels
+            + (parsed.below_detection if options.below_detection == "nan" else 0)
+            + (parsed.above_detection if options.above_detection == "nan" else 0)
+        )
+        if n_bad and target not in options.numeric_columns and n_numbers <= n_bad:
+            out[target] = _parse_text(cells, text_tokens)  # a text column
             continue
+        # A numeric column: odd cells ("LNR", "IS") become NaN and are counted by value,
+        # so that compositing and estimation still see numbers.
+        odd = Counter(cells[parsed.unparseable].str.strip().tolist())
         note(
             target,
             "unparseable_set_to_nan",
-            int(parsed.unparseable.sum()),
-            examples=sorted(set(cells[parsed.unparseable].str.strip()))[:5],
-        )
+            n_bad,
+            examples=sorted(odd)[:5],
+            **({"values": dict(odd.most_common(20))} if target not in options.numeric_columns
+               else {}),
+        )  # fmt: skip
         note(target, "below_detection", parsed.below_detection, rule=options.below_detection)
+        note(target, "above_detection", parsed.above_detection, rule=options.above_detection)
+        note(target, "decimal_comma", parsed.decimal_commas)
         note(target, "sentinel_set_to_nan", parsed.sentinels)
+        note(
+            target,
+            "missing_token",
+            sum(parsed.missing.values()),
+            values=dict(sorted(parsed.missing.items())),
+        )
         out[target] = parsed.values
     return pd.DataFrame(out, columns=order), notes
 
@@ -634,10 +771,7 @@ def import_drillholes(
 
     metadata = DrillholeMetadata(
         length_unit=options.length_unit,
-        dip_convention=options.dip_convention,
         source_length_unit=options.length_unit,
-        source_dip_convention=options.dip_convention,
-        coordinate_order=options.coordinate_order,
     )
     tables: dict[str, pd.DataFrame] = {}
     specs = {"collar": ("collar", collar), "survey": ("survey", survey)}
@@ -659,10 +793,29 @@ def import_drillholes(
 
     collar_table = tables.pop("collar")
     survey_table = tables.pop("survey")
+    return finish_database(collar_table, survey_table, tables, options, metadata)
 
+
+def finish_database(
+    collar_table: pd.DataFrame,
+    survey_table: pd.DataFrame | None,
+    tables: dict[str, pd.DataFrame],
+    options: ImportOptions,
+    metadata: DrillholeMetadata,
+    qc: dict[str, pd.DataFrame] | None = None,
+) -> DrillholeDatabase:
+    """Typed tables -> database: everything that acts on the tables together.
+
+    Longitude / latitude -> projected coordinates and the axis order
+    (:mod:`.coordinates`), ``max_depth`` from the deepest interval, a survey from the
+    collar's ``azimuth`` / ``dip`` when ``survey_table`` is None, the dip convention, and
+    the unit conversion. What was decided or changed is added to ``metadata``.
+    """
+    order = "xyz" if options.coordinate_order == "auto" else options.coordinate_order
+    metadata.coordinate_order = order
     # Axis order: the column mapped as "xyz"[i] holds the true axis coordinate_order[i].
-    if options.coordinate_order != "xyz":
-        true_axis = dict(zip("xyz", options.coordinate_order, strict=True))
+    if order != "xyz":
+        true_axis = dict(zip("xyz", order, strict=True))
         collar_table = collar_table.rename(columns=true_axis)
 
     # max_depth: fill what the collar does not give from the deepest interval.
@@ -689,6 +842,31 @@ def import_drillholes(
     extras = [c for c in collar_table.columns if c not in COLLAR_COLUMNS]
     collar_table = collar_table[[*COLLAR_COLUMNS, *extras]]
 
+    if survey_table is None:
+        survey_table = _survey_from_collar(collar_table, metadata)
+
+    convention = options.dip_convention
+    dips = survey_table["dip"].dropna().to_numpy(dtype=np.float64)
+    all_down_positive = bool(dips.size and (dips >= 0).all() and (dips > 0).any())
+    if convention == "auto":
+        mixed = bool((dips > 0).any() and (dips < 0).any())
+        convention = "positive_down" if all_down_positive else "negative_down"
+        kind = "dip_signs_mixed_assumed_negative_down" if mixed else f"dip_assumed_{convention}"
+        metadata.notes.append(
+            {"table": "survey", "column": "dip", "kind": kind, "count": int(dips.size)}
+        )
+    elif convention == "negative_down" and all_down_positive:
+        metadata.notes.append(
+            {
+                "table": "survey",
+                "column": "dip",
+                "kind": "all_dips_positive_but_convention_negative_down",
+                "count": int(dips.size),
+                "hint": "the holes point up; use dip_convention 'positive_down' or 'auto'",
+            }
+        )
+    metadata.dip_convention = metadata.source_dip_convention = convention
+
     if options.convert_to_metres and options.length_unit != "m":
         factor = LENGTH_UNITS[options.length_unit]
         collar_table[list(_LENGTH_COLUMNS["collar"])] *= factor
@@ -697,79 +875,158 @@ def import_drillholes(
             table[list(_LENGTH_COLUMNS["interval"])] *= factor
         metadata.length_unit = "m"
 
-    if options.normalise_dip and options.dip_convention != "negative_down":
+    if options.normalise_dip and convention != "negative_down":
         survey_table["dip"] = -survey_table["dip"]
         metadata.dip_convention = "negative_down"
 
     return DrillholeDatabase(
-        collar=collar_table, survey=survey_table, intervals=tables, metadata=metadata
+        collar=collar_table,
+        survey=survey_table,
+        intervals=tables,
+        metadata=metadata,
+        qc=dict(qc or {}),
     )
+
+
+def _survey_from_collar(collar: pd.DataFrame, metadata: DrillholeMetadata) -> pd.DataFrame:
+    """One station at depth 0 per hole from the collar's ``azimuth`` and ``dip``."""
+    if not {"azimuth", "dip"} <= set(collar.columns):
+        raise ValueError(
+            "there is no survey table, and the collar table has no azimuth and dip columns "
+            "to make one from"
+        )
+    known = collar[["azimuth", "dip"]].notna().all(axis=1).to_numpy()
+    survey = pd.DataFrame(
+        {
+            "hole_id": collar["hole_id"].to_numpy()[known],
+            "depth": 0.0,
+            "dip": collar["dip"].to_numpy(dtype=np.float64)[known],
+            "azimuth": collar["azimuth"].to_numpy(dtype=np.float64)[known],
+        }
+    )
+    metadata.sources["survey"] = "<collar azimuth, dip>"
+    metadata.notes.append(
+        {"table": "survey", "column": "*", "kind": "generated_from_collar", "count": len(survey)}
+    )
+    without = collar["hole_id"].to_numpy()[~known].tolist()
+    if without:
+        metadata.notes.append(
+            {
+                "table": "survey",
+                "column": "*",
+                "kind": "collar_without_azimuth_or_dip",
+                "count": len(without),
+                "examples": without[:5],
+            }
+        )
+    metadata.reports["survey"] = {
+        "generated_from_collar": int(len(survey)),
+        "holes_without_azimuth_or_dip": without[:100],
+    }
+    return survey
 
 
 # --------------------------------------------------------------------------------------
 # column-map suggestion
 # --------------------------------------------------------------------------------------
 #: Common header spellings, normalised (lower case, letters and digits only, unit words
-#: removed). Earlier entries win ties.
+#: removed; Latin look-alike letters inside Cyrillic words are folded). English, Russian and
+#: Mongolian. Earlier entries win ties.
+_HOLE = (
+    "holeid", "bhid", "hole", "dhid", "holeno", "holenumber", "holename", "drillhole",
+    "drillholeid", "ddh", "borehole", "boreholeid", "wellid", "well", "siteid", "id",
+    "name", "numhole",
+    "скважина", "скв", "номерскважины", "скважины", "nскважины", "выработка",
+    "цооног", "цооногдугаар", "цооногийндугаар", "цооногийнномер", "цооногийннэр",
+    "trench", "trenchid", "channel", "channelid", "канава", "суваг", "сувгийндугаар",
+)  # fmt: skip
+_AZIMUTH = (
+    "azimuth", "azi", "az", "azim", "bearing", "brg", "azimuthgrid", "azimuthtrue",
+    "gridazimuth", "trueazimuth", "direction", "азимут",
+)  # fmt: skip
+_DIP = (
+    "dip", "inclination", "incl", "inc", "plunge",
+    "налуу", "цооногийнналуу", "налуугийнөнцөг", "уголнаклона", "наклон", "уголпадения",
+)  # fmt: skip
 _SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
     "collar": {
-        "hole_id": (
-            "holeid", "bhid", "hole", "dhid", "holeno", "holenumber", "holename", "drillhole",
-            "drillholeid", "ddh", "borehole", "boreholeid", "wellid", "well", "siteid", "id",
-            "name",
-        ),
+        "hole_id": _HOLE,
         "x": (
             "x", "east", "easting", "eastings", "xcollar", "collarx", "xcoord", "xcoordinate",
             "collareast", "collareasting", "utme", "utmeast", "utmeasting", "e",
+            "восток", "зүүн", "utmlongitude", "utmlon", "utmдолгота", "utmуртраг",
         ),
         "y": (
             "y", "north", "northing", "northings", "ycollar", "collary", "ycoord",
             "ycoordinate", "collarnorth", "collarnorthing", "utmn", "utmnorth", "utmnorthing",
-            "n",
+            "n", "север", "хойд", "utmlatitude", "utmlat", "utmширота", "utmөргөрөг",
         ),
         "z": (
             "z", "rl", "elevation", "elev", "zcollar", "collarz", "collarrl", "zcoord",
             "zcoordinate", "collarelevation", "reducedlevel", "altitude", "level", "height",
+            "h", "высота", "отметка", "абсотметка", "абсолютнаяотметка", "альтитуда",
+            "өндөршил", "өндөр", "өндөрлөг",
         ),
         "max_depth": (
             "maxdepth", "depth", "totaldepth", "eoh", "enddepth", "finaldepth", "holedepth",
             "endofhole", "td", "length", "holelength", "totallength",
+            "глубина", "глубинаскважины", "гүн", "цооногийнгүн",
         ),
+        "lon": ("lon", "long", "longitude", "lng", "долгота", "уртраг"),
+        "lat": ("lat", "latitude", "широта", "өргөрөг"),
+        "azimuth": _AZIMUTH,
+        "dip": _DIP,
     },
     "survey": {
-        "hole_id": (
-            "holeid", "bhid", "hole", "dhid", "holeno", "holenumber", "holename", "drillhole",
-            "drillholeid", "ddh", "borehole", "boreholeid", "wellid", "well", "siteid", "id",
-            "name",
-        ),
+        "hole_id": _HOLE,
         "depth": (
             "depth", "at", "surveydepth", "sdepth", "measureddepth", "md", "downholedepth",
-            "distance", "station", "stationdepth",
+            "distance", "station", "stationdepth", "глубина", "гүн",
         ),
-        "dip": ("dip", "inclination", "incl", "inc", "plunge"),
-        "azimuth": (
-            "azimuth", "azi", "az", "azim", "bearing", "brg", "azimuthgrid", "azimuthtrue",
-            "gridazimuth", "trueazimuth", "direction",
-        ),
+        "dip": _DIP,
+        "azimuth": _AZIMUTH,
     },
     "interval": {
-        "hole_id": (
-            "holeid", "bhid", "hole", "dhid", "holeno", "holenumber", "holename", "drillhole",
-            "drillholeid", "ddh", "borehole", "boreholeid", "wellid", "well", "siteid", "id",
-            "name",
-        ),
+        "hole_id": _HOLE,
         "depth_from": (
             "depthfrom", "from", "fromdepth", "sampfrom", "samplefrom", "intervalfrom",
             "startdepth", "start", "top", "topdepth",
+            "от", "аас", "ээс", "оос", "өөс", "эхлэл", "интервалот", "интервалаас",
+            "interval", "интервал",
         ),
         "depth_to": (
             "depthto", "to", "todepth", "sampto", "sampleto", "intervalto", "enddepth", "end",
             "bottom", "bottomdepth", "base",
+            "до", "хүртэл", "төгсгөл", "интервалдо", "интервалхүртэл",
+            "interval2", "интервал2",
+        ),
+        "sample_id": (
+            "sampleid", "sample", "sampleno", "samplenumber", "samplenum", "sampid",
+            "проба", "номерпробы", "nпробы", "пробы",
+            "дээж", "дээжийндугаар", "сорьц", "сорьцдугаар", "сорьцындугаар", "сорьцийндугаар",
+        ),
+        "sample_type": (
+            "sampletype", "samptype", "type", "qctype", "типпробы", "видпробы",
+            "сорьцынтөрөл", "сорьцийнтөрөл", "дээжийнтөрөл", "төрөл",
+        ),
+        "sample_length": (
+            "samplelength", "length", "len", "длина", "длинапробы", "мощность",
+            "сорьцынурт", "сорьцийнурт", "дээжийнурт", "урт",
         ),
     },
 }
-_UNIT_WORDS = frozenset({"m", "mtr", "metre", "metres", "meter", "meters", "ft", "feet", "deg"})
+_UNIT_WORDS = frozenset(
+    {
+        "m", "mtr", "metre", "metres", "meter", "meters", "ft", "feet", "deg", "degree",
+        "degrees", "м", "т", "метр", "метров", "град", "градус", "градусов",
+    }
+)  # fmt: skip
 _MIN_FUZZY_LENGTH = 4
+_CYRILLIC = re.compile(r"[Ѐ-ӿ]")
+#: Latin letters typed in place of the Cyrillic ones that look the same
+_LOOKALIKES = str.maketrans("aceopxykmhbt", "асеорхукмнвт")
+#: the longitude / latitude columns of a degrees-minutes-seconds triple
+_DMS_PARTS = {"lon": ("lon_deg", "lon_min", "lon_sec"), "lat": ("lat_deg", "lat_min", "lat_sec")}
 
 
 @dataclass
@@ -789,14 +1046,19 @@ class ColumnMapSuggestion:
     scores: dict[str, float]
 
 
+def _words(header: object) -> list[str]:
+    words = [w for w in re.split(r"[\W_]+", str(header).casefold()) if w]
+    return [w.translate(_LOOKALIKES) if _CYRILLIC.search(w) else w for w in words]
+
+
 def _normalise_header(header: object) -> str:
-    words = [w for w in re.split(r"[^a-z0-9]+", str(header).casefold()) if w]
+    words = _words(header)
     kept = [w for w in words if w not in _UNIT_WORDS] or words
     return "".join(kept)
 
 
 def _attribute_name(header: object) -> str:
-    name = re.sub(r"[^a-z0-9]+", "_", str(header).strip().casefold()).strip("_")
+    name = re.sub(r"[\W_]+", "_", str(header).strip().casefold()).strip("_")
     return name or "column"
 
 
@@ -809,11 +1071,15 @@ def suggest_column_map(
     """Propose *source column -> canonical name* from the headers of one table.
 
     Known spellings (``BHID``, ``HOLEID``, ``EAST``, ``NORTH``, ``RL``, ``FROM``, ``TO``,
-    ``AZI``, ``DIP`` ...) match exactly after normalisation; other headers of 4 or more
-    characters match fuzzily when their similarity to a known spelling reaches ``cutoff``.
-    Each canonical name gets at most one source column. For an interval table the
-    remaining columns are proposed as attributes under a lower-case name. The result is a
-    proposal: check it, edit ``.mapping``, then pass it to :class:`TableSource`.
+    ``AZI``, ``DIP``, ``скважина``, ``от``, ``до``, ``Цооног``, ``аас``, ``хүртэл`` ...) match
+    exactly after normalisation; other headers of 4 or more characters match fuzzily when
+    their similarity to a known spelling reaches ``cutoff``. Each canonical name gets at
+    most one source column. A collar table may also give ``lon`` / ``lat`` (three columns in
+    a row under one longitude header become ``lon_deg, lon_min, lon_sec``) and
+    ``azimuth`` / ``dip``; an interval table ``sample_id``, ``sample_type`` and
+    ``sample_length``. For an interval table the remaining columns are proposed as
+    attributes under a lower-case name. The result is a proposal: check it, edit
+    ``.mapping``, then pass it to :class:`TableSource`.
     """
     if table not in _SYNONYMS:
         raise ValueError(f"table must be one of {tuple(_SYNONYMS)}, got {table!r}")
@@ -847,9 +1113,19 @@ def suggest_column_map(
         used.add(header)
 
     by_header = {header: canonical for canonical, header in chosen.items()}
+    # "Longitude", "Longitude 2", "Longitude 3": degrees, minutes, seconds
+    for whole, parts in _DMS_PARTS.items():
+        header = chosen.get(whole)
+        if header is None:
+            continue
+        rest = [f"{header} 2", f"{header} 3"]
+        if all(h in headers and h not in by_header for h in rest):
+            for part, name in zip(parts, [header, *rest], strict=True):
+                by_header[name] = part
+            chosen[parts[0]] = chosen.pop(whole)
     mapping: dict[str, str] = {}
     unmatched: list[str] = []
-    taken = set(_CANONICAL[table])
+    taken = set(_CANONICAL[table]) | set(_SYNONYMS[table])
     for header in headers:
         if header in by_header:
             mapping[header] = by_header[header]
@@ -862,5 +1138,5 @@ def suggest_column_map(
             mapping[header] = name
         else:
             unmatched.append(header)
-    missing = [c for c in _REQUIRED[table] if c not in chosen]
+    missing = missing_required(table, by_header.values())
     return ColumnMapSuggestion(table, mapping, missing, unmatched, scores)

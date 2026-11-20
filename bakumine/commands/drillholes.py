@@ -82,19 +82,33 @@ def _pairs(items: list[str] | None, option: str) -> dict[str, str]:
 # import
 # --------------------------------------------------------------------------------------
 def configure_import(parser: argparse.ArgumentParser) -> None:
-    from bakumine.core.drillholes.importer import BELOW_DETECTION_RULES, LENGTH_UNITS
+    from bakumine.core.drillholes.importer import (
+        ABOVE_DETECTION_RULES,
+        BELOW_DETECTION_RULES,
+        LENGTH_UNITS,
+    )
 
-    parser.add_argument("--collar", required=True, help="collar table (CSV or XLSX)")
-    parser.add_argument("--survey", required=True, help="downhole survey table")
-    parser.add_argument("--assay", help="assay interval table (stored as 'assay')")
-    parser.add_argument("--geology", help="geology interval table (stored as 'geology')")
-    parser.add_argument(
+    files = parser.add_argument_group(
+        "source files",
+        "CSV, XLSX or XLS. A table option given more than once merges the files into one "
+        "table (the first file wins where they disagree; conflicts are reported).",
+    )
+    files.add_argument("--collar", action="append", help="collar table")
+    files.add_argument(
+        "--survey",
+        action="append",
+        help="downhole survey table (without it: one station per hole from the collar "
+        "table's azimuth and dip columns)",
+    )
+    files.add_argument("--assay", action="append", help="assay interval table ('assay')")
+    files.add_argument("--geology", action="append", help="geology interval table ('geology')")
+    files.add_argument(
         "--interval",
         action="append",
         metavar="NAME=FILE",
         help="any other interval table, stored under NAME (repeatable)",
     )
-    parser.add_argument("--out", required=True, help="database folder to write")
+    parser.add_argument("--out", help="database folder to write")
     parser.add_argument(
         "--map",
         dest="map_file",
@@ -105,6 +119,43 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--auto",
         action="store_true",
         help="propose the column map from the headers for every table the map file omits",
+    )
+    shape = parser.add_argument_group("layout of the files (TABLE = collar, survey, assay ...)")
+    shape.add_argument(
+        "--sheet",
+        action="append",
+        metavar="TABLE=SHEETS",
+        help="workbook sheets of a table: names, 0-based indexes or wildcards, comma "
+        "separated ('assay=DH*' stacks one sheet per hole; default: the first sheet)",
+    )
+    shape.add_argument(
+        "--header-row",
+        action="append",
+        metavar="TABLE=N",
+        help="spreadsheet row of the header (1 = first, 0 = no header; default: detected)",
+    )
+    shape.add_argument(
+        "--header-rows",
+        action="append",
+        metavar="TABLE=N",
+        help="1, or 2 for a group header over sub-headers (default: detected)",
+    )
+    shape.add_argument(
+        "--hole-from-sheet",
+        action="append",
+        default=[],
+        metavar="TABLE",
+        help="take the hole id of this table from the sheet name",
+    )
+    shape.add_argument(
+        "--hole-id-pattern",
+        metavar="REGEX",
+        help="rewrite hole ids matching this pattern, in every table, as --hole-id-template",
+    )
+    shape.add_argument(
+        "--hole-id-template",
+        metavar="TEMPLATE",
+        help="e.g. 'DH-{1:03d}' ({1} = first group of the pattern, {0} = the whole id)",
     )
     parser.add_argument(
         "--length-unit",
@@ -117,9 +168,10 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--dip-convention",
-        choices=("negative_down", "positive_down"),
+        choices=("negative_down", "positive_down", "auto"),
         default="negative_down",
-        help="sign of the dips in the survey file (default: negative_down)",
+        help="sign of the dips in the files; auto = positive_down when no dip is negative "
+        "(default: negative_down)",
     )
     parser.add_argument(
         "--normalise-dip", action="store_true", help="store dips as negative_down"
@@ -128,7 +180,7 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--coordinate-order",
         default="xyz",
         help="true axes of the columns mapped to x, y, z; 'yxz' when the column mapped "
-        "to x holds the northing (default: xyz)",
+        "to x holds the northing; 'auto' decides from the values (default: xyz)",
     )
     parser.add_argument(
         "--below-detection",
@@ -137,16 +189,34 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         help="rule for '<limit' cells (default: half the limit)",
     )
     parser.add_argument(
+        "--above-detection",
+        choices=ABOVE_DETECTION_RULES,
+        default="limit",
+        help="rule for '>limit' cells (default: the limit)",
+    )
+    parser.add_argument(
         "--text-column", action="append", default=[], help="attribute forced to text"
     )
     parser.add_argument(
         "--numeric-column", action="append", default=[], help="attribute forced to numeric"
     )
     parser.add_argument("--delimiter", default=",", help="CSV delimiter (default: ',')")
-    parser.add_argument(
-        "--sheet", action="append", metavar="TABLE=SHEET", help="XLSX sheet of a table"
+    # options of later import features, at their defaults
+    parser.set_defaults(
+        func=_guarded(run_import),
+        sample_depth=[],
+        sample_length=1.0,
+        sample_pattern=None,
+        qc="separate",
+        merge_precedence="first",
+        merge_tolerance=0.01,
+        crs=None,
+        coordinate_tolerance=30.0,
+        recipe=None,
+        base=None,
+        save_recipe=None,
+        dry_run=False,
     )
-    parser.set_defaults(func=_guarded(run_import))
 
 
 def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
@@ -163,38 +233,48 @@ def _read_map_file(path: Path) -> dict[str, dict[str, str]]:
     return {str(t): {str(k): str(v) for k, v in m.items()} for t, m in document.items()}
 
 
-def run_import(args: argparse.Namespace) -> int:
-    from bakumine.core.drillholes.importer import (
-        ImportOptions,
-        TableSource,
-        import_drillholes,
-        read_raw_table,
-        suggest_column_map,
-    )
+def _sheet_list(text: str) -> list[str | int]:
+    return [int(s) if s.isdigit() else s for s in (p.strip() for p in text.split(",")) if s]
 
-    files: dict[str, Path] = {"collar": Path(args.collar), "survey": Path(args.survey)}
-    if args.assay:
-        files["assay"] = Path(args.assay)
-    if args.geology:
-        files["geology"] = Path(args.geology)
-    for name, value in _pairs(args.interval, "--interval").items():
-        if name in files:
+
+def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
+    """The recipe the source file options describe, and where each table's map is from."""
+    from bakumine.core.drillholes.importer import ImportOptions
+    from bakumine.core.drillholes.recipe import make_recipe
+
+    if not args.collar:
+        raise CommandError("give the collar table with --collar FILE")
+    files: dict[str, list[Path]] = {"collar": [Path(p) for p in args.collar]}
+    for name in ("survey", "assay", "geology"):
+        if getattr(args, name):
+            files[name] = [Path(p) for p in getattr(args, name)]
+    for item in args.interval or []:
+        name, sep, value = item.partition("=")
+        if not sep or not name or not value:
+            raise CommandError(f"--interval expects NAME=FILE, got {item!r}")
+        if name in ("collar", "survey"):
             raise CommandError(f"table {name!r} is given twice")
-        files[name] = Path(value)
-    for name, path in files.items():
-        if not path.is_file():
-            raise CommandError(f"{name} file not found: {path}")
+        files.setdefault(name, []).append(Path(value))
+    for name, paths in files.items():
+        for path in paths:
+            if not path.is_file():
+                raise CommandError(f"{name} file not found: {path}")
     if not args.map_file and not args.auto:
         raise CommandError("give a column map with --map FILE, or use --auto")
 
-    sheets: dict[str, str | int] = {
-        name: int(sheet) if sheet.isdigit() else sheet
-        for name, sheet in _pairs(args.sheet, "--sheet").items()
-    }
     maps = _read_map_file(Path(args.map_file)) if args.map_file else {}
     unknown = sorted(set(maps) - set(files))
     if unknown:
         raise CommandError(f"the column map names tables that were not given: {unknown}")
+    per_table = {
+        "sheets": {t: _sheet_list(v) for t, v in _pairs(args.sheet, "--sheet").items()},
+        "header_row": {t: int(v) for t, v in _pairs(args.header_row, "--header-row").items()},
+        "header_rows": {t: int(v) for t, v in _pairs(args.header_rows, "--header-rows").items()},
+    }
+    named = {t for values in per_table.values() for t in values}
+    named |= set(args.hole_from_sheet) | set(args.sample_depth)
+    if named - set(files):
+        raise CommandError(f"options name tables that were not given: {sorted(named - set(files))}")
     options = ImportOptions(
         length_unit=args.length_unit,
         convert_to_metres=args.to_metres,
@@ -202,61 +282,166 @@ def run_import(args: argparse.Namespace) -> int:
         normalise_dip=args.normalise_dip,
         coordinate_order=args.coordinate_order,
         below_detection=args.below_detection,
+        above_detection=args.above_detection,
+        crs=args.crs,
+        coordinate_tolerance=args.coordinate_tolerance,
         text_columns=tuple(args.text_column),
         numeric_columns=tuple(args.numeric_column),
         delimiter=args.delimiter,
     )
+    tables: dict[str, list[dict]] = {}
     origin: dict[str, str] = {}
-    for name, path in files.items():
-        if name in maps:
-            origin[name] = "map file"
-            continue
-        if not args.auto:
+    for name, paths in files.items():
+        if name not in maps and not args.auto:
             raise CommandError(f"the column map has no table {name!r} (add it or use --auto)")
-        kind = name if name in ("collar", "survey") else "interval"
-        raw = read_raw_table(
-            path, sheet=sheets.get(name), delimiter=options.delimiter, encoding=options.encoding
-        )
-        suggestion = suggest_column_map(raw.columns, kind)  # type: ignore[arg-type]
-        if suggestion.missing:
-            raise CommandError(
-                f"--auto found no column for {suggestion.missing} in the {name} table "
-                f"(headers: {list(raw.columns)}); give a column map with --map"
+        origin[name] = "map file" if name in maps else "auto"
+        tables[name] = []
+        for path in paths:
+            source: dict = {"file": str(path)}
+            for key, values in per_table.items():
+                if name in values:
+                    source[key] = values[name]
+            if name in maps:
+                source["map"] = maps[name]
+            if name in args.hole_from_sheet:
+                source["hole_id_from_sheet"] = True
+            if name not in ("collar", "survey"):
+                if name in args.sample_depth:
+                    source["sample_depth"] = {"length": args.sample_length}
+                    if args.sample_pattern:
+                        source["sample_depth"]["patterns"] = list(args.sample_pattern)
+                if args.qc == "off":
+                    source["qc"] = {"mode": "off"}
+            tables[name].append(source)
+    recipe = make_recipe(
+        tables,
+        options,
+        hole_id={"pattern": args.hole_id_pattern, "template": args.hole_id_template},
+        merge={"precedence": args.merge_precedence, "tolerance": args.merge_tolerance},
+    )
+    return recipe, origin
+
+
+def _print_import_reports(db) -> None:
+    reports = db.metadata.reports
+    for name, info in reports.get("tables", {}).items():
+        sheets = sum(len(s["sheets"]) for s in info["sources"])
+        if len(info["sources"]) > 1 or sheets > 1:
+            print(f"  {name}: {len(info['sources'])} file(s), {sheets} sheet(s) stacked")
+    for name, counts in reports.get("qc", {}).items():
+        text = ", ".join(f"{kind} {n}" for kind, n in counts.items())
+        print(f"  {name} QC rows set aside ({sum(counts.values())}): {text}")
+    for name, checks in reports.get("sample_depth", {}).items():
+        for check in checks:
+            print(
+                f"  {name} depths from sample numbers: {check['rows']} rows in "
+                f"{len(check['holes'])} holes; not understood {check['unmatched']}, "
+                f"duplicates {check['duplicates']}, backwards {check['backwards']}, "
+                f"gaps {check['gaps']}, overlaps {check['overlaps']}"
             )
-        maps[name], origin[name] = suggestion.mapping, "auto"
+    for name, merged in reports.get("conflicts", {}).items():
+        print(
+            f"  {name} sources merged ({merged['precedence']} file wins): {merged['merged']} "
+            f"rows joined, {merged['filled']} cells filled, {merged['conflicts']} conflicts"
+        )
+        for row in merged["rows"][:5]:
+            key = ", ".join(str(row[k]) for k in merged["keys"])
+            print(
+                f"    conflict {key} {row['column']}: kept {row['kept']} "
+                f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
+            )
+    coordinates = reports.get("coordinates")
+    if coordinates:
+        print(
+            f"  collar longitude / latitude -> {coordinates['crs']}: {coordinates['converted']} "
+            f"converted, {coordinates['checked']} checked against the projected columns, "
+            f"{coordinates['disagree']} differ by more than {coordinates['tolerance']:g}"
+        )
+        for row in coordinates["rows"][:5]:
+            print(f"    {row['hole_id']}: differs by {row['difference']:g}")
+    survey = reports.get("survey")
+    if survey:
+        print(f"  survey made from the collar table: {survey['generated_from_collar']} holes")
 
-    sources = {
-        name: TableSource(path, maps[name], sheet=sheets.get(name)) for name, path in files.items()
-    }
-    intervals = {n: s for n, s in sources.items() if n not in ("collar", "survey")}
-    db = import_drillholes(sources["collar"], sources["survey"], intervals, options=options)
-    folder = db.save(args.out)
 
-    _wrote(folder / "database.json", "metadata and column maps")
-    for name, table in db.tables.items():
-        file = f"{name}.parquet" if name in ("collar", "survey") else f"interval_{name}.parquet"
-        _wrote(folder / file, f"{len(table)} rows")
+def run_import(args: argparse.Namespace) -> int:
+    from bakumine.core.drillholes.recipe import (
+        RECIPE_FILE,
+        MissingColumns,
+        load_recipe,
+        run_recipe,
+        save_recipe,
+    )
+
+    if not args.out and not args.dry_run:
+        raise CommandError("give the database folder with --out (or use --dry-run)")
+    if args.recipe:
+        given = [o for o in ("collar", "survey", "assay", "geology", "interval", "map_file")
+                 if getattr(args, o)]  # fmt: skip
+        if given or args.auto:
+            raise CommandError("--recipe replaces the source file options, --map and --auto")
+        path = Path(args.recipe)
+        if not path.is_file():
+            raise CommandError(f"recipe not found: {path}")
+        recipe = load_recipe(path)
+        base = Path(args.base) if args.base else path.resolve().parent
+        origin = {name: "recipe" for name in recipe["tables"]}
+    else:
+        recipe, origin = _recipe_from_args(args)
+        base = None
+    try:
+        db = run_recipe(recipe, base)
+    except MissingColumns as error:
+        how = "--auto found" if not args.recipe else "found"
+        raise CommandError(
+            f"{how} no column for {error.missing} in the {error.table} table "
+            f"(headers: {error.headers}); give a column map"
+            + (" with --map" if not args.recipe else " in the recipe")
+        ) from None
+
+    if args.save_recipe:
+        _wrote(save_recipe(db.metadata.recipe, args.save_recipe), "import recipe")
+    if args.dry_run:
+        print("dry run: no database written")
+    else:
+        folder = db.save(args.out)
+        _wrote(folder / "database.json", "metadata and column maps")
+        _wrote(folder / RECIPE_FILE, "import recipe; replay with `bakumine import --recipe`")
+        for name, table in db.tables.items():
+            file = (
+                f"{name}.parquet" if name in ("collar", "survey") else f"interval_{name}.parquet"
+            )
+            _wrote(folder / file, f"{len(table)} rows")
+        for name, table in db.qc.items():
+            _wrote(folder / f"qc_{name}.parquet", f"{len(table)} QC rows")
     print("column maps:")
-    for name in files:
-        pairs = ", ".join(f"{source}->{target}" for source, target in maps[name].items())
-        print(f"  {name} ({origin[name]}): {pairs}")
+    for name, sources in db.metadata.recipe["tables"].items():
+        for source in sources:
+            pairs = ", ".join(f"{s}->{t}" for s, t in source.get("map", {}).items())
+            print(f"  {name} ({origin.get(name, 'auto')}): {pairs}")
     print(
         f"holes {db.collar['hole_id'].nunique()}, survey stations {len(db.survey)}, "
         + ", ".join(f"{name} intervals {len(table)}" for name, table in db.intervals.items())
     )
-    converted = (
-        "" if db.length_unit == args.length_unit else f" (converted from {args.length_unit})"
-    )
+    source_unit = db.metadata.source_length_unit
+    converted = "" if db.length_unit == source_unit else f" (converted from {source_unit})"
     print(
         f"length unit {db.length_unit}{converted}, dip convention {db.dip_convention}, "
-        f"coordinate order {args.coordinate_order}"
+        f"coordinate order {db.metadata.coordinate_order}"
     )
     for name in db.intervals:
         table = db.intervals[name]
         columns = ", ".join(f"{c} [{table[c].dtype}]" for c in db.attribute_columns(name))
         print(f"  {name} attributes: {columns or '(none)'}")
+    _print_import_reports(db)
     for note in db.metadata.notes[:10]:
-        print(f"  note: {note['table']}.{note['column']}: {note['kind']} x {note['count']}")
+        values = note.get("values")
+        detail = (
+            " (" + ", ".join(f"{k!r} x {v}" for k, v in list(values.items())[:6]) + ")"
+            if values
+            else ""
+        )
+        print(f"  note: {note['table']}.{note['column']}: {note['kind']} x {note['count']}{detail}")
     if len(db.metadata.notes) > 10:
         print(f"  ... {len(db.metadata.notes) - 10} more notes in database.json")
     return 0

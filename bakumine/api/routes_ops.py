@@ -1,7 +1,10 @@
 """Operation endpoints behind the UI dialogs (P6.T2 - P6.T5), under ``/api/v1/ops``.
 
     GET    /ops/project                       objects and what dialogs pick from
-    PUT    /ops/uploads/{table}?filename=     raw file body; returns columns, mapping, preview
+    PUT    /ops/uploads/{table}?filename=     raw file body; returns sheets, columns, mapping,
+                                              preview (&add=true: one more file of the table)
+    POST   /ops/uploads/{table}/preview       the same for {index, spec}: sheets, header row,
+                                              sample-number rule, QC (a recipe source)
     DELETE /ops/uploads/{table}
     POST   /ops/import                        import + validate; saves the database
     POST   /ops/databases/{id}/validate
@@ -73,10 +76,28 @@ async def _read_limited(request: Request, limit: int) -> bytes:
 
 
 @router.put("/uploads/{table}")
-async def put_upload(table: str, filename: str, request: Request, source: Source) -> dict[str, Any]:
+async def put_upload(
+    table: str, filename: str, request: Request, source: Source, add: bool = False
+) -> dict[str, Any]:
     folder = _project(source).folder
     content = await _read_limited(request, MAX_UPLOAD_BYTES)
-    return _guard(lambda: ops.store_upload(folder, table, filename, content))
+    return _guard(lambda: ops.store_upload(folder, table, filename, content, add))
+
+
+@router.post("/uploads/{table}/preview")
+def post_upload_preview(table: str, body: Json, source: Source) -> dict[str, Any]:
+    folder = _project(source).folder
+
+    def run() -> dict[str, Any]:
+        ops._check_upload_name(table)
+        index = body.get("index", 0)
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise ops.OperationError("index must be a whole number")
+        return ops.preview_upload(
+            folder, table, index=index, spec=body.get("spec"), hole_id=body.get("hole_id")
+        )
+
+    return _guard(run)
 
 
 @router.delete("/uploads/{table}")
@@ -91,7 +112,13 @@ def post_import(body: Json, source: Source) -> dict[str, Any]:
     folder = _project(source).folder
     return _guard(
         lambda: ops.import_database(
-            folder, body.get("name", "drillholes"), body.get("maps"), body.get("options")
+            folder,
+            body.get("name", "drillholes"),
+            body.get("maps"),
+            body.get("options"),
+            body.get("tables"),
+            body.get("hole_id"),
+            body.get("merge"),
         )
     )
 

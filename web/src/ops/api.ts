@@ -32,9 +32,40 @@ export interface ProjectSummary {
   objects: ProjectObjectInfo[]
 }
 
+/** How one uploaded file is read: a source of an import recipe (bakumine/core/drillholes/recipe.py). */
+export interface SourceSpec {
+  sheets?: string[]
+  header_row?: number
+  header_rows?: number
+  map?: Record<string, string>
+  hole_id_from_sheet?: boolean
+  sample_depth?: { length: number; patterns?: string[] }
+  qc?: { mode: 'separate' | 'off' }
+  /** preview only: the sheet whose raw rows are shown */
+  preview_sheet?: string
+}
+
+export interface HoleIdRule {
+  pattern: string
+  template: string
+}
+
+export interface SampleDepthCheck {
+  rows: number
+  duplicates: number
+  backwards: number
+  gaps: number
+  overlaps: number
+  unmatched: number
+  unmatched_examples: string[]
+}
+
 export interface UploadPreview {
   name: string
   kind: 'collar' | 'survey' | 'interval'
+  /** position of the file among the files uploaded for the table */
+  index: number
+  n_files: number
   file: string
   rows: number
   columns: string[]
@@ -42,6 +73,37 @@ export interface UploadPreview {
   mapping: Record<string, string>
   missing: string[]
   unmatched: string[]
+  sheets: { name: string; rows: number }[]
+  selected: { name: string; header_row: number; header_rows: number; rows: number; skipped: string[] }[]
+  /** the first raw rows of `grid_sheet`, for picking the header row */
+  grid: string[][]
+  grid_sheet: string
+  grid_header_row: number
+  grid_header_rows: number
+  /** the rows as they will be imported (canonical names, derived depths) */
+  prepared: { columns: string[]; rows: string[][] }
+  qc: Record<string, number>
+  sample_depth: (SampleDepthCheck & { preview: { hole_id: string; sample_id: string; depth_from: number; depth_to: number }[] }) | null
+  notes: string[]
+}
+
+export interface MergeReport {
+  precedence: string
+  keys: string[]
+  merged: number
+  filled: number
+  conflicts: number
+  rows: Record<string, string | number | null>[]
+}
+
+export interface CoordinateReport {
+  crs: string
+  order: string
+  tolerance: number
+  converted: number
+  checked: number
+  disagree: number
+  rows: { hole_id: string; difference: number }[]
 }
 
 export interface ValidationResult {
@@ -60,6 +122,14 @@ export interface ImportResult extends ValidationResult {
   name: string
   tables: Record<string, number>
   notes: string[]
+  qc: Record<string, Record<string, number>>
+  conflicts: Record<string, MergeReport>
+  coordinates: CoordinateReport | null
+  survey: { generated_from_collar: number; holes_without_azimuth_or_dip: string[] } | null
+  sample_depth: Record<string, SampleDepthCheck[]>
+  dip_convention: string
+  coordinate_order: string
+  recipe: unknown
 }
 
 export interface JobState {
@@ -101,8 +171,11 @@ async function call<T>(method: string, path: string, body?: unknown, raw?: { dat
 
 export const opsApi = {
   project: () => call<ProjectSummary>('GET', '/project'),
-  upload: (table: string, file: File) =>
-    call<UploadPreview>('PUT', `/uploads/${encodeURIComponent(table)}?filename=${encodeURIComponent(file.name)}`, undefined, { data: file }),
+  /** `add`: one more file of the same table (merged on import) instead of replacing it. */
+  upload: (table: string, file: File, add = false) =>
+    call<UploadPreview>('PUT', `/uploads/${encodeURIComponent(table)}?filename=${encodeURIComponent(file.name)}${add ? '&add=true' : ''}`, undefined, { data: file }),
+  previewUpload: (table: string, index: number, spec: SourceSpec, holeId?: HoleIdRule | null) =>
+    call<UploadPreview>('POST', `/uploads/${encodeURIComponent(table)}/preview`, { index, spec, hole_id: holeId ?? undefined }),
   removeUpload: (table: string) => call<unknown>('DELETE', `/uploads/${encodeURIComponent(table)}`),
   importDb: (body: unknown) => call<ImportResult>('POST', '/import', body),
   composite: (body: unknown) => call<Record<string, unknown>>('POST', '/composite', body),

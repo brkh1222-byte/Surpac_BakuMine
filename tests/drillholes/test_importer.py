@@ -385,8 +385,8 @@ def test_missing_tokens_are_user_configurable():
     options = ImportOptions(missing_tokens=("NS", -1))
     table, _ = import_table(_assay(cells), "interval", ASSAY_MAP, options)
     # -99 is now a value, "NS" and -1 are missing, blank is always missing; "-" is no longer
-    # a token, so the column is not numeric unless forced.
-    assert table["au"].dtype == "str"
+    # a token: one odd cell among numbers, read as NaN and counted by value.
+    assert table["au"].dtype == np.float64
     options = ImportOptions(missing_tokens=("NS", -1), numeric_columns=("au",))
     table, notes = import_table(_assay(cells), "interval", ASSAY_MAP, options)
     np.testing.assert_array_equal(table["au"], [1.5, -99.0, np.nan, np.nan, np.nan, np.nan])
@@ -397,17 +397,27 @@ def test_missing_tokens_are_user_configurable():
     ]  # fmt: skip
 
 
-def test_mostly_numeric_column_read_as_text_is_noted():
-    """P7.T5 regression: one odd assay cell used to turn the column to text silently."""
-    table, notes = import_table(_assay(["1.5", ">10", "2", "0.3"]), "interval", ASSAY_MAP)
-    assert table["au"].dtype == "str"
-    found = [n for n in notes if n["kind"] == "numeric_column_read_as_text"]
+def test_mostly_numeric_column_stays_numeric_and_odd_cells_are_counted():
+    """P7.T5 regression: one odd assay cell used to turn the column to text silently; then
+    it was noted; now the column stays numeric and the odd cells are counted by value."""
+    cells = ["1.5", "LNR", "2", "0.3", "IS", "LNR", "4"]
+    table, notes = import_table(_assay(cells), "interval", ASSAY_MAP)
+    np.testing.assert_array_equal(table["au"], [1.5, np.nan, 2.0, 0.3, np.nan, np.nan, 4.0])
+    found = [n for n in notes if n["kind"] == "unparseable_set_to_nan"]
     assert len(found) == 1
-    assert found[0]["column"] == "au" and found[0]["count"] == 1
-    assert found[0]["examples"] == [">10"]
-    # a genuine text column is not flagged
-    _, notes = import_table(_assay(["1"] * 3, ["GRANITE", "ORE", "12"]), "interval", ASSAY_MAP)
-    assert not [n for n in notes if n["kind"] == "numeric_column_read_as_text"]
+    assert found[0]["column"] == "au" and found[0]["count"] == 3
+    assert found[0]["values"] == {"LNR": 2, "IS": 1}
+    # ">10" is a value above the detection limit, not text
+    table, notes = import_table(_assay(["1.5", ">10", "2", "0.3"]), "interval", ASSAY_MAP)
+    np.testing.assert_array_equal(table["au"], [1.5, 10.0, 2.0, 0.3])
+    assert {"table": "interval", "column": "au", "kind": "above_detection", "count": 1,
+            "rule": "limit"} in notes  # fmt: skip
+    # a genuine text column stays text and is not flagged
+    table, notes = import_table(
+        _assay(["1"] * 3, ["GRANITE", "ORE", "12"]), "interval", ASSAY_MAP
+    )
+    assert table["lith"].dtype == "str"
+    assert not [n for n in notes if n["kind"] == "unparseable_set_to_nan"]
 
 
 def test_numeric_sentinels_do_not_touch_coordinates_or_angles():

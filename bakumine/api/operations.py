@@ -58,10 +58,43 @@ def _table_kind(name: str) -> str:
     return name if name in ("collar", "survey") else "interval"
 
 
+#: file types the import accepts (CSVs from `bakumine extract-tables` included)
+UPLOAD_SUFFIXES = (".csv", ".txt", ".tsv", ".xlsx", ".xlsm", ".xls")
+#: rows / columns of the raw sheet shown for picking the header row
+GRID_ROWS, GRID_COLUMNS = 14, 40
+MAX_SHEETS_LISTED = 400
+#: keys of a source of an import recipe a request may set (never ``file``)
+_SPEC_KEYS = frozenset(
+    {
+        "sheets", "exclude_sheets", "header_row", "header_rows", "map", "hole_id_from_sheet",
+        "hole_id", "sample_depth", "qc",
+    }
+)  # fmt: skip
+
+
+def _table_files(folder: Path, name: str) -> list[Path]:
+    """The uploaded files of a table: ``<name>.<ext>``, then ``<name>+2.<ext>``, ..."""
+    uploads = folder / UPLOADS
+    first = sorted(p for p in uploads.glob(f"{name}.*") if p.is_file())[:1]
+
+    def number(path: Path) -> int:
+        tail = path.stem.rpartition("+")[2]
+        return int(tail) if tail.isdigit() else 0
+
+    more = [p for p in uploads.glob(f"{name}+*.*") if p.is_file() and number(p) > 0]
+    return first + sorted(more, key=number)
+
+
 def _upload_path(folder: Path, name: str) -> Path | None:
-    for file in sorted((folder / UPLOADS).glob(f"{name}.*")):
-        return file
-    return None
+    files = _table_files(folder, name)
+    return files[0] if files else None
+
+
+def _uploaded_tables(folder: Path) -> list[str]:
+    uploads = folder / UPLOADS
+    if not uploads.is_dir():
+        return []
+    return sorted({p.stem.partition("+")[0] for p in uploads.glob("*.*") if p.is_file()})
 
 
 def _check_upload_name(name: str) -> None:
@@ -75,56 +108,159 @@ def _check_upload_name(name: str) -> None:
             raise _fail(exc) from None
 
 
-def store_upload(folder: Path, name: str, filename: str, content: bytes) -> dict[str, Any]:
+def store_upload(
+    folder: Path, name: str, filename: str, content: bytes, add: bool = False
+) -> dict[str, Any]:
+    """Keep an uploaded file for a table. ``add`` appends it as one more source of the
+    table (merged on import) instead of replacing what was uploaded for it."""
     _check_upload_name(name)
     suffix = Path(filename).suffix.lower()
-    if suffix not in (".csv", ".txt", ".xlsx", ".xlsm"):
-        raise OperationError(f"{filename!r}: use a CSV or XLSX file")
+    if suffix not in UPLOAD_SUFFIXES:
+        raise OperationError(f"{filename!r}: use a CSV, XLSX or XLS file")
     target = folder / UPLOADS
     target.mkdir(exist_ok=True)
-    for old in target.glob(f"{name}.*"):
-        old.unlink()
-    (target / f"{name}{suffix}").write_bytes(content)
-    return preview_upload(folder, name)
+    existing = _table_files(folder, name)
+    if add and existing:
+        index = len(existing)
+        path = target / f"{name}+{index + 1}{suffix}"
+    else:
+        for old in existing:
+            old.unlink()
+        index, path = 0, target / f"{name}{suffix}"
+    path.write_bytes(content)
+    try:
+        return preview_upload(folder, name, index=index)
+    except OperationError:
+        path.unlink(missing_ok=True)  # an unreadable file is not kept
+        raise
 
 
 def remove_upload(folder: Path, name: str) -> None:
     _check_upload_name(name)
-    for old in (folder / UPLOADS).glob(f"{name}.*"):
+    for old in _table_files(folder, name):
         old.unlink()
 
 
-def preview_upload(folder: Path, name: str, delimiter: str | None = ",") -> dict[str, Any]:
-    from bakumine.core.drillholes.importer import read_raw_table, suggest_column_map
+_grid_cache: dict[tuple[str, int, int, str | None], dict[str, pd.DataFrame]] = {}
+_grid_lock = threading.Lock()
 
-    path = _upload_path(folder, name)
-    if path is None:
+
+def _grids(path: Path, delimiter: str | None) -> dict[str, pd.DataFrame]:
+    """The sheets of an uploaded file; the last few files read are remembered, so that
+    moving the header row of a large workbook does not read it again."""
+    from bakumine.core.drillholes.tables import read_grids
+
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size, delimiter)
+    with _grid_lock:
+        if key in _grid_cache:
+            return _grid_cache[key]
+    grids = read_grids(path, delimiter=delimiter)
+    with _grid_lock:
+        _grid_cache[key] = grids
+        while len(_grid_cache) > 4:
+            _grid_cache.pop(next(iter(_grid_cache)))
+    return grids
+
+
+def _clean_spec(spec: Any) -> dict[str, Any]:
+    if spec is None:
+        return {}
+    if not isinstance(spec, dict):
+        raise OperationError("a source description must be an object")
+    unknown = sorted(set(spec) - _SPEC_KEYS - {"preview_sheet"})
+    if unknown:
+        raise OperationError(f"unknown source option(s) {unknown}")
+    return {k: v for k, v in spec.items() if v is not None and v != "" and v != []}
+
+
+def preview_upload(
+    folder: Path,
+    name: str,
+    delimiter: str | None = ",",
+    index: int = 0,
+    spec: dict[str, Any] | None = None,
+    hole_id: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """What an uploaded file holds and what the import would make of it with ``spec``
+    (the keys of a recipe source: sheets, header row, column map, sample-number rule, QC)."""
+    from bakumine.core.drillholes.importer import missing_required
+    from bakumine.core.drillholes.tables import locate_header, prepare_source, table_from_grid
+
+    files = _table_files(folder, name)
+    if not 0 <= index < len(files):
         raise OperationError(f"no uploaded file for table {name!r}")
+    path = files[index]
+    spec = _clean_spec(spec)
+    shown = spec.pop("preview_sheet", None)
+    kind = _table_kind(name)
     try:
-        raw = read_raw_table(path, delimiter=delimiter)
-        suggestion = suggest_column_map(raw.columns, _table_kind(name))  # type: ignore[arg-type]
-    except Exception as exc:  # unreadable file
+        grids = _grids(path, delimiter)
+        prepared = prepare_source(spec, kind, name=name, grids=grids, hole_id=hole_id)
+        chosen = prepared.info["sheets"]
+        shown = shown if shown in grids else chosen[0]["name"]
+        grid = grids[shown]
+        used = next((s for s in chosen if s["name"] == shown), None)
+        if used is not None:
+            header = locate_header(grid, used["header_row"] - 1, used["header_rows"] or None)
+        else:
+            header = locate_header(grid)
+        raw, _ = table_from_grid(grid, header)
+    except Exception as exc:  # unreadable file, bad pattern, missing column
         raise _fail(exc) from None
+    targets = prepared.info["targets"]
+    sample_depth = prepared.info.get("sample_depth")
+    if sample_depth:
+        sample_depth = {**sample_depth, "holes": sample_depth["holes"][:60]}
     return {
         "name": name,
-        "kind": _table_kind(name),
+        "kind": kind,
+        "index": index,
+        "n_files": len(files),
         "file": path.name,
-        "rows": int(len(raw)),
-        "columns": [str(c) for c in raw.columns],
+        "rows": prepared.info["rows"],
+        "columns": [str(c) for c in prepared.info["columns"]],
         "preview": raw.head(PREVIEW_ROWS).astype(str).to_dict(orient="records"),
-        "mapping": {str(k): v for k, v in suggestion.mapping.items()},
-        "missing": list(suggestion.missing),
-        "unmatched": [str(c) for c in suggestion.unmatched],
+        "mapping": dict(prepared.mapping),
+        "missing": missing_required(kind, targets),
+        "unmatched": [c for c in prepared.info["columns"] if c not in prepared.mapping],
+        "sheets": [
+            {"name": sheet, "rows": int(len(g))}
+            for sheet, g in list(grids.items())[:MAX_SHEETS_LISTED]
+        ],
+        "selected": chosen,
+        "grid_sheet": shown,
+        "grid_header_row": header.row + 1,
+        "grid_header_rows": header.n_rows,
+        "grid": grid.iloc[:GRID_ROWS, :GRID_COLUMNS].astype(str).to_numpy().tolist(),
+        "prepared": {
+            "columns": [str(c) for c in prepared.table.columns],
+            "rows": prepared.table.head(PREVIEW_ROWS).astype(str).to_numpy().tolist(),
+        },
+        "qc": prepared.info.get("qc") or {},
+        "sample_depth": sample_depth,
+        "notes": [_note_text(n) for n in prepared.notes[:20]],
     }
 
 
+def _note_text(note: dict[str, Any]) -> str:
+    text = f"{note['table']}.{note['column']}: {note['kind']} x {note['count']}"
+    values = note.get("values") or {}
+    if values:
+        text += " (" + ", ".join(f"{k} x {v}" for k, v in list(values.items())[:6]) + ")"
+    elif note.get("examples"):
+        text += " (e.g. " + ", ".join(str(e) for e in note["examples"][:3]) + ")"
+    return text
+
+
 def list_uploads(folder: Path) -> list[dict[str, Any]]:
-    names = (
-        sorted({p.stem for p in (folder / UPLOADS).glob("*.*")})
-        if (folder / UPLOADS).is_dir()
-        else []
-    )
-    return [preview_upload(folder, n) for n in names]
+    out = []
+    for name in _uploaded_tables(folder):
+        try:
+            out.append(preview_upload(folder, name))
+        except OperationError:
+            continue  # a file that can no longer be read does not block the project
+    return out
 
 
 def validation_dict(report: Any) -> dict[str, Any]:
@@ -183,11 +319,26 @@ def import_database(
     name: str,
     maps: dict[str, dict[str, str]] | None = None,
     options: dict[str, Any] | None = None,
+    tables: dict[str, list[dict[str, Any] | None]] | None = None,
+    hole_id: dict[str, Any] | None = None,
+    merge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """``bakumine import`` + ``validate`` on the uploaded tables; saves the database."""
+    """``bakumine import`` + ``validate`` on the uploaded tables; saves the database.
+
+    ``tables`` gives, per table, one recipe source per uploaded file (sheets, header row,
+    column map, sample-number rule, QC; see ``bakumine.core.drillholes.recipe``), and then
+    only the tables it names are imported (files uploaded earlier for other tables are left
+    alone); ``maps`` is the short form: one column map per table, every uploaded table is
+    imported. What is left out is detected."""
     params = {"name": name, "maps": maps, "options": options}
+    for key, value in (("tables", tables), ("hole_id", hole_id), ("merge", merge)):
+        if value:
+            params[key] = value
     return _record(
-        folder, "import", params, lambda rec: _import(folder, name, maps, options, rec)
+        folder,
+        "import",
+        params,
+        lambda rec: _import(folder, name, maps, options, tables, hole_id, merge, rec),
     )
 
 
@@ -196,53 +347,60 @@ def _import(
     name: str,
     maps: dict[str, dict[str, str]] | None,
     options: dict[str, Any] | None,
+    tables: dict[str, list[dict[str, Any] | None]] | None,
+    hole_id: dict[str, Any] | None,
+    merge: dict[str, Any] | None,
     rec: joblog.Recorder,
 ) -> dict[str, Any]:
     import shutil
 
-    from bakumine.core.drillholes.importer import (
-        ImportOptions,
-        TableSource,
-        import_drillholes,
-        read_raw_table,
-        suggest_column_map,
+    from bakumine.core.drillholes.recipe import (
+        MissingColumns,
+        make_recipe,
+        options_from_dict,
+        run_recipe,
     )
     from bakumine.core.drillholes.validate import validate
 
-    if not isinstance(maps or {}, dict) or not isinstance(options or {}, dict):
-        raise OperationError("maps and options must be objects")
-    maps = dict(maps or {})
-    uploads = (
-        {p.stem: p for p in (folder / UPLOADS).glob("*.*")} if (folder / UPLOADS).is_dir() else {}
-    )
-    for needed in ("collar", "survey"):
-        if needed not in uploads:
-            raise OperationError(f"upload the {needed} table first")
+    for what, value in (("maps", maps), ("options", options), ("tables", tables),
+                        ("hole_id", hole_id), ("merge", merge)):  # fmt: skip
+        if not isinstance(value or {}, dict):
+            raise OperationError(f"{what} must be an object")
+    maps, tables = dict(maps or {}), dict(tables or {})
+    uploads = {table: _table_files(folder, table) for table in _uploaded_tables(folder)}
+    if tables:  # the dialog says which tables it shows; older uploads are not its business
+        absent = sorted(set(tables) - set(uploads))
+        if absent:
+            raise OperationError(f"no uploaded file for table(s) {absent}")
+        uploads = {table: files for table, files in uploads.items() if table in tables}
+    if "collar" not in uploads:
+        raise OperationError("upload the collar table first")
     # keep the files this import reads, so that the job log can be replayed
     kept = folder / INPUTS / rec.id
     kept.mkdir(parents=True, exist_ok=True)
-    for table, path in list(uploads.items()):
-        uploads[table] = Path(shutil.copy2(path, kept / path.name))
+    sources: dict[str, list[dict[str, Any]]] = {}
+    for table, files in uploads.items():
+        specs = tables.get(table) or []
+        if not isinstance(specs, list):
+            raise OperationError(f"tables.{table} must be a list with one entry per file")
+        sources[table] = []
+        for i, path in enumerate(files):
+            copied = Path(shutil.copy2(path, kept / path.name))
+            source = _clean_spec(specs[i] if i < len(specs) else None)
+            source.pop("preview_sheet", None)
+            if not source.get("map") and maps.get(table):
+                source["map"] = maps[table]
+            source["file"] = copied.relative_to(folder).as_posix()
+            sources[table].append(source)
     try:
-        opts = ImportOptions(**{k: v for k, v in (options or {}).items() if v not in (None, "")})
-        sources: dict[str, TableSource] = {}
-        for table, path in uploads.items():
-            mapping = maps.get(table)
-            if not mapping:
-                raw = read_raw_table(path, delimiter=opts.delimiter, encoding=opts.encoding)
-                suggestion = suggest_column_map(raw.columns, _table_kind(table))  # type: ignore[arg-type]
-                if suggestion.missing:
-                    raise OperationError(
-                        f"no column found for {suggestion.missing} in the {table} table"
-                    )
-                mapping = suggestion.mapping
-            sources[table] = TableSource(path, mapping)
+        recipe = make_recipe(sources, options_from_dict(options), hole_id=hole_id, merge=merge)
+        db = run_recipe(recipe, folder)
+        resolved = db.metadata.recipe
         rec.entry["replay"] = {
-            "files": {t: p.relative_to(folder).as_posix() for t, p in uploads.items()},
-            "maps": {t: {str(k): v for k, v in s.column_map.items()} for t, s in sources.items()},
+            "files": {t: s[0]["file"] for t, s in resolved["tables"].items()},
+            "maps": {t: dict(s[0].get("map") or {}) for t, s in resolved["tables"].items()},
+            "recipe": resolved,
         }
-        intervals = {n: s for n, s in sources.items() if n not in ("collar", "survey")}
-        db = import_drillholes(sources["collar"], sources["survey"], intervals, options=opts)
         report = validate(db, max_deviation_deg_per_30m=10.0, depth_tolerance=1e-6)
         with tempfile.TemporaryDirectory() as tmp:
             saved = db.save(Path(tmp) / "database")
@@ -251,18 +409,33 @@ def _import(
             rec.entry["outputs"] = [obj.to_dict()]
     except OperationError:
         raise
+    except MissingColumns as exc:
+        raise OperationError(
+            f"no column found for {exc.missing} in the {exc.table} table"
+        ) from None
     except (ValueError, KeyError, TypeError, FileNotFoundError) as exc:
         raise _fail(exc) from None
     result = validation_dict(report)
+    reports = db.metadata.reports
     result.update(
         {
             "id": obj.id,
             "name": obj.name,
             "tables": {n: int(len(t)) for n, t in db.tables.items()},
-            "notes": [
-                f"{n['table']}.{n['column']}: {n['kind']} x {n['count']}"
-                for n in db.metadata.notes[:20]
-            ],
+            "notes": [_note_text(n) for n in db.metadata.notes[:40]],
+            "qc": reports.get("qc", {}),
+            "conflicts": {
+                t: {**c, "rows": c["rows"][:50]} for t, c in reports.get("conflicts", {}).items()
+            },
+            "coordinates": reports.get("coordinates"),
+            "survey": reports.get("survey"),
+            "sample_depth": {
+                t: [{k: v for k, v in c.items() if k not in ("holes", "preview")} for c in checks]
+                for t, checks in reports.get("sample_depth", {}).items()
+            },
+            "dip_convention": db.dip_convention,
+            "coordinate_order": db.metadata.coordinate_order,
+            "recipe": resolved,
         }
     )
     return result
@@ -271,7 +444,10 @@ def _import(
 # ------------------------------------------------------------------ job log (P6.T7)
 
 #: result keys left out of the log summary (long lists the dialogs show)
-_LONG = {"issues", "counts", "preview", "table", "notes", "columns", "steps", "rows"}
+_LONG = {
+    "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
+    "recipe", "conflicts", "coordinates", "sample_depth", "survey",
+}  # fmt: skip
 
 
 def _brief(result: Any) -> Any:
