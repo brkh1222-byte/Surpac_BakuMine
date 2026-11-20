@@ -299,3 +299,79 @@ def test_extracted_collar_table_imports_without_its_total_row(collar_report, tmp
     np.testing.assert_allclose(collar["max_depth"], [float(r[8]) for r in drawn])
     survey = pd.read_parquet(tmp_path / "db" / "survey.parquet")
     np.testing.assert_array_equal(survey["dip"], [float(r[7]) for r in drawn])
+
+
+# --------------------------------------------------------------------------------------
+# several tables one after the other in one page range
+# --------------------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def three_tables(tmp_path_factory):
+    from pdf_fixture import write_three_tables
+
+    path = tmp_path_factory.mktemp("pdf3") / "appendices.pdf"
+    return path, write_three_tables(path)
+
+
+def _carried(rows: list[list[str]]) -> list[list[str]]:
+    out, last = [], ""
+    for row in rows:
+        last = row[1] or last
+        out.append([row[0], last, *row[2:]])
+    return out
+
+
+def test_consecutive_tables_with_their_own_headers_stay_apart(three_tables):
+    from pdf_fixture import THREE_TABLE_PAGES, THREE_TABLES
+
+    path, drawn = three_tables
+    assert n_pages(path) == 9
+    whole = extract_tables(path)  # one call over every page
+    assert len(whole) == 3
+    for table, (name, header, _widths, columns, pages) in zip(whole, THREE_TABLES, strict=True):
+        assert table.columns == columns
+        assert table.rows == _carried(drawn[name])  # nothing lost, nothing shifted
+        assert (table.first_page, table.last_page) == THREE_TABLE_PAGES[name]
+        assert table.notes["header_rows"] == len(header)
+        assert table.notes["repeated_headers"] == sum(r for _, r in pages) - 1
+        report = table_report(table)
+        assert report["rows_without_depths"] == 0 and report["warnings"] == []
+    b, c = whole[1], whole[2]
+    # the header of C is nearly that of B (same cells, one word broken differently): it is
+    # another table all the same, because its columns lie elsewhere on the page
+    assert b.columns[3:] == c.columns[3:] and b.columns[2] != c.columns[2]
+    # the hole named last in B is not carried into the first rows of C
+    assert [r[1] for r in c.rows[:3]] == ["", "", drawn["C"][2][1]]
+    assert report["rows_without_hole"] == 2
+    assert not {r[1] for r in b.rows} & {r[1] for r in c.rows}
+
+    # the same tables as from one call per table
+    for table, name in zip(whole, "ABC", strict=True):
+        first, last = THREE_TABLE_PAGES[name]
+        alone = extract_tables(path, f"{first}-{last}")
+        own = alone[0] if name == "A" else alone[-1]  # page 3 holds the end of A and B
+        assert (own.columns, own.rows, own.pages) == (table.columns, table.rows, table.pages)
+        assert own.notes["carried_down"] == table.notes["carried_down"]
+
+
+def test_a_repeated_header_must_lie_in_the_same_columns():
+    from bakumine.core.io.pdf_tables import _same_columns
+
+    first = [(100.0, 130.0), (130.0, 190.0), (190.0, 250.0)]
+    assert _same_columns(first, [(100.4, 130.2), (129.5, 190.0), (190.0, 251.1)])
+    assert not _same_columns(first, [(100.0, 140.0), (140.0, 200.0), (200.0, 255.0)])
+    assert not _same_columns(first, first[:2])
+
+
+def test_cli_writes_one_file_per_consecutive_table(three_tables, tmp_path, capsys):
+    path, drawn = three_tables
+    assert main(["extract-tables", str(path), "--out", str(tmp_path), "--name", "t"]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+    for k, name in enumerate("ABC", start=1):
+        frame = pd.read_csv(tmp_path / f"t_{k}.csv", dtype=str)
+        assert len(frame) == len(drawn[name])
+        assert frame.iloc[:, 0].tolist() == [r[0] for r in drawn[name]]
+    assert not (tmp_path / "t_4.csv").exists()
+    # --one-table still joins them when the user says the range is one table
+    joined = extract_tables(path, one_table=True)
+    assert len(joined) == 1 and len(joined[0].rows) >= sum(len(r) for r in drawn.values())

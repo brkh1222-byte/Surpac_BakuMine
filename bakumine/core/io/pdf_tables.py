@@ -6,7 +6,10 @@ with ``pdfplumber`` (MIT licence; it reads the cell rectangles the PDF draws) an
 them into whole tables:
 
 * a table continues on the next page when that page starts with data or repeats the
-  header (repeated headers are dropped). The first row of a continuation page is a header
+  header (repeated headers are dropped): the same words, closely, in the same columns of
+  the page. A header with other words, another number of columns or other column
+  positions starts a new table, and nothing is carried down across that boundary. The
+  first row of a continuation page is a header
   only when it matches the known header, or is clearly another header (it has text over
   the number columns of the rows below, or other columns): then it starts a new table
   (``one_table=True`` never does). A text-only row in the columns of the running table is
@@ -54,6 +57,7 @@ _MIN_COLUMN = 2.0  # points: narrower intervals between boundaries are rulings, 
 _MAX_TITLES = 100
 _MIN_ROW = 4.0  # points: a band of rulings lower than this is not a row
 _JOINED = 1.5  # points: ruling pieces closer than this are one line
+_SAME_COLUMN = 3.0  # points: header cells of a repeated header lie this close to the first
 
 
 @dataclass
@@ -325,6 +329,7 @@ class _Builder:
 
     def __init__(self, header: list[_Row], first: _Row) -> None:
         self.header_key = [[_clean(t, True) for t in r.texts()] for r in header]
+        self.header_columns = _header_columns(header)
         self.header_page = (header[0] if header else first).page
         source = header or [first]
         edges = sorted({round(e, 1) for r in source for c in r.cells for e in (c.x0, c.x1)})
@@ -550,10 +555,17 @@ def extract_tables(
                 n_header = _leading_header(rows, left, right)
                 header, body = rows[:n_header], rows[n_header:]
                 key = [[_clean(t, True) for t in r.texts()] for r in header]
-                if current is not None and header and not _same_header(key, current.header_key):
+                # the known header again: the same words (closely) in the same columns
+                repeated = bool(
+                    current is not None
+                    and header
+                    and _same_header(key, current.header_key)
+                    and _same_columns(_header_columns(header), current.header_columns)
+                )
+                if current is not None and header and not repeated:
                     if one_table or current.continues_with(header, body):
                         header, body, key = [], rows, []  # data that happens to be text
-                if current is None or (header and not _same_header(key, current.header_key)):
+                if current is None or (header and not repeated):
                     if not header and not body:
                         continue
                     current = _Builder(header, (body or header)[0])
@@ -584,6 +596,20 @@ def extract_tables(
             if progress is not None:
                 progress(done + 1, len(numbers))
     return [b.finish(carry_down) for b in builders]
+
+
+def _header_columns(header: list[_Row]) -> list[tuple[float, float]]:
+    """Where the named cells of a header's first row lie (left and right edge)."""
+    return [(c.x0, c.x1) for c in header[0].cells if _clean(c.text, True)] if header else []
+
+
+def _same_columns(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> bool:
+    """The same number of header cells at the same places on the page. Another table,
+    even one with nearly the same header words, is drawn with other column widths."""
+    return len(a) == len(b) and all(
+        abs(p[0] - q[0]) <= _SAME_COLUMN and abs(p[1] - q[1]) <= _SAME_COLUMN
+        for p, q in zip(a, b, strict=True)
+    )
 
 
 def _same_header(a: list[list[str]], b: list[list[str]]) -> bool:

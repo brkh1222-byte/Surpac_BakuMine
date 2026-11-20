@@ -204,3 +204,104 @@ def write_collar_report(path: Path) -> list[list[str]]:
         str(path), pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=40, rightMargin=40
     ).build(story)
     return rows
+
+
+# --------------------------------------------------------------------------------------
+# three assay tables one after the other, each with its own header and column widths
+# --------------------------------------------------------------------------------------
+#: name, header rows, column widths, columns expected, pages as (rows, repeat the header?)
+THREE_TABLES = (
+    (
+        "A",
+        [["No", "Hole", "Type", "Sample No", "Interval", "", "Length, m", "Au, g/t"],
+         ["", "", "", "", "from", "to", "", ""]],
+        [28, 70, 44, 92, 44, 44, 50, 46],
+        ["No", "Hole", "Type", "Sample No", "from", "to", "Length, m", "Au, g/t"],
+        ((30, True), (30, True), (12, True)),
+    ),
+    (  # starts below the end of A on the same page; its later pages have no header
+        "B",
+        [["No", "Hole No", "Sample type", "Sample number", "Sample interval", "",
+          "Length, m", "Au, g/t", "Ag, g/t"],
+         ["", "", "", "", "from", "to", "", "", ""]],
+        [30, 60, 64, 84, 40, 40, 50, 44, 42],
+        ["No", "Hole No", "Sample type", "Sample number", "from", "to", "Length, m",
+         "Au, g/t", "Ag, g/t"],
+        ((14, True), (32, False), (21, False)),
+    ),
+    (  # nearly the header of B (a word broken differently), other column widths
+        "C",
+        [["No", "Hole No", "Sampl e type", "Sample number", "Sample interval", "",
+          "Length, m", "Au, g/t", "Ag, g/t"],
+         ["", "", "", "", "from", "to", "", "", ""]],
+        [38, 66, 50, 100, 38, 40, 48, 40, 34],
+        ["No", "Hole No", "Sampl e type", "Sample number", "from", "to", "Length, m",
+         "Au, g/t", "Ag, g/t"],
+        ((25, True), (30, False), (28, True), (9, False)),
+    ),
+)  # fmt: skip
+#: 1-based pages of each table of :data:`THREE_TABLES` in the file
+THREE_TABLE_PAGES = {"A": (1, 3), "B": (3, 5), "C": (6, 9)}
+
+
+def three_table_rows() -> dict[str, list[list[str]]]:
+    """The rows of the three tables as drawn. A hole is named on its first row only. The
+    first two rows of table C name no hole at all (nothing above them in that table)."""
+    rng = np.random.default_rng(29)
+    out: dict[str, list[list[str]]] = {}
+    hole_number = 0
+    for name, _header, widths, _columns, pages in THREE_TABLES:
+        n = sum(count for count, _ in pages)
+        rows: list[list[str]] = []
+        while len(rows) < n:
+            hole_number += 1
+            hole = f"SYN26_{hole_number:02d}"
+            depth = float(rng.integers(0, 4))
+            for k in range(min(int(rng.integers(18, 30)), n - len(rows))):
+                length = float(rng.choice([1.0, 1.0, 1.5, 0.7]))
+                row = [str(len(rows) + 1), hole if k == 0 else "", "Core",
+                       str(310000 + 1000 * hole_number + k), f"{depth:.2f}",
+                       f"{depth + length:.2f}", f"{length:.2f}",
+                       f"{rng.lognormal(-1.5, 1.0):.2f}"]  # fmt: skip
+                if len(widths) == 9:
+                    row.append(f"{rng.lognormal(0.3, 0.6):.1f}" if rng.random() < 0.7 else "")
+                rows.append(row)
+                depth += length
+        if name == "C":  # two rows before the first hole is named
+            rows[2][1], rows[0][1] = rows[0][1], ""
+        out[name] = rows
+    return out
+
+
+def write_three_tables(path: Path) -> dict[str, list[list[str]]]:
+    """Draw :data:`THREE_TABLES` (pages in :data:`THREE_TABLE_PAGES`); returns the rows."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table
+
+    tables = three_table_rows()
+    styles = getSampleStyleSheet()
+    everywhere = ((0, 0), (-1, -1))
+    grid = [("GRID", *everywhere, 0.5, colors.black), ("FONTSIZE", *everywhere, 7),
+            ("TOPPADDING", *everywhere, 1), ("BOTTOMPADDING", *everywhere, 1)]  # fmt: skip
+    story: list = []
+    for name, header, widths, _columns, pages in THREE_TABLES:
+        spans = [("SPAN", (4, 0), (5, 0))]
+        spans += [("SPAN", (c, 0), (c, 1)) for c in range(len(widths)) if c not in (4, 5)]
+        if name == "B":  # below the last rows of A, on the same page
+            story += [Spacer(1, 14), Paragraph("Appendix B (synthetic)", styles["Heading4"])]
+        first = 0
+        for count, repeat in pages:
+            body = tables[name][first : first + count]
+            first += count
+            if repeat:
+                story.append(Table(header + body, colWidths=widths, style=[*grid, *spans]))
+            else:
+                story.append(Table(body, colWidths=widths, style=grid))
+            if not (name == "A" and first == len(tables[name])):
+                story.append(PageBreak())
+    SimpleDocTemplate(
+        str(path), pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=40, rightMargin=40
+    ).build(story)
+    return tables
