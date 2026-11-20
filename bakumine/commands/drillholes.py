@@ -252,10 +252,23 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--duplicate-intervals",
         choices=("keep-first", "mean", "error"),
         default="keep-first",
-        help="an interval that is in a table twice (same hole, from and to: an unmarked "
-        "repeat assay): keep the first row (default), take the mean of the numeric "
+        help="an interval that is in a table twice (same hole, from and to, or both "
+        "within --interval-tolerance: an unmarked repeat assay, the same sample in two "
+        "files): keep the first row (default), take the mean of the numeric "
         "attributes, or stop. Counted in the summary; every such row is listed in "
         "duplicates_<table>.csv",
+    )
+    shape.add_argument(
+        "--interval-tolerance",
+        type=float,
+        default=0.5,
+        metavar="LENGTH",
+        help="two intervals of a hole are the same interval when their from differ by no "
+        "more than this, their to likewise, and they share at least half of the longer "
+        "one (120.4-121.6 in one file, 120.4-121.3 in another). Files are merged on it "
+        "(the first file's from/to stay) and --duplicate-intervals uses it; 0 = only "
+        "equal from and to (default: 0.5). Intervals that still overlap are listed in the "
+        "summary and in overlaps_<table>.csv",
     )
     shape.add_argument(
         "--merge-ignore",
@@ -612,6 +625,7 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
             "tolerance": args.merge_tolerance,
             "ignore_columns": _merge_ignore(args.merge_ignore),
             "duplicate_intervals": args.duplicate_intervals,
+            "interval_tolerance": args.interval_tolerance,
         },
         holes=_hole_filter(args),
     )
@@ -704,6 +718,18 @@ def _print_import_reports(db) -> None:
                 f"    conflict {key} {row['column']}: kept {row['kept']} "
                 f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
             )
+        if merged.get("near_intervals"):
+            print(
+                f"    {merged['near_intervals']} of the rows joined had another from/to in "
+                f"the other file (within {merged['interval_tolerance']:g}); the "
+                f"{merged['precedence']} file's stay:"
+            )
+            for row in merged["near_rows"][:5]:
+                print(
+                    f"      {row['hole_id']} {row['depth_from']:g}-{row['depth_to']:g} "
+                    f"({row['kept_source']}) = {row['dropped_from']:g}-{row['dropped_to']:g} "
+                    f"({row['dropped_source']})"
+                )
         if merged.get("informational"):
             apart = ", ".join(f"{c} {n}" for c, n in merged["informational"].items())
             print(f"    differences not counted as conflicts (informational): {apart}")
@@ -714,7 +740,25 @@ def _print_import_reports(db) -> None:
             f"  {name} duplicate intervals ({repeats['rule'].replace('_', '-')}): "
             f"{repeats['intervals']} interval(s) in {repeats['holes']} hole(s) were there more "
             f"than once, {repeats['rows_removed']} row(s) removed; listed in {repeats['listing']}"
+            + (f" ({repeats['near']} of them with from/to within {repeats['tolerance']:g}, "
+               "not equal)" if repeats.get("near") else "")  # fmt: skip
         )
+    for name, found in reports.get("overlaps", {}).items():
+        print(
+            f"  WARNING: {name}: {found['count']} interval(s) in {found['holes']} hole(s) "
+            f"overlap another interval of their hole (listed in {found['listing']}); "
+            "'bakumine intercepts' stops at overlapping samples:"
+        )
+        for row in found["rows"][:8]:
+            def said(a: str, b: str, file: str, row: dict = row) -> str:
+                return f"{row[a]:g}-{row[b]:g}" + (f" ({row[file]})" if row[file] else "")
+
+            print(
+                f"    {row['hole_id']}: {said('depth_from', 'depth_to', 'source')} overlaps "
+                f"{said('overlaps_from', 'overlaps_to', 'overlaps_source')}"
+            )
+        if found["count"] > 8:
+            print(f"    ... {found['count'] - 8} more")
     for name, entries in reports.get("sources", {}).items():
         for entry in entries:
             said = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in entry.items() if k != "file")

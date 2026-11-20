@@ -10,7 +10,7 @@ the project's job log, so the same import can be run again on updated files with
       "hole_id": {"pattern": "DH[_-]?0*(\\\\d+)", "template": "DH-{1:02d}"},
       "holes": {"include": ["DH-*"], "exclude": ["DH-07", "*-T"]},   # optional
       "merge": {"precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"],
-                "duplicate_intervals": "keep_first"},
+                "duplicate_intervals": "keep_first", "interval_tolerance": 0.5},
       "tables": {
         "collar": [SOURCE, ...],             # one table from one or more sources
         "survey": [SOURCE, ...],             # optional: else from the collar's azimuth, dip
@@ -74,15 +74,28 @@ laboratory file spells its own way) are merged the same way but their difference
 informational: counted apart, not conflicts; so are those of a row-number column (``№``,
 ``No``, ``Д/д``) that was kept. The report (``reports["conflicts"][table]``)
 counts the conflicts per column and lists the first; every difference is in the
-database's ``conflicts_<table>.csv``. Two intervals of different sources are the same
-interval when their ``from`` is equal and their ``to`` differs by less than ``tolerance``.
+database's ``conflicts_<table>.csv``.
 
-An interval that is still there twice (same hole, same from and to: an unmarked laboratory
-repeat) would overlap itself. ``duplicate_intervals`` says what becomes of it:
+The same interval is not always written the same way: one file ends a sample at 121.6 m,
+another at 121.3. Two intervals of one hole are *one interval* when their ``from`` differ
+by no more than ``interval_tolerance`` (default 0.5, in the unit of the files), their
+``to`` likewise, and they overlap by at least half of the longer one (so that two short
+samples that follow each other are never taken for one). ``tolerance`` is for the values,
+``interval_tolerance`` for the depths. Such intervals of different sources are merged like
+equal ones: the winning source's from / to stay, the pair is counted
+(``reports["conflicts"][table]["near_intervals"]``) and listed in ``conflicts_<table>.csv``.
+
+An interval that is still there twice (an unmarked laboratory repeat, or near-duplicates
+within one source) would overlap itself. ``duplicate_intervals`` says what becomes of it:
 ``"keep_first"`` (default: the first row stays), ``"mean"`` (the numeric attributes become
-the mean of the rows, text is the first row's) or ``"error"`` (the import stops). The
-count is in ``reports["duplicates"][table]``, every row of every such interval in
-``duplicates_<table>.csv``.
+the mean of the rows, text and depths are the first row's) or ``"error"`` (the import
+stops). The count is in ``reports["duplicates"][table]``, every row of every such interval
+in ``duplicates_<table>.csv`` with its source file.
+
+Intervals that overlap after all that are reported, not repaired:
+``reports["overlaps"][table]`` (count, holes, the first pairs with their source files) and
+every pair in ``overlaps_<table>.csv``. ``bakumine intercepts`` refuses overlapping
+samples.
 
 ``holes`` keeps only some holes, in every table (QC rows too): ``include`` and ``exclude``
 are lists of hole names or wildcard patterns (``*``, ``?``, ``[abc]``), compared without
@@ -174,7 +187,13 @@ _KEYS: dict[str, tuple[str, ...]] = {
     "interval": ("hole_id", "depth_from", "depth_to"),
 }
 _MAX_LISTED = 200
-_MERGE_KEYS = frozenset({"precedence", "tolerance", "ignore_columns", "duplicate_intervals"})
+_MERGE_KEYS = frozenset(
+    {"precedence", "tolerance", "ignore_columns", "duplicate_intervals", "interval_tolerance"}
+)
+#: intervals of one hole whose from and to both differ by no more than this are one interval
+INTERVAL_TOLERANCE = 0.5
+#: a file label per row while the sources are merged (never a column of the database)
+_FILE = "__file__"
 DUPLICATE_RULES: tuple[str, ...] = ("keep_first", "mean", "error")
 #: headers of a row-number column, without spaces and punctuation
 _ROW_NUMBER_NAMES = frozenset({"№", "#", "no", "n", "nn", "num", "дд", "пп", "№пп", "nпп"})
@@ -353,7 +372,7 @@ def make_recipe(
             checked[name].append(cleaned)
     merge = {
         "precedence": "first", "tolerance": 0.01, "ignore_columns": ["sample_id"],
-        "duplicate_intervals": "keep_first",
+        "duplicate_intervals": "keep_first", "interval_tolerance": INTERVAL_TOLERANCE,
         **{k: v for k, v in (merge or {}).items() if v is not None},
     }  # fmt: skip
     merge["duplicate_intervals"] = str(merge["duplicate_intervals"]).replace("-", "_")
@@ -370,6 +389,11 @@ def make_recipe(
             f"merge precedence must be 'first' or 'last', got {merge['precedence']!r}"
         )
     merge["tolerance"] = float(merge["tolerance"])
+    merge["interval_tolerance"] = float(merge["interval_tolerance"])
+    if not merge["interval_tolerance"] >= 0:
+        raise ValueError(
+            f"merge interval_tolerance must be 0 or more, got {merge['interval_tolerance']!r}"
+        )
     ignored = merge["ignore_columns"]
     if isinstance(ignored, str):
         ignored = [ignored]
@@ -461,6 +485,74 @@ def _differs(a: Any, b: Any, tolerance: float) -> bool:
     return str(a) != str(b)
 
 
+def near_intervals(
+    holes: Sequence[Any], start: np.ndarray, end: np.ndarray, tolerance: float
+) -> np.ndarray:
+    """A group number per row: rows of one hole that are one interval (see the module
+    documentation: from and to within ``tolerance`` of the group's first interval, and
+    overlapping it by at least half of the longer of the two). Rows without a hole, from
+    or to are alone (group -1). With ``tolerance`` 0: equal from and to."""
+    start = np.round(np.asarray(start, dtype=np.float64), 6)
+    end = np.round(np.asarray(end, dtype=np.float64), 6)
+    names = pd.Series(list(holes), dtype=object)
+    usable = (names.notna() & np.isfinite(start) & np.isfinite(end)).to_numpy(dtype=bool)
+    codes = pd.factorize(names)[0]
+    group = np.full(len(start), -1, dtype=np.int64)
+    rows = np.flatnonzero(usable)
+    order = rows[np.lexsort((end[rows], start[rows], codes[rows]))]
+    slack = tolerance + 1e-6
+    open_groups: list[int] = []  # the first rows of the groups a later row may still join
+    hole = -1
+    for i in order.tolist():
+        if codes[i] != hole:
+            hole, open_groups = codes[i], []
+        open_groups = [g for g in open_groups if start[g] >= start[i] - slack]
+        for first in open_groups:
+            longer = max(end[first] - start[first], end[i] - start[i])
+            shared = min(end[first], end[i]) - max(start[first], start[i])
+            if abs(end[first] - end[i]) <= slack and shared >= 0.5 * longer - 1e-9:
+                group[i] = first
+                break
+        else:
+            group[i] = i
+            open_groups.append(i)
+    return group
+
+
+def interval_overlaps(table: pd.DataFrame, files: Sequence[str] | None = None) -> pd.DataFrame:
+    """The intervals of a table that overlap an earlier interval of their hole: one row
+    per pair, ``hole_id, depth_from, depth_to, source`` and ``overlaps_from, overlaps_to,
+    overlaps_source, overlap`` (metres shared). ``files``: the source file of each row."""
+    start = table["depth_from"].to_numpy(dtype=np.float64)
+    end = table["depth_to"].to_numpy(dtype=np.float64)
+    usable = np.isfinite(start) & (end > start) & table["hole_id"].notna().to_numpy(dtype=bool)
+    codes = pd.factorize(table["hole_id"])[0]
+    rows = np.flatnonzero(usable)
+    order = rows[np.lexsort((end[rows], start[rows], codes[rows]))]
+    found = []
+    hole, deepest = -1, -1
+    for i in order.tolist():
+        if codes[i] != hole:
+            hole, deepest = codes[i], i
+            continue
+        if start[i] < end[deepest] - 1e-6:
+            found.append((i, deepest))
+        if end[i] > end[deepest]:
+            deepest = i
+    labels = list(files) if files is not None else [""] * len(table)
+    return pd.DataFrame(
+        [
+            {"hole_id": table["hole_id"].iat[i], "depth_from": start[i], "depth_to": end[i],
+             "source": labels[i], "overlaps_from": start[j], "overlaps_to": end[j],
+             "overlaps_source": labels[j],
+             "overlap": round(float(min(end[i], end[j]) - start[i]), 6)}
+            for i, j in found
+        ],
+        columns=["hole_id", "depth_from", "depth_to", "source", "overlaps_from",
+                 "overlaps_to", "overlaps_source", "overlap"],
+    )  # fmt: skip
+
+
 def merge_sources(
     table: pd.DataFrame,
     source: np.ndarray,
@@ -471,6 +563,7 @@ def merge_sources(
     labels: Sequence[str] | None = None,
     ignore: Sequence[str] = (),
     listing: list[dict[str, Any]] | None = None,
+    interval_tolerance: float | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Merge rows with the same key that come from different sources (see module doc).
 
@@ -481,6 +574,12 @@ def merge_sources(
     column of ``ignore``: counted, not conflicts) and ``rows`` (the first conflicts: key,
     column, kept / dropped value and source). ``listing`` receives every difference,
     conflicts and informational ones (``informational`` true), uncapped.
+
+    Interval tables: rows are the same interval when :func:`near_intervals` says so with
+    ``interval_tolerance`` (default: ``tolerance``). The winner's from / to stay;
+    ``near_intervals`` counts the rows merged whose from or to was written differently
+    and ``near_rows`` lists the first. Columns whose name starts with ``__`` are carried
+    along, neither merged nor compared.
     """
     source = np.asarray(source, dtype=np.int64)
     labels = list(labels) if labels is not None else [str(i) for i in range(source.max() + 1)]
@@ -489,27 +588,28 @@ def merge_sources(
         "merged": 0, "filled": 0, "conflicts": 0, "by_column": {}, "informational": {},
         "ignored": list(ignore), "rows": [],
     }  # fmt: skip
+    intervals = "depth_to" in keys
+    if intervals:
+        near = tolerance if interval_tolerance is None else max(interval_tolerance, tolerance)
+        report.update(interval_tolerance=near, near_intervals=0, near_rows=[])
     if len(table) == 0 or len(np.unique(source)) < 2:
         return table, report
     key_frame = table[list(keys)].copy()
     for column in keys:
         if column != "hole_id":
             key_frame[column] = key_frame[column].round(6)
-    if "depth_to" in keys and tolerance > 0:
-        # the same interval with its end written a little differently (12.5 / 12.495)
-        ordered = key_frame.sort_values(list(keys), kind="stable")
-        ends = ordered["depth_to"].to_numpy(dtype=np.float64)
-        new = np.ones(len(ordered), dtype=bool)
-        new[1:] = (
-            (ordered["hole_id"].to_numpy()[1:] != ordered["hole_id"].to_numpy()[:-1])
-            | (ordered["depth_from"].to_numpy()[1:] != ordered["depth_from"].to_numpy()[:-1])
-            | ~(np.diff(ends) < tolerance)
-        )
-        first = np.maximum.accumulate(np.where(new, np.arange(len(ordered)), 0))
-        key_frame.loc[ordered.index, "depth_to"] = ends[first]
-    groups = key_frame.groupby(list(keys), sort=False, dropna=True).indices
+    if intervals:
+        # the same interval with its ends written a little differently (12.5 / 12.495)
+        same = near_intervals(
+            key_frame["hole_id"], key_frame["depth_from"].to_numpy(),
+            key_frame["depth_to"].to_numpy(), near,
+        )  # fmt: skip
+        groups = pd.Series(np.arange(len(table)))[same >= 0].groupby(same[same >= 0]).indices
+        groups = {k: np.flatnonzero(same >= 0)[v] for k, v in groups.items()}
+    else:
+        groups = key_frame.groupby(list(keys), sort=False, dropna=True).indices
     table = table.copy()
-    values = [c for c in table.columns if c not in keys]
+    values = [c for c in table.columns if c not in keys and not c.startswith("__")]
     drop: list[int] = []
     for positions in groups.values():
         if len(positions) < 2 or len(set(source[positions].tolist())) < 2:
@@ -522,6 +622,28 @@ def merge_sources(
             if source[other] == winner_source:
                 continue  # a duplicate inside the winning source: the validator's business
             drop.append(int(other))
+            if intervals and any(
+                _differs(table[k].iat[winner], table[k].iat[other], 1e-6) for k in keys[1:]
+            ):
+                report["near_intervals"] += 1
+                row = {k: _plain(table[k].iat[winner]) for k in keys}
+                pair = {
+                    **row,
+                    "dropped_from": _plain(table["depth_from"].iat[other]),
+                    "dropped_to": _plain(table["depth_to"].iat[other]),
+                    "kept_source": labels[winner_source],
+                    "dropped_source": labels[source[other]],
+                }
+                if len(report["near_rows"]) < _MAX_LISTED:
+                    report["near_rows"].append(pair)
+                if listing is not None:
+                    listing.append(
+                        {**row, "column": "depth_from,depth_to",
+                         "kept": f"{row['depth_from']:g}-{row['depth_to']:g}",
+                         "dropped": f"{pair['dropped_from']:g}-{pair['dropped_to']:g}",
+                         "kept_source": pair["kept_source"],
+                         "dropped_source": pair["dropped_source"], "informational": True}
+                    )  # fmt: skip
             for column in values:
                 at = table.columns.get_loc(column)
                 kept, lost = table.iat[winner, at], table.iat[other, at]
@@ -559,35 +681,55 @@ def merge_sources(
 
 
 def resolve_duplicate_intervals(
-    table: pd.DataFrame, rule: str = "keep_first", name: str = "interval"
-) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
-    """Intervals that are in a table more than once (same hole, from and to) made one,
-    by ``rule`` (see the module documentation). Returns ``(table, report, listing)``;
-    the listing holds every row of every such interval with ``kept`` (false for the rows
-    removed) and ``rule``."""
+    table: pd.DataFrame, rule: str = "keep_first", name: str = "interval",
+    tolerance: float = 0.0,
+) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:  # fmt: skip
+    """Intervals that are in a table more than once made one, by ``rule`` (see the module
+    documentation): the same hole, from and to, or, with ``tolerance``, from and to that
+    close (:func:`near_intervals`). Returns ``(table, report, listing)``; the listing holds
+    every row of every such interval with ``kept`` (false for the rows removed), ``rule``
+    and, when the table has the ``__file__`` column, its ``source``. ``near`` in the report
+    counts the intervals whose rows do not have the very same from and to."""
     keys = ["hole_id", "depth_from", "depth_to"]
     key_frame = table[keys].copy()
     for column in keys[1:]:
         key_frame[column] = key_frame[column].round(6)
-    complete = key_frame.notna().all(axis=1).to_numpy(dtype=bool)
-    repeated = key_frame.duplicated(keep=False).to_numpy(dtype=bool) & complete
-    later = key_frame.duplicated(keep="first").to_numpy(dtype=bool) & complete
+    same = near_intervals(
+        key_frame["hole_id"], key_frame["depth_from"].to_numpy(),
+        key_frame["depth_to"].to_numpy(), tolerance,
+    )  # fmt: skip
+    group = pd.Series(np.where(same >= 0, same, -1 - np.arange(len(table))), index=table.index)
+    repeated = group.duplicated(keep=False).to_numpy(dtype=bool)
+    later = group.duplicated(keep="first").to_numpy(dtype=bool)
     report: dict[str, Any] = {
         "rule": rule, "intervals": int((repeated & ~later).sum()),
         "rows_removed": int(later.sum()),
         "holes": int(table["hole_id"][repeated].nunique()), "examples": [],
+        "tolerance": tolerance, "near": 0,
     }  # fmt: skip
     if not repeated.any():
         return table, report, table.iloc[0:0]
+    first = key_frame.loc[repeated & ~later]
     listing = table.loc[repeated].copy()
     listing.insert(0, "kept", ~later[repeated])
     listing.insert(1, "rule", rule)
-    listing = listing.sort_values(keys, kind="stable").reset_index(drop=True)
-    sizes = key_frame.loc[repeated].groupby(keys, sort=False).size()
+    if _FILE in listing.columns:
+        listing = listing.rename(columns={_FILE: "source"})
+    # the rows of one interval together, the intervals in depth order
+    at = first.reset_index(drop=True).sort_values(keys, kind="stable").index
+    rank = pd.Series(np.arange(len(at)), index=group[first.index].to_numpy()[at])
+    listing = listing.iloc[
+        np.argsort(rank[group[repeated].to_numpy()].to_numpy(), kind="stable")
+    ].reset_index(drop=True)
+    members = key_frame.loc[repeated].groupby(group[repeated], sort=False)
+    sizes = members.size()
+    varied = members[["depth_from", "depth_to"]].nunique().max(axis=1) > 1
+    report["near"] = int(varied.sum())
     report["examples"] = [
-        {"hole_id": str(k[0]), "depth_from": float(k[1]), "depth_to": float(k[2]), "rows": int(n)}
-        for k, n in list(sizes.items())[:10]
-    ]
+        {"hole_id": str(row.hole_id), "depth_from": float(row.depth_from),
+         "depth_to": float(row.depth_to), "rows": int(sizes[g])}
+        for g, row in zip(group[first.index][:10], first.head(10).itertuples(), strict=True)
+    ]  # fmt: skip
     if rule == "error":
         shown = "; ".join(
             f"{e['hole_id']} {e['depth_from']:g}-{e['depth_to']:g} x {e['rows']}"
@@ -605,7 +747,7 @@ def resolve_duplicate_intervals(
         ]  # fmt: skip
         if numbers:
             means = table.loc[repeated, numbers].groupby(
-                [key_frame.loc[repeated, k] for k in keys], sort=False
+                group[repeated], sort=False
             ).transform("mean")  # NaN only where every row lacks the value
             table.loc[repeated, numbers] = means
     return table.loc[~later].reset_index(drop=True), report, listing
@@ -1023,7 +1165,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     listings: dict[str, pd.DataFrame] = {}
     reports: dict[str, Any] = {
         "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
-        "dropped_rows": {}, "duplicates": {},
+        "dropped_rows": {}, "duplicates": {}, "overlaps": {},
     }  # fmt: skip
     depths: dict[str, float] | None = None  # hole id -> depth, once the collar is read
     # the collar first: the depths of the holes check the sample-number rule
@@ -1047,6 +1189,8 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         source = table.pop(_SOURCE).to_numpy(dtype=np.int64)
         table, source = holes.apply(table, name, source)
         table = per_source.apply(name, kind, table, source, labels, metadata)
+        if kind == "interval":
+            table[_FILE] = np.array(labels, dtype=object)[source]
         if len(sources) > 1:
             differences: list[dict[str, Any]] = []
             table, merged = merge_sources(
@@ -1061,13 +1205,14 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                     *(c for c in table.columns if is_row_number_column(c)),
                 ],
                 listing=differences,
+                interval_tolerance=recipe["merge"]["interval_tolerance"],
             )
             reports["conflicts"][name] = merged
             if differences:
                 listings[f"conflicts_{name}"] = pd.DataFrame(differences)
                 merged["listing"] = f"conflicts_{name}.csv"
-            for what in ("merged", "filled", "conflicts"):
-                if merged[what]:
+            for what in ("merged", "filled", "conflicts", "near_intervals"):
+                if merged.get(what):
                     metadata.notes.append(
                         {"table": name, "column": "*", "kind": f"sources_{what}",
                          "count": merged[what],
@@ -1075,8 +1220,9 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                     )  # fmt: skip
         if kind == "interval":
             table, repeats, listed = resolve_duplicate_intervals(
-                table, recipe["merge"]["duplicate_intervals"], name
-            )
+                table, recipe["merge"]["duplicate_intervals"], name,
+                max(recipe["merge"]["interval_tolerance"], 0.0),
+            )  # fmt: skip
             if repeats["intervals"]:
                 listings[f"duplicates_{name}"] = listed
                 reports["duplicates"][name] = {**repeats, "listing": f"duplicates_{name}.csv"}
@@ -1085,6 +1231,27 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                      "kind": f"duplicate_intervals_{repeats['rule']}",
                      "count": repeats["rows_removed"]}  # fmt: skip
                 )
+            # what still overlaps is said now, not at the intercepts
+            pairs = interval_overlaps(table, table.pop(_FILE).tolist())
+            if len(pairs):
+                listings[f"overlaps_{name}"] = pairs
+                reports["overlaps"][name] = {
+                    "count": int(len(pairs)), "holes": int(pairs["hole_id"].nunique()),
+                    "rows": [
+                        {k: _plain(v) for k, v in row.items()}
+                        for row in pairs.head(_MAX_LISTED).to_dict("records")
+                    ],
+                    "listing": f"overlaps_{name}.csv",
+                }
+                metadata.notes.append(
+                    {"table": name, "column": "depth_from,depth_to",
+                     "kind": "intervals_overlap", "count": int(len(pairs)),
+                     "examples": [
+                         f"{r['hole_id']} {r['depth_from']:g}-{r['depth_to']:g} / "
+                         f"{r['overlaps_from']:g}-{r['overlaps_to']:g}"
+                         for r in reports["overlaps"][name]["rows"][:5]
+                     ]}
+                )  # fmt: skip
         gone: dict[str, Any] = {}
         for part in prepared:
             for reason, count in part.info.get("dropped", {}).items():

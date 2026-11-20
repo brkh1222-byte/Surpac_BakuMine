@@ -153,7 +153,7 @@ def test_ends_within_the_tolerance_are_one_interval_when_files_merge(files):
     joined = table[table["cu"].notna() & table["au"].notna()]
     assert len(joined) == 59 and (joined["depth_to"] == joined["depth_from"] + 1.0).all()
     # with a tolerance of nothing they are different intervals, as before
-    strict = make_recipe(both["tables"], merge={"tolerance": 0.0})
+    strict = make_recipe(both["tables"], merge={"tolerance": 0.0, "interval_tolerance": 0.0})
     assert run_recipe(strict, folder).metadata.reports["conflicts"]["assay"]["merged"] == 0
 
     keys = ("hole_id", "depth_from", "depth_to")

@@ -345,6 +345,34 @@ class _Run:
     factor: float = float("nan")  # true thickness / down-hole length
 
 
+def _refuse_overlaps(table: pd.DataFrame) -> None:
+    """Stop when samples of a hole overlap, naming every such hole and its intervals
+    (``table``: hole_id, f, t sorted by hole and depth)."""
+    holes = table["hole_id"].to_numpy()
+    frm, to = table["f"].to_numpy(), table["t"].to_numpy()
+    at = np.flatnonzero((holes[1:] == holes[:-1]) & (frm[1:] < to[:-1] - _TOL))
+    if not at.size:
+        return
+    by_hole: dict[object, list[str]] = {}
+    for i in at.tolist():
+        by_hole.setdefault(holes[i], []).append(
+            f"{frm[i]:g}-{to[i]:g} and {frm[i + 1]:g}-{to[i + 1]:g}"
+        )
+    parts = [
+        f"hole {hole!r}: {'; '.join(pairs[:3])}"
+        + (f" (+{len(pairs) - 3} more)" if len(pairs) > 3 else "")
+        for hole, pairs in list(by_hole.items())[:10]
+    ]
+    more = f"; and {len(by_hole) - 10} more hole(s)" if len(by_hole) > 10 else ""
+    raise ValueError(
+        f"samples overlap in {len(by_hole)} hole(s), {at.size} place(s): "
+        + "; ".join(parts) + more
+        + ". Intervals of two files that are the same sample are made one at import "
+        "(--interval-tolerance, --duplicate-intervals); the import lists what still "
+        "overlaps in overlaps_<table>.csv"
+    )
+
+
 def _pieces(
     frm: np.ndarray, to: np.ndarray, grade: np.ndarray, gap_tolerance: float, hole: object
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
@@ -676,6 +704,7 @@ def mineralised_intervals(
     # a stable order that does not depend on the input order (grade breaks exact ties,
     # which are overlaps and raise anyway)
     table = table.sort_values(["hole_id", "f", "t", "g"], kind="stable")
+    _refuse_overlaps(table)
 
     interval_rows: list[tuple[object, float, float, str]] = []
     rows: list[dict[str, Any]] = []
