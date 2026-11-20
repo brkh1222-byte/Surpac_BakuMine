@@ -13,7 +13,7 @@
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { conflictsText, droppedText, duplicatesText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { beyondText, conflictsText, droppedText, duplicatesText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -371,7 +371,7 @@ export function ImportPanel() {
             <p className="sidebar-note" key={t} data-testid={`import-qc-result-${t}`}>{t}: QC rows kept apart: {counts(c)}</p>
           ))}
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
-            <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}</p>
+            <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}{beyondText(c)}</p>
           )))}
           {Object.entries(result.duplicates ?? {}).map(([t, d]) => (
             <p className="sidebar-note" key={t} data-testid={`import-duplicates-${t}`}>{duplicatesText(t, d)}</p>

@@ -444,11 +444,34 @@ def _hole_patterns(patterns: Sequence[str], hole: str) -> list[re.Pattern[str]]:
     return compiled
 
 
+def _without_hole_number(hole: str, numbers: Sequence[str]) -> tuple[np.ndarray, bool] | None:
+    """The numbers of a hole's sample ids with the hole's own number taken off their
+    front (``4002`` of hole 4 -> 2), when every one of them begins with it and what is
+    left is a depth above 0. Also: was any of them zero-padded (``002``)?"""
+    found = _TRAILING_INT.search(hole)
+    if found is None or not numbers:
+        return None
+    for form in sorted({found.group(1), str(int(found.group(1)))}, key=len, reverse=True):
+        if not all(n.startswith(form) and len(n) > len(form) for n in numbers):
+            continue
+        rest = [n[len(form) :] for n in numbers]
+        if any(r.startswith(".") for r in rest):
+            continue
+        values = np.array([float(r) for r in rest], dtype=np.float64)
+        if (values > 0).all():
+            return values, any(r.startswith("0") for r in rest)
+    return None
+
+
 def depths_from_sample_ids(
     hole_ids: Sequence[str],
     sample_ids: Sequence[str],
     length: float | Sequence[float] = 1.0,
     patterns: Sequence[str] | None = None,
+    *,
+    max_depth: Mapping[str, float] | None = None,
+    tolerance: float = 5.0,
+    report: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """``(depth_from, depth_to)`` read from sample numbers; NaN where the rule does not apply.
 
@@ -457,6 +480,14 @@ def depths_from_sample_ids(
     depth of the *end* of the sample, ``to``, and ``from = to - length``; or an explicit
     ``from-to`` pair (``DH01-151-152``). ``length`` is one number or one per row. A row
     whose ``from`` would be negative or not below ``to`` gets no depths.
+
+    Some ids repeat the hole's number in front of the metre: ``DH04-4002`` is sample
+    ``002`` of hole 4, not metre 4002. The number is taken off, hole by hole, when every
+    number of the hole begins with it and what is left is a depth, and either the hole's
+    depth says so (``max_depth``: hole id -> depth; the plain reading goes more than
+    ``tolerance`` beyond it and the other does not) or, the depth being unknown, the hole
+    has three or more samples and the numbers are zero-padded or all 1000 and above.
+    ``report["repeated_hole_number"]`` lists the holes read that way.
 
     ``patterns`` replaces the default rule with regular expressions tried in order against
     the whole sample id (case-insensitive, full match). Each needs a ``(?P<to>...)`` group
@@ -469,6 +500,7 @@ def depths_from_sample_ids(
     start = np.full(n, np.nan)
     end = np.full(n, np.nan)
     cache: dict[str, Any] = {}
+    plain: dict[str, list[tuple[int, str]]] = {}  # hole -> rows whose id is one number
     for i, (hole, sample) in enumerate(zip(hole_ids, sample_ids, strict=True)):
         hole, sample = str(hole).strip(), str(sample).strip()
         if not sample:
@@ -492,7 +524,8 @@ def depths_from_sample_ids(
             single = _AUTO_TO.match(rest)
             pair = _AUTO_RANGE.match(rest)
             if single:
-                high = float(single.group(1))
+                plain.setdefault(hole, []).append((i, single.group(1)))
+                continue
             elif pair:
                 low, high = float(pair.group(1)), float(pair.group(2))
         if high is None:
@@ -501,6 +534,25 @@ def depths_from_sample_ids(
             low = high - lengths[i]
         if np.isfinite(low) and low < high and low >= 0:
             start[i], end[i] = low, high
+    repeated: list[str] = []
+    for hole, found in plain.items():
+        rows = np.array([i for i, _ in found], dtype=np.int64)
+        values = np.array([float(text) for _, text in found], dtype=np.float64)
+        other = _without_hole_number(hole, [text for _, text in found])
+        if other is not None:
+            limit = (max_depth or {}).get(hole)
+            if limit is not None and np.isfinite(limit):
+                take = values.max() > limit + tolerance >= other[0].max()
+            else:
+                take = len(found) >= 3 and (other[1] or values.min() >= 1000.0)
+            if take:
+                values = other[0]
+                repeated.append(hole)
+        lows = values - lengths[rows]
+        good = np.isfinite(lows) & (lows < values) & (lows >= 0)
+        start[rows[good]], end[rows[good]] = lows[good], values[good]
+    if report is not None:
+        report["repeated_hole_number"] = repeated
     return start, end
 
 
@@ -631,6 +683,7 @@ def prepare_source(
     encoding: str = "utf-8-sig",
     hole_id: Mapping[str, Any] | None = None,
     keep_unmapped: bool = True,
+    hole_depths: Mapping[str, float] | None = None,
 ) -> Prepared:
     """Apply one source of a recipe (see :mod:`.recipe` for the keys of ``spec``).
 
@@ -638,7 +691,9 @@ def prepare_source(
     recipe-wide ``{"pattern", "template"}`` used when the source has none of its own.
     ``keep_unmapped=False`` drops the columns the column map does not name; when the map
     is left to the suggester, an interval table keeps its known columns (hole, from, to,
-    sample id / type / length) and the element columns only.
+    sample id / type / length) and the element columns only. ``hole_depths`` (hole id ->
+    depth of the hole, in this source's unit) lets the sample-number rule be checked: a
+    hole whose derived depths go beyond its depth is not imported that way.
     """
     name = name or kind
     if grids is None:
@@ -746,7 +801,7 @@ def prepare_source(
     info["units"] = {target: found[1] for target, found in elements.items() if found and found[1]}
     qc_rows = pd.DataFrame()
     if kind == "interval" and len(renamed):
-        renamed, qc_rows = _interval_rules(renamed, spec, name, info, note)
+        renamed, qc_rows = _interval_rules(renamed, spec, name, info, note, hole_depths)
     # rows that name no hole are nobody's collar, station or sample (QC rows are aside)
     if "hole_id" in renamed.columns and len(renamed):
         nameless = (renamed["hole_id"].astype(str).str.strip() == "").to_numpy(dtype=bool)
@@ -769,8 +824,9 @@ def prepare_source(
 
 
 def _interval_rules(
-    table: pd.DataFrame, spec: Mapping[str, Any], name: str, info: dict[str, Any], note: Any
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    table: pd.DataFrame, spec: Mapping[str, Any], name: str, info: dict[str, Any], note: Any,
+    hole_depths: Mapping[str, float] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:  # fmt: skip
     """QC rows and sample-number depths of one interval source. Returns (samples, qc)."""
     qc_spec = spec.get("qc")
     if qc_spec is None or qc_spec is True:
@@ -810,26 +866,57 @@ def _interval_rules(
                 table[length_column].astype(str).str.replace(",", "."), errors="coerce"
             ).to_numpy(dtype=np.float64)
             length = np.where(np.isfinite(given), given, length)[todo]
+        tolerance = float(rule.get("depth_tolerance", 5.0))
+        decided: dict[str, Any] = {}
         start, end = depths_from_sample_ids(
             table["hole_id"].to_numpy()[todo],
             table[column].to_numpy()[todo],
             length,
             rule.get("patterns") or None,
+            max_depth=hole_depths,
+            tolerance=tolerance,
+            report=decided,
         )
         for target in ("depth_from", "depth_to"):
             if target not in table.columns:
                 table[target] = ""
         ok = np.isfinite(end)
         rows = np.flatnonzero(todo)
+        # a rule that puts samples below the bottom of the hole has misread the ids
+        beyond: list[dict[str, Any]] = []
+        unchecked = 0
+        too_deep = np.zeros(len(rows), dtype=bool)
+        derived_holes = table["hole_id"].to_numpy()[rows].astype(str)
+        for hole in dict.fromkeys(derived_holes[ok].tolist()):
+            limit = (hole_depths or {}).get(hole)
+            if limit is None or not np.isfinite(limit):
+                unchecked += 1
+                continue
+            mine = ok & (derived_holes == hole)
+            deepest = float(end[mine].max())
+            if deepest > limit + tolerance:
+                too_deep |= mine
+                beyond.append(
+                    {"hole_id": hole, "derived_to": deepest, "max_depth": float(limit),
+                     "rows": int(mine.sum()),
+                     "example": str(table[column].iat[rows[np.flatnonzero(mine)[-1]]])}
+                )  # fmt: skip
+        ok &= ~too_deep
         for target, values in (("depth_from", start), ("depth_to", end)):
             table.iloc[rows[ok], table.columns.get_loc(target)] = [
                 repr(float(v)) for v in values[ok]
             ]
-        failed = rows[~ok]
+        failed = rows[~ok & ~too_deep]
         kinds[failed] = "no_depth"
+        kinds[rows[too_deep]] = "depth_beyond_hole"
         check = check_sample_depths(table["hole_id"].to_numpy()[rows[ok]], start[ok], end[ok])
         check["unmatched"] = int(len(failed))
         check["unmatched_examples"] = table[column].to_numpy()[failed][:8].tolist()
+        check["repeated_hole_number"] = decided.get("repeated_hole_number", [])
+        check["depth_tolerance"] = tolerance
+        check["beyond_hole"] = beyond
+        check["beyond_hole_rows"] = int(too_deep.sum())
+        check["holes_without_known_depth"] = unchecked if hole_depths is not None else None
         check["preview"] = [
             {
                 "hole_id": str(table["hole_id"].iat[r]),
@@ -843,6 +930,15 @@ def _interval_rules(
         note("depth_from,depth_to", "from_sample_number", int(ok.sum()))
         note("depth_from,depth_to", "sample_number_not_understood", int(len(failed)),
              examples=check["unmatched_examples"][:5])  # fmt: skip
+        stripped = check["repeated_hole_number"]
+        note("depth_from,depth_to", "sample_number_repeats_hole_number", len(stripped),
+             examples=stripped[:5])  # fmt: skip
+        note("depth_from,depth_to", "sample_depths_beyond_hole_not_imported",
+             int(too_deep.sum()),
+             examples=[f"{b['hole_id']}: {b['derived_to']:g} > {b['max_depth']:g}"
+                       for b in beyond[:5]],
+             hint="the sample numbers are not read as meant: give sample_depth patterns",
+        )  # fmt: skip
     if separate:
         no_interval = (kinds == "") & blank("depth_from") & blank("depth_to")
         kinds[no_interval] = "no_interval"

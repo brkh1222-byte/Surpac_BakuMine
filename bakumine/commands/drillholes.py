@@ -214,6 +214,14 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         "--sample-length", type=float, default=1.0, help="sample length for --sample-depth"
     )
     shape.add_argument(
+        "--sample-depth-tolerance",
+        type=float,
+        default=5.0,
+        help="depths read from sample numbers are checked against the hole depth of the "
+        "collar table: a hole whose samples would end more than this below its bottom is "
+        "not imported that way (set aside and reported; default: 5)",
+    )
+    shape.add_argument(
         "--sample-pattern",
         action="append",
         metavar="REGEX",
@@ -539,6 +547,8 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
             if name not in ("collar", "survey"):
                 if name in args.sample_depth:
                     source["sample_depth"] = {"length": args.sample_length}
+                    if args.sample_depth_tolerance != 5.0:
+                        source["sample_depth"]["depth_tolerance"] = args.sample_depth_tolerance
                     if args.sample_pattern:
                         source["sample_depth"]["patterns"] = list(args.sample_pattern)
                 if args.qc == "off":
@@ -576,6 +586,25 @@ def _print_import_reports(db) -> None:
                 f"duplicates {check['duplicates']}, backwards {check['backwards']}, "
                 f"gaps {check['gaps']}, overlaps {check['overlaps']}"
             )
+            if check.get("repeated_hole_number"):
+                holes = check["repeated_hole_number"]
+                print(
+                    f"    the sample numbers repeat the hole number (e.g. hole 4: 4002 = "
+                    f"sample 002) in {len(holes)} hole(s): {', '.join(holes[:8])}"
+                    + (" ..." if len(holes) > 8 else "")
+                )
+            for hole in check.get("beyond_hole") or []:
+                print(
+                    f"  WARNING: {name} {hole['hole_id']}: the sample numbers give depths to "
+                    f"{hole['derived_to']:g} but the hole is {hole['max_depth']:g} deep "
+                    f"(e.g. {hole['example']}): its {hole['rows']} rows were NOT imported "
+                    "(set aside as depth_beyond_hole); give a --sample-pattern for these ids"
+                )
+            if check["backwards"]:
+                print(
+                    f"  WARNING: {name}: the depths read from sample numbers go backwards "
+                    f"{check['backwards']} time(s); see the report in database.json"
+                )
     for name, merged in reports.get("conflicts", {}).items():
         print(
             f"  {name} sources merged ({merged['precedence']} file wins): {merged['merged']} "

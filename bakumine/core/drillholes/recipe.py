@@ -37,8 +37,12 @@ the project's job log, so the same import can be run again on updated files with
 ``sample_depth``        interval tables: read depths from the sample number where the
                         ``from`` / ``to`` cells are empty. ``true`` or ``{"column":
                         "sample_id", "length": 1.0, "length_column": null, "patterns": [...],
-                        "when": "missing" | "always"}`` (see
-                        :func:`.tables.depths_from_sample_ids`).
+                        "when": "missing" | "always", "depth_tolerance": 5.0}`` (see
+                        :func:`.tables.depths_from_sample_ids`). The derived depths are
+                        checked against the collar table's hole depth: a hole whose
+                        samples would lie more than ``depth_tolerance`` below its bottom
+                        is not imported that way (its rows are set aside as
+                        ``depth_beyond_hole`` and reported).
 ``qc``                  interval tables: ``{"mode": "separate" | "off", "columns": [...],
                         "letter_suffix": true}``; default separate: QC rows leave the table
                         and are kept in the database's QC table.
@@ -610,10 +614,12 @@ def prepare_table(
     options: ImportOptions,
     base: Path | None,
     grids: dict[Path, dict[str, pd.DataFrame]],
+    hole_depths: Sequence[Mapping[str, float] | None] | None = None,
 ) -> list[Prepared]:
-    """The sources of one table after the row rules (text). ``grids`` caches files read."""
+    """The sources of one table after the row rules (text). ``grids`` caches files read.
+    ``hole_depths``: per source, hole id -> depth of the hole in the source's unit."""
     prepared = []
-    for source in sources:
+    for i, source in enumerate(sources):
         path = _resolve(str(source["file"]), base)
         if path not in grids:
             grids[path] = read_grids(path, delimiter=options.delimiter, encoding=options.encoding)
@@ -626,6 +632,7 @@ def prepare_table(
                     grids=grids[path],
                     hole_id=recipe.get("hole_id"),
                     keep_unmapped=options.keep_unmapped,
+                    hole_depths=hole_depths[i] if hole_depths is not None else None,
                 )
             )
         except ValueError as exc:
@@ -663,6 +670,16 @@ class _SourceOptions:
 
     def effective(self, name: str, i: int) -> ImportOptions:
         return replace(self.options, **self.own[name][i])
+
+    def hole_depths(
+        self, name: str, i: int, depths: Mapping[str, float] | None
+    ) -> Mapping[str, float] | None:
+        """The depths of the holes (as the collar table has them by now) in the unit of
+        source ``i`` of table ``name``."""
+        if depths is None or not self.mixed_units:
+            return depths  # one unit throughout
+        factor = LENGTH_UNITS[self.effective(name, i).length_unit]  # the collar is in metres
+        return {hole: depth / factor for hole, depth in depths.items()}
 
     def apply(
         self, name: str, kind: str, table: pd.DataFrame, source: np.ndarray,
@@ -890,9 +907,15 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
         "dropped_rows": {}, "duplicates": {},
     }  # fmt: skip
-    for name, sources in recipe["tables"].items():
+    depths: dict[str, float] | None = None  # hole id -> depth, once the collar is read
+    # the collar first: the depths of the holes check the sample-number rule
+    for name in sorted(recipe["tables"], key=lambda n: n != "collar"):
+        sources = recipe["tables"][name]
         kind = _kind(name)
-        prepared = prepare_table(name, sources, recipe, options, base, grids)
+        prepared = prepare_table(
+            name, sources, recipe, options, base, grids,
+            [per_source.hole_depths(name, i, depths) for i in range(len(sources))],
+        )  # fmt: skip
         labels = [Path(str(s["file"])).name for s in sources]
         for i, part in enumerate(prepared):
             resolved["tables"][name][i]["map"] = part.mapping
@@ -954,6 +977,11 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                 )  # fmt: skip
         if gone:
             reports["dropped_rows"][name] = gone
+        if kind == "collar" and "max_depth" in table.columns:
+            known = table["max_depth"].notna().to_numpy(dtype=bool)
+            depths = dict(
+                zip(table["hole_id"][known], table["max_depth"][known].astype(float), strict=True)
+            )
         units = _units(name, [p.info.get("units", {}) for p in prepared], labels, metadata)
         if units:
             reports["units"][name] = {c: u for c, u in units.items() if c in table.columns}

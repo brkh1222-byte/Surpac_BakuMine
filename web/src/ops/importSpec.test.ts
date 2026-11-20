@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conflictsText, droppedText, duplicatesText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
+import { beyondText, conflictsText, droppedText, duplicatesText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -51,6 +51,13 @@ describe('import panel helpers', () => {
   it('says which intervals were there twice', () => {
     const report = { rule: 'keep_first', intervals: 3, rows_removed: 3, holes: 2, listing: 'duplicates_assay.csv', examples: [{ hole_id: 'SYN-01', depth_from: 4, depth_to: 5, rows: 2 }] }
     expect(duplicatesText('assay', report)).toBe('assay: 3 intervals in 2 holes more than once (keep first): 3 rows removed, e.g. SYN-01 4–5; listed in duplicates_assay.csv')
+  })
+
+  it('says which holes the sample-number rule was refused for', () => {
+    const check = { rows: 10, duplicates: 0, backwards: 0, gaps: 0, overlaps: 0, unmatched: 0, unmatched_examples: [] }
+    expect(beyondText(check)).toBe('')
+    expect(beyondText({ ...check, beyond_hole: [{ hole_id: 'SYN-06', derived_to: 70250, max_depth: 250, rows: 250, example: 'SYN06-70250' }] }))
+      .toBe('; NOT imported, deeper than the hole: SYN-06 (to 70250, hole 250)')
   })
 
   it('builds the hole filter', () => {

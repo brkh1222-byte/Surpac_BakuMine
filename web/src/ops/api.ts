@@ -60,6 +60,10 @@ export interface SampleDepthCheck {
   overlaps: number
   unmatched: number
   unmatched_examples: string[]
+  /** holes whose sample numbers repeat the hole number (4002 = sample 002 of hole 4) */
+  repeated_hole_number?: string[]
+  /** holes whose derived depths go beyond the collar depth: not imported */
+  beyond_hole?: { hole_id: string; derived_to: number; max_depth: number; rows: number; example: string }[]
 }
 
 export interface UploadPreview {
