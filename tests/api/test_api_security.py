@@ -191,7 +191,12 @@ def test_jobs_are_bounded(project, monkeypatch):
         job.status = "running"
         operations._jobs[job.id] = job
     # one more is refused while MAX_RUNNING_JOBS run (409); old finished jobs are dropped
-    monkeypatch.setattr(operations, "build_plan", lambda spec: None)
+    from types import SimpleNamespace
+
+    stub_plan = SimpleNamespace(
+        to_dict=lambda: {}, attribute="au", outputs=SimpleNamespace(names=lambda a: {})
+    )
+    monkeypatch.setattr(operations, "build_plan", lambda spec: stub_plan)
     monkeypatch.setattr(operations, "_model_path", lambda folder, model: None)
     monkeypatch.setattr(operations.Project, "open", lambda folder: _FakeProject())
     with pytest.raises(operations.BusyError):
@@ -212,7 +217,7 @@ class _FakeProject:
     def get(self, object_id):
         from types import SimpleNamespace
 
-        return SimpleNamespace(kind="composite")
+        return SimpleNamespace(kind="composite", to_dict=lambda: {"id": object_id})
 
 
 # ---------------------------------------------------------------------- concurrency
