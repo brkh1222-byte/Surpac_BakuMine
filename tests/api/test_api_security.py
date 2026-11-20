@@ -60,3 +60,50 @@ def test_composite_name_cannot_write_outside_the_project(project, tmp_path, kind
     obj = Project.open(folder).get(r.json()["id"])
     assert obj.name == name  # kept as display text
     assert Project.open(folder).path_of(obj).is_relative_to(folder)
+
+
+# ---------------------------------------------------------------------- request guard
+
+
+@pytest.mark.parametrize(
+    ("host", "status"),
+    [
+        ("evil.example", 400),
+        ("evil.example:8000", 400),
+        ("127.0.0.1.evil.example", 400),
+        ("localhost:8000", 200),
+        ("127.0.0.1:5173", 200),
+        ("[::1]:8000", 200),
+        ("LOCALHOST", 200),
+    ],
+)
+def test_dns_rebinding_hosts_are_refused(host, status):
+    client = TestClient(app)
+    assert client.get("/api/health", headers={"host": host}).status_code == status
+
+
+def test_allowed_hosts_from_the_environment(monkeypatch):
+    client = TestClient(app)
+    assert client.get("/api/health", headers={"host": "box.lan:8000"}).status_code == 400
+    monkeypatch.setenv("BAKUMINE_ALLOWED_HOSTS", "box.lan, other")
+    assert client.get("/api/health", headers={"host": "box.lan:8000"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("origin", "status"),
+    [
+        ("https://evil.example", 403),
+        ("null", 403),
+        ("http://localhost:9999", 403),  # another local page is another origin
+        ("http://localhost:8000", 404),  # same origin: reaches the route (no such job)
+        (None, 404),  # not a browser
+    ],
+)
+def test_cross_origin_state_changes_are_refused(origin, status):
+    client = TestClient(app)
+    headers = {"host": "localhost:8000"}
+    if origin is not None:
+        headers["origin"] = origin
+    assert client.post("/api/v1/ops/jobs/nope/cancel", headers=headers).status_code == status
+    # reads are not refused for an Origin (no CORS headers: the page cannot read them)
+    assert client.get("/api/health", headers=headers).status_code == 200
