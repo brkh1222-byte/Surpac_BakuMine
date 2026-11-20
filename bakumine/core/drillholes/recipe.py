@@ -42,7 +42,19 @@ the project's job log, so the same import can be run again on updated files with
                         checked against the collar table's hole depth: a hole whose
                         samples would lie more than ``depth_tolerance`` below its bottom
                         is not imported that way (its rows are set aside as
-                        ``depth_beyond_hole`` and reported).
+                        ``depth_beyond_hole`` and reported). The rule is this file's, not
+                        the table's, and it never replaces a valid ``from`` / ``to``:
+                        ``"always"`` reads the number wherever a row has no valid pair,
+                        ``"missing"`` only where both cells are empty. Stated intervals
+                        check it: where a hole's (or, for a hole with fewer than three,
+                        the file's) own intervals do not end where their sample numbers
+                        say, the numbers are not depths and the rows without depths are
+                        set aside (``sample_number_not_a_depth``); a hole whose derived
+                        intervals overlap intervals another file states is set aside too
+                        (``depth_contradicts_other_source``). Per file in
+                        ``reports["sample_depth"][table]``: ``rows`` (read from the
+                        number), ``rows_with_own_depths``, ``contradicted``,
+                        ``contradicts_sources``.
 ``qc``                  interval tables: ``{"mode": "separate" | "off", "columns": [...],
                         "letter_suffix": true}``; default separate: QC rows leave the table
                         and are kept in the database's QC table.
@@ -599,6 +611,95 @@ def resolve_duplicate_intervals(
     return table.loc[~later].reset_index(drop=True), report, listing
 
 
+def check_derived_depths(
+    prepared: Sequence[Prepared], labels: Sequence[str], tolerance: float = 0.01,
+    name: str = "interval",
+) -> None:  # fmt: skip
+    """Depths read from sample numbers against the intervals the sources state.
+
+    A derived interval that overlaps a stated interval of the same hole (in any source of
+    the table) without being that interval (from and to within ``tolerance``) contradicts
+    it: the sample numbers of that hole are not depths. Every derived row of such a hole
+    leaves its source's table for the QC rows (``depth_contradicts_other_source``) and
+    the source's sample-depth report gets ``contradicts_sources``: per hole the rows, how
+    many overlap, how many are the stated interval, and an example with the other file.
+    Changes ``prepared`` in place."""
+    stated: dict[str, list[tuple[float, float, int]]] = {}
+    numbers = []
+    for i, part in enumerate(prepared):
+        table = part.table
+        if not {"hole_id", "depth_from", "depth_to"} <= set(table.columns):
+            numbers.append(None)
+            continue
+        a, b = (
+            pd.to_numeric(
+                table[c].astype(str).str.strip().str.replace(",", "."), errors="coerce"
+            ).to_numpy(dtype=np.float64)
+            for c in ("depth_from", "depth_to")
+        )
+        holes = table["hole_id"].astype(str).to_numpy()
+        numbers.append((holes, a, b))
+        real = np.isfinite(a) & (b > a)
+        if part.derived is not None:
+            real &= ~part.derived
+        for hole, lo, hi in zip(holes[real], a[real], b[real], strict=True):
+            stated.setdefault(hole, []).append((float(lo), float(hi), i))
+    for i, part in enumerate(prepared):
+        if part.derived is None or not part.derived.any() or numbers[i] is None:
+            continue
+        holes, a, b = numbers[i]
+        gone = np.zeros(len(holes), dtype=bool)
+        found: list[dict[str, Any]] = []
+        for hole in dict.fromkeys(holes[part.derived].tolist()):
+            others = stated.get(hole)
+            if not others:
+                continue
+            lo, hi, src = (np.array(v) for v in zip(*others, strict=True))
+            mine = np.flatnonzero(part.derived & (holes == hole))
+            same = overlap = 0
+            example = None
+            for r in mine:
+                is_same = (np.abs(lo - a[r]) <= tolerance) & (np.abs(hi - b[r]) <= tolerance)
+                over = (np.minimum(hi, b[r]) - np.maximum(lo, a[r]) > tolerance) & ~is_same
+                if is_same.any():
+                    same += 1
+                elif over.any():
+                    overlap += 1
+                    if example is None:
+                        k = int(np.flatnonzero(over)[0])
+                        example = {
+                            "sample_id": str(part.table["sample_id"].iat[r])
+                            if "sample_id" in part.table.columns else "",
+                            "depth_from": float(a[r]), "depth_to": float(b[r]),
+                            "other_from": float(lo[k]), "other_to": float(hi[k]),
+                            "other_file": labels[int(src[k])],
+                        }  # fmt: skip
+            if overlap:
+                gone[mine] = True
+                found.append({"hole_id": hole, "rows": int(len(mine)), "overlapping": overlap,
+                              "same_interval": same, "example": example})  # fmt: skip
+        check = part.info.setdefault("sample_depth", {})
+        check["contradicts_sources"] = found
+        check["contradicts_sources_rows"] = int(gone.sum())
+        if not gone.any():
+            continue
+        aside = part.table.loc[gone].astype(str)
+        aside.insert(0, "qc_type", "depth_contradicts_other_source")
+        part.qc = pd.concat([part.qc, aside], ignore_index=True).fillna("")
+        part.table = part.table.loc[~gone].reset_index(drop=True)
+        part.derived = part.derived[~gone]
+        part.info["rows"] = int(len(part.table))
+        counts = part.info.setdefault("qc", {})
+        counts["depth_contradicts_other_source"] = int(gone.sum())
+        part.notes.append(
+            {"table": name, "column": "depth_from,depth_to", "count": int(gone.sum()),
+             "kind": "sample_depths_contradict_other_source_not_imported",
+             "examples": [f["hole_id"] for f in found[:5]],
+             "hint": "the sample numbers of these holes are not depths: turn sample_depth "
+                     "off for this file"}
+        )  # fmt: skip
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, np.generic):
         value = value.item()
@@ -934,6 +1035,8 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
             [per_source.hole_depths(name, i, depths) for i in range(len(sources))],
         )  # fmt: skip
         labels = [Path(str(s["file"])).name for s in sources]
+        if kind == "interval":
+            check_derived_depths(prepared, labels, recipe["merge"]["tolerance"], name)
         for i, part in enumerate(prepared):
             resolved["tables"][name][i]["map"] = part.mapping
             metadata.notes.extend(part.notes)
@@ -1027,7 +1130,11 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                 }
             elif name in qc:
                 del qc[name]
-            checks = [p.info["sample_depth"] for p in prepared if "sample_depth" in p.info]
+            checks = [
+                {"file": label, **p.info["sample_depth"]}
+                for label, p in zip(labels, prepared, strict=True)
+                if "sample_depth" in p.info
+            ]
             if checks:
                 reports["sample_depth"][name] = checks
     if holes:

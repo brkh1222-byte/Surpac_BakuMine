@@ -64,6 +64,8 @@ __all__ = [
 ]
 
 SHEET_COLUMN = "__sheet__"
+#: marks the rows whose depths were read from the sample number (dropped on the way out)
+DERIVED_COLUMN = "__derived__"
 _HEADER_SCAN_ROWS = 60
 _NUMERIC = re.compile(r"^[<>]?\s*[+-]?(?:\d+[.,]?\d*|[.,]\d+)(?:[eE][+-]?\d+)?$")
 _UNITS = frozenset(
@@ -556,6 +558,59 @@ def depths_from_sample_ids(
     return start, end
 
 
+#: at least this share of a hole's (or file's) own intervals must end where the rule says
+_RULE_AGREEMENT = 0.8
+_RULE_MIN_HOLE = 3  # own intervals a hole needs to be judged by itself
+_RULE_MIN_FILE = 5  # ... and a file, for its holes that cannot
+
+
+def _rule_against_known(
+    holes: np.ndarray,
+    sample_ids: np.ndarray,
+    derived_to: np.ndarray,
+    known_to: np.ndarray,
+    lengths: np.ndarray,
+    wanted: np.ndarray,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    """Does the sample-number rule hold where the source has depths of its own?
+
+    Rows with a valid ``from`` / ``to`` (``known_to`` finite) whose sample number the rule
+    can read are compared: the rule holds for a row when it ends within half a sample
+    length of the row's ``to``. A hole with three or more such rows is judged by them; a
+    hole with fewer by all such rows of the file (five or more). Where fewer than 80 %
+    hold, the sample numbers are not depths (running numbers) and the rule is refused for
+    the hole's rows that lack depths (``wanted``). Returns the refused rows and, per
+    refused hole, ``{hole_id, rows, compared, agreed, judged_by, example}``."""
+    comparable = np.isfinite(known_to) & np.isfinite(derived_to)
+    agrees = comparable & (np.abs(derived_to - known_to) <= 0.5 * lengths + 1e-9)
+    refused = np.zeros(len(holes), dtype=bool)
+    contradicted: list[dict[str, Any]] = []
+    file_n, file_ok = int(comparable.sum()), int(agrees.sum())
+    file_fails = file_n >= _RULE_MIN_FILE and file_ok < _RULE_AGREEMENT * file_n
+    for hole in dict.fromkeys(holes[wanted].tolist()):
+        mine = holes == hole
+        n, good = int((comparable & mine).sum()), int((agrees & mine).sum())
+        by = "hole"
+        if n < _RULE_MIN_HOLE:
+            if not file_fails:
+                continue
+            by = "file"
+        elif good >= _RULE_AGREEMENT * n:
+            continue
+        rows = mine & wanted
+        refused |= rows
+        pool = comparable & ~agrees & (mine if by == "hole" else True)
+        at = int(np.flatnonzero(pool)[0])
+        contradicted.append(
+            {"hole_id": str(hole), "rows": int(rows.sum()), "judged_by": by,
+             "compared": n if by == "hole" else file_n,
+             "agreed": good if by == "hole" else file_ok,
+             "example": {"hole_id": str(holes[at]), "sample_id": str(sample_ids[at]),
+                         "derived_to": float(derived_to[at]), "depth_to": float(known_to[at])}}
+        )  # fmt: skip
+    return refused, contradicted
+
+
 def check_sample_depths(
     hole_ids: Sequence[str], depth_from: np.ndarray, depth_to: np.ndarray
 ) -> dict[str, Any]:
@@ -660,6 +715,8 @@ class Prepared:
     mapping: dict[str, str]
     info: dict[str, Any]
     notes: list[dict[str, Any]]
+    #: per row of ``table``: were its depths read from the sample number? (None: no rule)
+    derived: np.ndarray | None = None
 
 
 def _stack(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -811,6 +868,9 @@ def prepare_source(
                  rows=renamed["__row__"].to_numpy()[nameless][:20].tolist())  # fmt: skip
             renamed = renamed.loc[~nameless].reset_index(drop=True)
     info["dropped"] = dropped
+    derived = None
+    if DERIVED_COLUMN in renamed.columns:
+        derived = renamed.pop(DERIVED_COLUMN).to_numpy(dtype=bool)
     present = set(renamed.columns) - {SHEET_COLUMN, "__row__"}
     info["rows"] = int(len(renamed))
     info["targets"] = sorted(present)
@@ -820,6 +880,7 @@ def prepare_source(
         mapping={str(k): v for k, v in resolved.items()},
         info=info,
         notes=notes,
+        derived=derived,
     )
 
 
@@ -854,33 +915,58 @@ def _interval_rules(
                 f"{name}: the sample-number rule needs the columns hole_id and {column!r} "
                 "(map the sample number column to it)"
             )
-        todo = kinds == ""
+        # the rule fills in what a row lacks; a from / to that is there and valid stays
+        given = {
+            target: pd.to_numeric(
+                table[target].astype(str).str.strip().str.replace(",", "."), errors="coerce"
+            ).to_numpy(dtype=np.float64)
+            if target in table.columns
+            else np.full(len(table), np.nan)
+            for target in ("depth_from", "depth_to")
+        }
+        valid = np.isfinite(given["depth_from"]) & (given["depth_to"] > given["depth_from"])
+        todo = (kinds == "") & ~valid
         if rule.get("when", "missing") != "always":
             todo &= blank("depth_from") & blank("depth_to")
+        known = (kinds == "") & valid  # rows that say what the sample numbers mean
+        asked = todo | known
         length: Any = float(rule.get("length", 1.0))
         length_column = rule.get("length_column")
         if length_column:
             if length_column not in table.columns:
                 raise ValueError(f"{name}: no column {length_column!r} for the sample length")
-            given = pd.to_numeric(
+            stated = pd.to_numeric(
                 table[length_column].astype(str).str.replace(",", "."), errors="coerce"
             ).to_numpy(dtype=np.float64)
-            length = np.where(np.isfinite(given), given, length)[todo]
+            length = np.where(np.isfinite(stated), stated, length)[asked]
         tolerance = float(rule.get("depth_tolerance", 5.0))
         decided: dict[str, Any] = {}
-        start, end = depths_from_sample_ids(
-            table["hole_id"].to_numpy()[todo],
-            table[column].to_numpy()[todo],
+        start_all, end_all = depths_from_sample_ids(
+            table["hole_id"].to_numpy()[asked],
+            table[column].to_numpy()[asked],
             length,
             rule.get("patterns") or None,
             max_depth=hole_depths,
             tolerance=tolerance,
             report=decided,
         )
+        wanted = todo[asked]
+        start, end = start_all[wanted], end_all[wanted]
+        # where the file has intervals of its own, they say whether its sample numbers
+        # are depths at all (running numbers are not)
+        refused, contradicted = _rule_against_known(
+            table["hole_id"].to_numpy()[asked].astype(str),
+            table[column].to_numpy()[asked],
+            end_all,
+            given["depth_to"][asked],
+            np.broadcast_to(np.asarray(length, dtype=np.float64), (int(asked.sum()),)),
+            wanted,
+        )
         for target in ("depth_from", "depth_to"):
             if target not in table.columns:
                 table[target] = ""
-        ok = np.isfinite(end)
+        refused = refused[wanted]
+        ok = np.isfinite(end) & ~refused
         rows = np.flatnonzero(todo)
         # a rule that puts samples below the bottom of the hole has misread the ids
         beyond: list[dict[str, Any]] = []
@@ -906,16 +992,26 @@ def _interval_rules(
             table.iloc[rows[ok], table.columns.get_loc(target)] = [
                 repr(float(v)) for v in values[ok]
             ]
-        failed = rows[~ok & ~too_deep]
+        failed = rows[~ok & ~too_deep & ~refused]
         kinds[failed] = "no_depth"
         kinds[rows[too_deep]] = "depth_beyond_hole"
+        kinds[rows[refused]] = "sample_number_not_a_depth"
+        derived = np.zeros(len(table), dtype=bool)
+        derived[rows[ok]] = True
+        table[DERIVED_COLUMN] = derived
         check = check_sample_depths(table["hole_id"].to_numpy()[rows[ok]], start[ok], end[ok])
         check["unmatched"] = int(len(failed))
         check["unmatched_examples"] = table[column].to_numpy()[failed][:8].tolist()
-        check["repeated_hole_number"] = decided.get("repeated_hole_number", [])
+        used = set(derived_holes[ok].tolist())  # only where the rule gave depths
+        check["repeated_hole_number"] = [
+            h for h in decided.get("repeated_hole_number", []) if h in used
+        ]
         check["depth_tolerance"] = tolerance
         check["beyond_hole"] = beyond
         check["beyond_hole_rows"] = int(too_deep.sum())
+        check["rows_with_own_depths"] = int(known.sum())
+        check["contradicted"] = contradicted
+        check["contradicted_rows"] = int(refused.sum())
         check["holes_without_known_depth"] = unchecked if hole_depths is not None else None
         check["preview"] = [
             {
@@ -939,11 +1035,19 @@ def _interval_rules(
                        for b in beyond[:5]],
              hint="the sample numbers are not read as meant: give sample_depth patterns",
         )  # fmt: skip
+        note("depth_from,depth_to", "sample_numbers_contradict_own_depths_not_imported",
+             int(refused.sum()),
+             examples=[f"{c['hole_id']}: {c['example']['sample_id']} would end at "
+                       f"{c['example']['derived_to']:g}, the file says "
+                       f"{c['example']['depth_to']:g}" for c in contradicted[:5]],
+             hint="the sample numbers of this file are not depths: turn sample_depth off "
+                  "for it",
+        )  # fmt: skip
     if separate:
         no_interval = (kinds == "") & blank("depth_from") & blank("depth_to")
         kinds[no_interval] = "no_interval"
     is_qc = kinds != ""
-    qc = table.loc[is_qc].copy()
+    qc = table.loc[is_qc].drop(columns=[DERIVED_COLUMN], errors="ignore").copy()
     qc.insert(0, "qc_type", kinds[is_qc])
     qc = qc.rename(columns={SHEET_COLUMN: "sheet", "__row__": "row"})
     qc = qc.astype(str).reset_index(drop=True)

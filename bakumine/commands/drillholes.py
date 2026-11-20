@@ -208,7 +208,11 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
         default=[],
         metavar="TABLE",
         help="where from/to are empty, read them from the sample number: to = the number "
-        "left after the hole id, from = to - sample length (or an explicit 'a-b')",
+        "left after the hole id, from = to - sample length (or an explicit 'a-b'). For "
+        "every file of the table; one file is said with --source-option "
+        "FILE:sample-depth=on (or off). A from/to that is there is never replaced, and "
+        "where a file's own intervals or those of another file contradict the rule, the "
+        "rule is not applied (reported)",
     )
     shape.add_argument(
         "--sample-length", type=float, default=1.0, help="sample length for --sample-depth"
@@ -361,6 +365,8 @@ _SOURCE_VALUE_KEYS: dict[str, str] = {
     "crs": "crs",
     "geographic-crs": "geographic_crs",
 }
+#: --source-option keys of the sample-number rule of one file (see --sample-depth)
+_SOURCE_SAMPLE_KEYS = ("sample-depth", "sample-length", "sample-pattern", "sample-depth-tolerance")
 SOURCE_OPTION_HELP = (
     "sheet (names, indexes or wildcards, comma separated), exclude-sheets, header-row, "
     "header-rows, hole-from-sheet (yes / no), map (a JSON or TOML file: {source column: "
@@ -368,8 +374,31 @@ SOURCE_OPTION_HELP = (
     "dip-convention, length-unit, coordinate-order, crs (the CRS of this file's "
     "coordinates; files in another CRS than --crs are reprojected), geographic-crs. "
     "Files of one table with different dip conventions are all stored negative_down, "
-    "files with different length units are all converted to metres"
+    "files with different length units are all converted to metres; and the sample-number "
+    "rule of this file only: sample-depth (on / off: off takes the file out of "
+    "--sample-depth TABLE, on gives the rule to this file alone), sample-length, "
+    "sample-pattern (repeatable), sample-depth-tolerance"
 )
+
+
+#: where _source_options keeps a file's sample-number settings until the recipe is made
+_SAMPLE_RULE = "_sample_rule"
+
+
+def _sample_rule(args: argparse.Namespace, table_wide: bool, own: dict | None) -> dict | None:
+    """The ``sample_depth`` of one source: the table's rule (--sample-depth TABLE) with
+    what --source-option FILE:sample-...=... says of this file; None = no rule."""
+    own = own or {}
+    if not own.get("sample-depth", table_wide or bool(own)):
+        return None
+    rule: dict = {"length": own.get("sample-length", args.sample_length)}
+    tolerance = own.get("sample-depth-tolerance", args.sample_depth_tolerance)
+    if tolerance != 5.0:
+        rule["depth_tolerance"] = tolerance
+    patterns = own.get("patterns") or args.sample_pattern
+    if patterns:
+        rule["patterns"] = list(patterns)
+    return rule
 
 
 def _truth(text: str, what: str) -> bool:
@@ -386,7 +415,7 @@ def _source_options(
     """``--source-option FILE:KEY=VALUE`` -> ``{(table, index of the file): source keys}``."""
     import re
 
-    keys = {**_SOURCE_LAYOUT_KEYS, **_SOURCE_VALUE_KEYS}
+    keys = {**_SOURCE_LAYOUT_KEYS, **_SOURCE_VALUE_KEYS, **dict.fromkeys(_SOURCE_SAMPLE_KEYS)}
     names = "|".join(map(re.escape, keys))
     pattern = re.compile(rf"^(?P<file>.+?):(?P<key>{names})=(?P<value>.*)$")
     given = [(table, i, path) for table, paths in files.items() for i, path in enumerate(paths)]
@@ -408,6 +437,28 @@ def _source_options(
             )
         for where in found:  # one file may feed two tables: the option is the file's
             source = out.setdefault(where, {})
+            if key in _SOURCE_SAMPLE_KEYS:
+                if where[0] in ("collar", "survey"):
+                    raise CommandError(
+                        f"--source-option {name}:{key}: the sample-number rule is for "
+                        f"interval tables, {name} is a {where[0]} file"
+                    )
+                rule = source.setdefault(_SAMPLE_RULE, {})
+                if key == "sample-pattern":
+                    rule.setdefault("patterns", []).append(value)
+                    continue
+                if key in rule:
+                    raise CommandError(f"--source-option gives {name}:{key} twice")
+                if key == "sample-depth":
+                    rule[key] = _truth(value, f"--source-option {name}:{key}")
+                    continue
+                try:
+                    rule[key] = float(value)
+                except ValueError:
+                    raise CommandError(
+                        f"--source-option {name}:{key} expects a number, got {value!r}"
+                    ) from None
+                continue
             if key in _SOURCE_VALUE_KEYS:
                 field = _SOURCE_VALUE_KEYS[key]
                 if field in source.setdefault("options", {}):
@@ -542,15 +593,13 @@ def _recipe_from_args(args: argparse.Namespace) -> tuple[dict, dict[str, str]]:
             if name in args.hole_from_sheet:
                 source["hole_id_from_sheet"] = True
             source.update(mine)  # what --source-option says of this file wins
+            own_rule = source.pop(_SAMPLE_RULE, None)
             if not source.get("hole_id_from_sheet"):
                 source.pop("hole_id_from_sheet", None)
             if name not in ("collar", "survey"):
-                if name in args.sample_depth:
-                    source["sample_depth"] = {"length": args.sample_length}
-                    if args.sample_depth_tolerance != 5.0:
-                        source["sample_depth"]["depth_tolerance"] = args.sample_depth_tolerance
-                    if args.sample_pattern:
-                        source["sample_depth"]["patterns"] = list(args.sample_pattern)
+                rule = _sample_rule(args, name in args.sample_depth, own_rule)
+                if rule is not None:
+                    source["sample_depth"] = rule
                 if args.qc == "off":
                     source["qc"] = {"mode": "off"}
             tables[name].append(source)
@@ -580,9 +629,11 @@ def _print_import_reports(db) -> None:
         print(f"  {name} QC rows set aside ({sum(counts.values())}): {text}")
     for name, checks in reports.get("sample_depth", {}).items():
         for check in checks:
+            own = check.get("rows_with_own_depths", 0)
             print(
-                f"  {name} depths from sample numbers: {check['rows']} rows in "
-                f"{len(check['holes'])} holes; not understood {check['unmatched']}, "
+                f"  {name} {check.get('file', '')}: depths from sample numbers: "
+                f"{check['rows']} rows in {len(check['holes'])} holes ({own} rows keep the "
+                f"from/to they have); not understood {check['unmatched']}, "
                 f"duplicates {check['duplicates']}, backwards {check['backwards']}, "
                 f"gaps {check['gaps']}, overlaps {check['overlaps']}"
             )
@@ -592,6 +643,40 @@ def _print_import_reports(db) -> None:
                     f"    the sample numbers repeat the hole number (e.g. hole 4: 4002 = "
                     f"sample 002) in {len(holes)} hole(s): {', '.join(holes[:8])}"
                     + (" ..." if len(holes) > 8 else "")
+                )
+            where = f"{name} {check.get('file', '')}".strip()
+            refused = check.get("contradicted") or []
+            if refused:
+                first = refused[0]
+                e = first["example"]
+                listed = ", ".join(c["hole_id"] for c in refused[:8])
+                print(
+                    f"  WARNING: {where}: the sample numbers are not depths in "
+                    f"{len(refused)} hole(s) ({listed}{' ...' if len(refused) > 8 else ''}): "
+                    f"the file's own intervals say so (e.g. {e['hole_id']} sample "
+                    f"{e['sample_id']} would end at {e['derived_to']:g} m, the file says "
+                    f"{e['depth_to']:g}; the rule holds for {first['agreed']} of "
+                    f"{first['compared']} of its intervals). {check['contradicted_rows']} "
+                    "row(s) without from/to were NOT given depths (set aside as "
+                    "sample_number_not_a_depth); --source-option FILE:sample-depth=off "
+                    "says it for the file"
+                )
+            crossed = check.get("contradicts_sources") or []
+            if crossed:
+                first = crossed[0]
+                e = first["example"]
+                listed = ", ".join(c["hole_id"] for c in crossed[:8])
+                print(
+                    f"  ERROR: {where}: depths read from sample numbers contradict the "
+                    f"intervals of other files in {len(crossed)} hole(s) ({listed}"
+                    f"{' ...' if len(crossed) > 8 else ''}), e.g. {first['hole_id']} sample "
+                    f"{e['sample_id']} read as {e['depth_from']:g}-{e['depth_to']:g} overlaps "
+                    f"{e['other_from']:g}-{e['other_to']:g} of {e['other_file']} "
+                    f"({first['overlapping']} of the hole's {first['rows']} derived "
+                    f"intervals overlap). The {check['contradicts_sources_rows']} derived "
+                    "row(s) of these holes were NOT imported (set aside as "
+                    "depth_contradicts_other_source): turn the rule off for this file "
+                    "(--source-option FILE:sample-depth=off) or give a --sample-pattern"
                 )
             for hole in check.get("beyond_hole") or []:
                 print(
