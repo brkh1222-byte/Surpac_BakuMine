@@ -164,7 +164,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 - [x] **P5.T4 Blocks.** Colour by attribute with editable legend (ranges or continuous ramp); render only exposed faces of the filtered set; sub-blocks at true size; pick a block to see all attributes. *Accept:* 2M blocks loaded, filter change < 1 s, ≥ 30 fps while orbiting.
 - [x] **P5.T5 Constraint filter in viewer.** Attribute ranges, inside/outside solid, above/below DTM, bench range; same JSON as P3.T4, evaluated server-side. *Accept:* viewer mask equals CLI mask.
 - [x] **P5.T6 Section tools.** Clipping plane at any orientation with thickness (slab), step forward/back, section view locks camera normal to plane; drillholes, mesh outlines and blocks all clip together. *Accept:* screenshot test on synthetic section matches expected composition.
-- [ ] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
+- [x] **P5.T7 Section digitising.** Draw/edit closed strings on the active section, snap to drillhole intercepts, save as strings, send to P2.T6 to build a solid. *Accept:* digitise 5 sections of the synthetic deposit by script → valid solid.
 - [x] **P5.T8 Data transport.** Arrow/binary endpoints for holes, meshes, blocks, with level-of-detail for very large models. *Accept:* 2M blocks transferred and displayed < 5 s on localhost.
 
 ### Phase 6 — Application workflow (H30–H40) · needs Gates A, B and 5B
@@ -180,7 +180,7 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 ### Phase 7 — Validation, performance, delivery (H40–H48)
 
 - [x] **P7.T1 End-to-end test.** One Playwright test drives the UI from raw CSVs to an estimated, reported model on synthetic data and asserts Gate B numbers. *Accept:* green, < 10 min.
-- [ ] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
+- [x] **P7.T2 Real-data run.** Same on the public dataset; sanity checks from `research.md` §9 recorded. *Accept:* swath and global mean checks pass.
 - [ ] ~~CUT: no inputs~~ **P7.T3 Surpac comparison** (only if the inputs in §7 are supplied). Import Surpac's `.str/.dtm` and block CSV for the same data; compare block by block. *Accept:* report of differences; coded volume within 1%, IDW grades within 1e-3 relative where search parameters are identical. If inputs are absent, leave unticked with that reason.
 - [x] **P7.T4 Performance pass.** Profile the 5M-block case; fix the top three hotspots. *Accept:* targets in P4.T4, P4.T6, P5.T4 met, numbers logged below.
 - [ ] **P7.T5 Review.** `/code-review high` and `/security-review` on the full diff; fix confirmed findings. *Accept:* no open important findings.
@@ -269,6 +269,9 @@ One line per merged task: `YYYY-MM-DD HH:MM  P#.T#  commit  note`.
 2026-11-20 15:50  P7.T4  405a3f4  scripts/bench_perf.py (5M blocks, 20k composites). Orchestrator rerun: IDW 1M 0.54 s (<60), OK 1M 0.70 s (<300), 5M 3-pass 3.6 s, sub-block+code d3 4.5 s, save 0.64 / load 0.49 s. P5.T4 exposed-face path 2 ms/frame (from P5 log). No code changed; nothing missed a target. Random-composite data is easier than real drilling.
 2026-11-20 16:10  P4.T10  cfa5e83  Dynamic anisotropy (per-block angles, grouped calls of array estimators; kriging uses block's own anisotropy). Folded case: IDW RMSE 0.804 -> 0.263, OK 0.777 -> 0.190 (corr 0.71 -> 0.98). Constant angles bit-identical to fixed. Orchestrator: estimation tests 326 pass. Slow if every block has distinct angles (angle_step mitigation, not benchmarked).
 2026-11-20 16:45  P6.T2-T5, P7.T1  9ebeebc 59cad85  Import / composite / block model / estimation dialogs (background job, progress, cancel) over /api/v1/ops; endpoints equal CLI (rtol 1e-6, rotation matrix round-off). E2E UI run raw CSVs -> report: tonnes -0.05 %, metal -2.4 %, 4 s. Orchestrator: make check 1313 + vitest 127 green, make e2e 55 passed. Not done: 3D ellipsoid preview, solid/DTM import dialog, capping options in UI. NOTE: synth truth.json plunge (+10) is -10 in the UI/rotation.py convention: sign convention to resolve in STATUS.
+2026-11-20 17:20  P7.T2  b008a6f  Babbitt rework: footwall contact + sampled-column domain, basal/upper zones, 99.5 pct caps, fitted variograms (R2 0.89/0.88), 50x50x15 m blocks. Orchestrator rerun: OK vs NN +2.3 %, OK vs declustered +3.3 % (basal +4.4 %), swath corr x 0.84 / y 0.91 / z 0.96, LOHO xval corr 0.39. Domain is inferred from grades/gaps, not logged geology; density 2.9 assumed.
+2026-11-20 17:20  P7.T5 (part 1)  51ecbab..1c5ae17  Core review: 10 confirmed bugs fixed with failing-first tests (project path traversal + concurrent registry loss, block CSV missing-token clash, assay column silently read as text, DXF 2D polyline z, int64 overflow, round() extremes, .str header). Estimation core: read only, no bug found. Gate A code-review part done.
+2026-11-20 17:20  P5.T7  de539db a4afe36  Section digitising: draw/edit/snap strings on sections, save (.str), build solid. 5 synthetic sections -> valid watertight solid, volume -0.76 %. Orchestrator: after merging all, make check 1348 + vitest 136 green, make e2e 56 passed.
 ### Blockers
 
 (none) — GitHub's initial commit was merged into local `main` on 2026-11-19 (26aa553) at the user's request. Nothing has been pushed.
