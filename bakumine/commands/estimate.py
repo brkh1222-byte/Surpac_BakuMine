@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def _format(summary) -> str:
     frame = summary.to_frame()
     lines = [
         f"estimation of {summary.attribute}: {summary.n_estimated} of {summary.n_targeted} "
-        f"blocks estimated, {summary.n_unestimated} not, {summary.seconds:.1f} s"
+        f"blocks estimated, {summary.n_unestimated} not"
     ]
     if frame.empty:
         return "\n".join(lines)
@@ -63,18 +64,36 @@ def _format(summary) -> str:
     return "\n".join(lines)
 
 
+def format_times(loading: float, estimating: float, saving: float, passes: float) -> str:
+    """The run time by step. ``passes`` is the time inside the estimation passes alone
+    (the "seconds" column): the rest of the estimation step selects the blocks of each
+    domain (constraints against solids and surfaces), prepares the samples and runs the
+    nearest-neighbour check."""
+    total = loading + estimating + saving
+    return (
+        f"time: total {total:.2f} s = loading {loading:.2f} s + estimation {estimating:.2f} s "
+        f"(of which the passes {passes:.2f} s) + saving {saving:.2f} s"
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     from bakumine.core.blockmodel.constraints import FileResolver
     from bakumine.core.blockmodel.storage import load_model, save_model
     from bakumine.core.estimation.block_estimation import EstimationPlan
 
+    t0 = time.perf_counter()
     model = load_model(args.model)
     table = _read_table(args.composites)
     plan = EstimationPlan.load(args.plan)
     resolver = FileResolver(args.geometry_dir) if args.geometry_dir else None
+    t1 = time.perf_counter()
     summary = plan.run(model, table, resolver=resolver, chunk_size=args.chunk_size)
+    t2 = time.perf_counter()
     print(_format(summary))
     header = save_model(model, args.out or args.model)
+    t3 = time.perf_counter()
+    print(format_times(t1 - t0, t2 - t1, t3 - t2, sum(p.seconds for d in summary.domains
+                                                      for p in d.passes)))  # fmt: skip
     _wrote(header.path, f"{header.n_blocks} blocks, {len(header.attributes)} attributes")
     if args.summary:
         path = Path(args.summary)

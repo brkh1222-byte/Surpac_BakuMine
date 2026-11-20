@@ -181,7 +181,7 @@ export function EstimatePanel() {
           {job.summary && !job.summary.cancelled && (
             <>
               <p className="sidebar-note" data-testid="estimate-summary">
-                {job.summary.attribute}: {job.summary.n_estimated} of {job.summary.n_targeted} blocks estimated, {job.summary.n_unestimated} not, {job.summary.seconds.toFixed(1)} s.
+                {job.summary.attribute}: {job.summary.n_estimated} of {job.summary.n_targeted} blocks estimated, {job.summary.n_unestimated} not; estimation step {job.summary.seconds.toFixed(1)} s.
               </p>
             </>
           )}

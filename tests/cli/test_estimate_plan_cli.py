@@ -236,7 +236,9 @@ def test_errors_are_reported_and_nothing_is_written(composites, tmp_path, capsys
         assert not out.exists()
 
 
-def test_the_written_plan_runs(composites, tmp_path, capsys):
+def test_the_written_plan_runs_and_estimate_reports_the_whole_run_time(
+    composites, tmp_path, capsys
+):
     path, table = composites
     model = BlockModel(BlockModelDefinition((0, 0, 0), (20, 20, 20), (6, 6, 3)))
     model.add_attribute("rock", "category", categories=["WASTE", "ORE"])
@@ -247,7 +249,26 @@ def test_the_written_plan_runs(composites, tmp_path, capsys):
     assert main(flags(path, plan)) == 0
     capsys.readouterr()
     assert main(["estimate", str(folder), "--composites", str(path), "--plan", str(plan)]) == 0
+    out = capsys.readouterr().out
     estimated = load_model(folder)
     ore = estimated["rock"] == 1
     assert np.isfinite(estimated["au"][ore]).all() and np.isnan(estimated["au"][~ore]).all()
     assert estimated["au"][ore].max() <= TOP_CUT  # the top cut was applied to the samples
+    # the first line no longer passes the time of the passes off as the run time
+    first = out.splitlines()[0]
+    assert first.endswith("0 not") and " s" not in first
+    line = next(text for text in out.splitlines() if text.startswith("time: total "))
+    words = line.replace("(", " ").replace(")", " ").split()
+    numbers = [float(v) for v in words if _is_number(v)]
+    total, loading, estimation, passes, saving = numbers
+    assert total == pytest.approx(loading + estimation + saving, abs=0.016)
+    assert 0.0 <= passes <= estimation + 0.005 and total > 0.0
+    assert "loading" in line and "estimation" in line and "saving" in line
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
