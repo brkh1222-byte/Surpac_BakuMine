@@ -1,5 +1,9 @@
 import { retryFailed } from '../api/useResource'
 import type { SceneMode } from '../scene/Viewport'
+import { CompositePanel } from './ops/CompositePanel'
+import { EstimatePanel } from './ops/EstimatePanel'
+import { ImportPanel } from './ops/ImportPanel'
+import { ModelPanel } from './ops/ModelPanel'
 import { ObjectControls } from './ObjectControls'
 import { ReportPanel } from './ReportPanel'
 import { SectionPanel } from './SectionPanel'
@@ -106,6 +110,14 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
         ))}
       </ul>
       <SceneNote mode={mode} />
+      {mode === 'api' && (
+        <>
+          <ImportPanel />
+          <CompositePanel />
+          <ModelPanel />
+          <EstimatePanel />
+        </>
+      )}
       <SectionPanel />
       <ReportPanel />
     </aside>
