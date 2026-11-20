@@ -1,0 +1,34 @@
+{
+  "scale": 1.0,
+  "blocks": 5000000,
+  "idw_1M": {
+    "seconds": 0.485,
+    "target": 60.0,
+    "estimated_fraction": 0.999912,
+    "mean_samples": 11.676616
+  },
+  "ok_1M": {
+    "seconds": 0.66,
+    "target": 300.0,
+    "estimated_fraction": 0.999912,
+    "mean_samples": 11.676616
+  },
+  "estimate_5M_3pass": {
+    "seconds": 3.49,
+    "target": null
+  },
+  "_au_checksum": 92345952.156531,
+  "subblock_code_d3": {
+    "seconds": 4.202,
+    "target": null
+  },
+  "n_blocks_after_subblock": 5912058,
+  "save": {
+    "seconds": 0.628,
+    "target": null
+  },
+  "load": {
+    "seconds": 0.459,
+    "target": null
+  }
+}
