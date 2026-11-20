@@ -604,6 +604,11 @@ def test_arc_length_equals_measured_depth_difference(first, rest, sign):
         d_md = depth[i + 1] - depth[i]
         chord = np.linalg.norm(hole.xyz[i + 1] - hole.xyz[i])
         assert chord <= d_md * (1 + 1e-12)
+        if degenerate:
+            # A 180-degree reversal is desurveyed as a straight line whose direction flips
+            # at the end station (warning dogleg_180), so the arc-from-directions measure
+            # below does not apply: it would read the flip as a half-turn in the last piece.
+            continue
 
         # Walk the reconstructed path through xyz_at. Each small piece is measured as a
         # circular arc from its end points and end directions only:
