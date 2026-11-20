@@ -160,4 +160,17 @@ test('CSVs to an estimated, reported model through the dialogs', async ({ page }
   console.log(`ORE tonnes ${tonnes} (truth ${truth.totals.ore_tonnes}), metal ${metal} g (truth ${truth.totals.ore_metal_g})`)
   expect(Math.abs(tonnes / truth.totals.ore_tonnes - 1)).toBeLessThan(0.05)
   expect(Math.abs(metal / truth.totals.ore_metal_g - 1)).toBeLessThan(0.05)
+
+  // ---- job log and undo (P6.T7) ---------------------------------------------------------
+  await openPanel(page, 'joblog')
+  await expect(tid(page, 'joblog-job-0')).toHaveAttribute('data-operation', 'report')
+  await expect(tid(page, 'joblog-undo')).toHaveText('Undo estimate')
+  await tid(page, 'joblog-undo').click()
+  await expect(tid(page, 'joblog-job-0')).toHaveAttribute('data-operation', 'undo')
+  await expect(page.locator('[data-operation="estimate"]')).toHaveAttribute('data-status', 'undone')
+  // the estimated grade is gone from the model: the report no longer offers it
+  await expect(tid(page, 'report-grade-density')).toBeVisible({ timeout: 60_000 })
+  await expect(tid(page, 'report-grade-au')).toHaveCount(0, { timeout: 60_000 })
+  // the next undo would revert the coding
+  await expect(tid(page, 'joblog-undo')).toHaveText('Undo code model')
 })

@@ -11,6 +11,8 @@
     POST   /ops/estimate                      starts a job; returns {id, ...}
     GET    /ops/jobs/{id}                     status, progress, summary
     POST   /ops/jobs/{id}/cancel
+    GET    /ops/log                           job log (jobs.jsonl), newest first; undo target
+    POST   /ops/undo                          revert the newest model-changing job (P6.T7)
 
 They wrap :mod:`bakumine.api.operations`, which calls the core functions the CLI uses.
 Plain ``def`` endpoints run in FastAPI's thread pool; estimation runs on its own thread.
@@ -124,3 +126,14 @@ def cancel_job(job_id: str) -> dict[str, Any]:
         return ops.cancel_job(job_id).to_dict()
     except KeyError:
         raise HTTPException(404, f"no job {job_id!r}") from None
+
+
+@router.get("/log")
+def get_log(source: Source) -> dict[str, Any]:
+    return ops.job_log(_project(source).folder)
+
+
+@router.post("/undo")
+def post_undo(source: Source) -> dict[str, Any]:
+    folder = _project(source).folder
+    return _guard(lambda: ops.undo_last(folder))

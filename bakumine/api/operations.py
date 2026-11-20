@@ -18,9 +18,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from bakumine.core import joblog
 from bakumine.core.project import Project
 
 UPLOADS = "uploads"
+#: uploaded files an import used are copied here (``inputs/<job id>/``) for replay
+INPUTS = "inputs"
 MAX_ISSUES = 500
 PREVIEW_ROWS = 8
 
@@ -140,6 +143,12 @@ def validation_dict(report: Any) -> dict[str, Any]:
 
 
 def validate_database(folder: Path, object_id: str) -> dict[str, Any]:
+    return _record(
+        folder, "validate", {"database": object_id}, lambda rec: _validate(folder, object_id, rec)
+    )
+
+
+def _validate(folder: Path, object_id: str, rec: joblog.Recorder) -> dict[str, Any]:
     from bakumine.core.drillholes.importer import load_database
     from bakumine.core.drillholes.validate import validate
 
@@ -150,6 +159,7 @@ def validate_database(folder: Path, object_id: str) -> dict[str, Any]:
             raise KeyError(object_id)
     except KeyError:
         raise OperationError(f"no drillhole database {object_id!r}") from None
+    rec.entry["inputs"] = [project.get(object_id).to_dict()]
     # CLI defaults: max_deviation 10 deg / 30 m, depth tolerance 1e-6
     report = validate(load_database(path), max_deviation_deg_per_30m=10.0, depth_tolerance=1e-6)
     report.findings.to_csv(path / "validation_findings.csv", index=False)
@@ -163,6 +173,21 @@ def import_database(
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``bakumine import`` + ``validate`` on the uploaded tables; saves the database."""
+    params = {"name": name, "maps": maps, "options": options}
+    return _record(
+        folder, "import", params, lambda rec: _import(folder, name, maps, options, rec)
+    )
+
+
+def _import(
+    folder: Path,
+    name: str,
+    maps: dict[str, dict[str, str]] | None,
+    options: dict[str, Any] | None,
+    rec: joblog.Recorder,
+) -> dict[str, Any]:
+    import shutil
+
     from bakumine.core.drillholes.importer import (
         ImportOptions,
         TableSource,
@@ -179,6 +204,11 @@ def import_database(
     for needed in ("collar", "survey"):
         if needed not in uploads:
             raise OperationError(f"upload the {needed} table first")
+    # keep the files this import reads, so that the job log can be replayed
+    kept = folder / INPUTS / rec.id
+    kept.mkdir(parents=True, exist_ok=True)
+    for table, path in list(uploads.items()):
+        uploads[table] = Path(shutil.copy2(path, kept / path.name))
     try:
         opts = ImportOptions(**{k: v for k, v in (options or {}).items() if v not in (None, "")})
         sources: dict[str, TableSource] = {}
@@ -193,6 +223,10 @@ def import_database(
                     )
                 mapping = suggestion.mapping
             sources[table] = TableSource(path, mapping)
+        rec.entry["replay"] = {
+            "files": {t: p.relative_to(folder).as_posix() for t, p in uploads.items()},
+            "maps": {t: {str(k): v for k, v in s.column_map.items()} for t, s in sources.items()},
+        }
         intervals = {n: s for n, s in sources.items() if n not in ("collar", "survey")}
         db = import_drillholes(sources["collar"], sources["survey"], intervals, options=opts)
         report = validate(db, max_deviation_deg_per_30m=10.0, depth_tolerance=1e-6)
@@ -200,6 +234,7 @@ def import_database(
             saved = db.save(Path(tmp) / "database")
             report.findings.to_csv(saved / "validation_findings.csv", index=False)
             obj = Project.open(folder).add("database", saved, name or "drillholes")
+            rec.entry["outputs"] = [obj.to_dict()]
     except OperationError:
         raise
     except (ValueError, KeyError, TypeError, FileNotFoundError) as exc:
@@ -217,6 +252,113 @@ def import_database(
         }
     )
     return result
+
+
+# ------------------------------------------------------------------ job log (P6.T7)
+
+#: result keys left out of the log summary (long lists the dialogs show)
+_LONG = {"issues", "counts", "preview", "table", "notes", "columns", "steps", "rows"}
+
+
+def _brief(result: Any) -> Any:
+    if not isinstance(result, dict):
+        return None
+    return {k: v for k, v in result.items() if k not in _LONG}
+
+
+def _record(
+    folder: Path, operation: str, params: dict[str, Any], work: Callable[[joblog.Recorder], Any]
+) -> Any:
+    """Run ``work`` and append its job-log entry (also when it fails)."""
+    rec = joblog.Recorder(folder, operation, params)
+    try:
+        result = work(rec)
+    except Exception as exc:
+        rec.finish("error", error=str(_fail(exc) if not isinstance(exc, OperationError) else exc))
+        raise
+    rec.finish("done", summary=_brief(result))
+    return result
+
+
+def _geometry_objects(folder: Path) -> list[dict[str, str]]:
+    """The solids and DTMs a project resolver offers (constraints may name any of them)."""
+    project = Project.open(folder)
+    return [o.to_dict() for o in project.list() if o.kind in ("solid", "dtm")]
+
+
+def _will_modify(
+    rec: joblog.Recorder, folder: Path, model_id: str, path: Path, columns: list[str] | None
+) -> None:
+    """Note the model the job changes and snapshot it for undo."""
+    obj = Project.open(folder).get(model_id).to_dict()
+    rec.entry.update(modifies=model_id, outputs=[obj])
+    rec.entry["inputs"] = [obj, *_geometry_objects(folder)]
+    if joblog.keep_snapshots() > 0:
+        joblog.take_snapshot(folder, rec.id, model_id, path, columns)
+        rec.entry["snapshot"] = True
+
+
+def _coded_columns(request: dict[str, Any]) -> list[str] | None:
+    """Columns coding changes, or None when it may change the block structure."""
+    steps = request.get("steps") or []
+    if request.get("subblock") or request.get("merge") or any(s.get("subblock") for s in steps):
+        return None
+    names = [a.get("name") for a in request.get("attributes") or []]
+    return [str(n) for n in [*names, *(s.get("attribute") for s in steps)] if n]
+
+
+def job_log(folder: Path) -> dict[str, Any]:
+    """The log, newest first, and the job an undo would revert."""
+    candidate = joblog.undo_candidate(folder)
+    return {
+        "jobs": list(reversed(joblog.jobs(folder))),
+        "undo": candidate["id"] if candidate else None,
+        "keep_snapshots": joblog.keep_snapshots(),
+    }
+
+
+def undo_last(folder: Path) -> dict[str, Any]:
+    """Restore the snapshot of the newest model-changing job and mark it undone."""
+    target = joblog.undo_candidate(folder)
+    if target is None:
+        raise BusyError("nothing to undo")
+    model_id = str(target["modifies"])
+    _claim(model_id)
+    rec = joblog.Recorder(folder, "undo", {"job": target["id"]})
+    try:
+        joblog.restore_snapshot(folder, target["id"])
+    except Exception as exc:
+        rec.finish("error", error=str(exc))
+        raise OperationError(str(exc)) from None
+    finally:
+        _release(model_id)
+    rec.entry["outputs"] = [Project.open(folder).get(model_id).to_dict()]
+    result = {"undone": target["id"], "operation": target["operation"], "model": model_id}
+    rec.finish("done", summary=result)
+    return result
+
+
+def record_report(folder: Path, model_id: str, params: dict[str, Any], work: Callable[[], Any]):
+    """Run a report (``work`` returns its table) and log it."""
+
+    def run(rec: joblog.Recorder) -> Any:
+        try:
+            rec.entry["inputs"] = [
+                Project.open(folder).get(model_id).to_dict(),
+                *_geometry_objects(folder),
+            ]
+        except KeyError:
+            pass
+        return work()
+
+    rec = joblog.Recorder(folder, "report", {"model": model_id, **params})
+    try:
+        table = run(rec)
+    except Exception as exc:
+        rec.finish("error", error=str(getattr(exc, "detail", exc)))
+        raise
+    rec.finish("done", summary={"rows": int(len(table)), "columns": int(len(table.columns))})
+    return table
 
 
 # ------------------------------------------------------------------ project summary
@@ -271,6 +413,10 @@ def _read_composites(path: Path) -> pd.DataFrame:
 
 def composite_database(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
     """``bakumine composite`` with the CLI defaults for everything not in ``request``."""
+    return _record(folder, "composite", request, lambda rec: _composite(folder, request, rec))
+
+
+def _composite(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
     from bakumine.core.drillholes.composite import (
         IntervalDomains,
         composite,
@@ -285,6 +431,7 @@ def composite_database(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
             raise KeyError(request["database"])
     except KeyError:
         raise OperationError(f"no drillhole database {request.get('database')!r}") from None
+    rec.entry["inputs"] = [db_obj.to_dict()]
     db = load_database(project.path_of(db_obj))
     table = request.get("table") or "assay"
     mode = request.get("mode") or "downhole"
@@ -345,6 +492,7 @@ def composite_database(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
         file = Path(tmp) / f"{name}.parquet"
         out.to_parquet(file)
         obj = Project.open(folder).add("composite", file, name)
+    rec.entry["outputs"] = [obj.to_dict()]
     return {
         "id": obj.id,
         "name": obj.name,
@@ -376,6 +524,10 @@ def _triple(value: Any, what: str) -> tuple[float, ...]:
 
 def create_model(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
     """``bakumine blockmodel create``: explicit grid, or fitted to drillholes / solids."""
+    return _record(folder, "create_model", request, lambda rec: _create(folder, request, rec))
+
+
+def _create(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
     from bakumine.core.blockmodel.blocks import BlockModel
     from bakumine.core.blockmodel.definition import BlockModelDefinition
     from bakumine.core.blockmodel.storage import save_model
@@ -391,6 +543,7 @@ def create_model(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
             clouds = []
             for ref in request["extent_from"]:
                 obj = project.get(ref)
+                rec.entry["inputs"].append(obj.to_dict())
                 if obj.kind == "database":
                     collar = load_database(project.path_of(obj)).collar
                     top = collar[["x", "y", "z"]].to_numpy(dtype=float)
@@ -418,6 +571,7 @@ def create_model(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
         with tempfile.TemporaryDirectory() as tmp:
             header = save_model(model, Path(tmp) / "model")
             obj = project.add("model", Path(tmp) / "model", request.get("name") or "model")
+            rec.entry["outputs"] = [obj.to_dict()]
     except OperationError:
         raise
     except (ValueError, KeyError, TypeError) as exc:
@@ -469,6 +623,13 @@ def _release(model_id: str) -> None:
 
 def code_model_in_project(source: Any, model_id: str, request: dict[str, Any]) -> dict[str, Any]:
     """``bakumine blockmodel code``: attributes and steps; the model is saved in place."""
+    params = {"model": model_id, **request}
+    return _record(
+        source.folder, "code", params, lambda rec: _code(source, model_id, request, rec)
+    )
+
+
+def _code(source: Any, model_id: str, request: dict[str, Any], rec: joblog.Recorder) -> dict:
     from bakumine.core.blockmodel.coding import code_model
     from bakumine.core.blockmodel.constraints import constraint_from_dict
     from bakumine.core.blockmodel.storage import load_model, save_model
@@ -476,6 +637,7 @@ def code_model_in_project(source: Any, model_id: str, request: dict[str, Any]) -
     path = _model_path(source.folder, model_id)
     _claim(model_id)
     try:
+        _will_modify(rec, source.folder, model_id, path, _coded_columns(request))
         model = load_model(path)
         for item in request.get("attributes", []):
             item = dict(item)
@@ -666,6 +828,10 @@ def run_estimation(
     return result
 
 
+def _estimated_columns(plan: Any) -> list[str]:
+    return [plan.attribute, *plan.outputs.names(plan.attribute).values()]
+
+
 def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[str, Any]) -> Job:
     """Validate the request, then run the estimation on a worker thread."""
     plan = build_plan(spec)
@@ -674,6 +840,11 @@ def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[
     job = Job("estimate")
     with _jobs_lock:
         _jobs[job.id] = job
+    folder = source.folder
+    rec = joblog.Recorder(
+        folder, "estimate", {"model": model_id, "composites": composites_id, "plan": spec}, job.id
+    )
+    rec.entry["replay"] = {"plan": plan.to_dict()}
 
     def work() -> None:
         job.status = "running"
@@ -682,6 +853,12 @@ def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[
             job.progress, job.message = float(fraction), message
 
         try:
+            path = _model_path(folder, model_id)
+            _will_modify(rec, folder, model_id, path, _estimated_columns(plan))
+            try:
+                rec.entry["inputs"].insert(1, Project.open(folder).get(composites_id).to_dict())
+            except KeyError:
+                pass
             result = run_estimation(
                 source, model_id, composites_id, plan, progress, lambda: job.cancel_requested
             )
@@ -689,8 +866,10 @@ def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[
             job.status = "cancelled" if result.get("cancelled") else "done"
             if job.status == "done":
                 job.progress = 1.0
+            rec.finish(job.status, summary=_brief(result))
         except Exception as exc:  # reported to the client
             job.error, job.status = str(exc), "error"
+            rec.finish("error", error=str(exc))
         finally:
             _release(model_id)
 

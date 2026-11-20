@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from bakumine.commands import replay
 from bakumine.core.project import KINDS, Project, ProjectError
 
 HELP = "Project folder: init, add objects, list"
@@ -62,6 +63,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     lst.add_argument("project", type=Path, help="project folder")
     lst.add_argument("--kind", choices=KINDS)
     lst.set_defaults(func=_guarded(_list))
+    replay.configure(sub, _guarded)  # replay, export-log, export-geometry (P6.T7)
     parser.set_defaults(func=lambda args: parser.print_help() or 0)
 
 

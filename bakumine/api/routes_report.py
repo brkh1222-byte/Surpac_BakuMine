@@ -77,9 +77,21 @@ def _frame(source: SceneSource, object_id: str, body: ReportRequest) -> pd.DataF
         raise HTTPException(400, str(text)) from None
 
 
+def _logged_frame(source: SceneSource, object_id: str, body: ReportRequest) -> pd.DataFrame:
+    """The report table; on a project it is also written to the job log (P6.T7)."""
+    from bakumine.api.operations import record_report
+    from bakumine.api.project_source import ProjectSceneSource
+
+    if not isinstance(source, ProjectSceneSource):
+        return _frame(source, object_id, body)
+    return record_report(
+        source.folder, object_id, body.model_dump(), lambda: _frame(source, object_id, body)
+    )
+
+
 @router.post("/scene/objects/{object_id}/report")
 def post_report(object_id: str, body: ReportRequest, source: Source) -> dict[str, Any]:
-    table = _frame(source, object_id, body)
+    table = _logged_frame(source, object_id, body)
     return {
         "columns": [str(c) for c in table.columns],
         "rows": json.loads(table.to_json(orient="records", double_precision=15)),
@@ -91,7 +103,7 @@ def post_report(object_id: str, body: ReportRequest, source: Source) -> dict[str
 def post_report_csv(object_id: str, body: ReportRequest, source: Source) -> Response:
     from bakumine.core.report import to_csv
 
-    table = _frame(source, object_id, body)
+    table = _logged_frame(source, object_id, body)
     with tempfile.TemporaryDirectory() as folder:
         text = to_csv(table, Path(folder) / "report.csv").read_text(encoding="utf-8")
     return Response(

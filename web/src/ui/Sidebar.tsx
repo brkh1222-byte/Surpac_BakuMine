@@ -3,6 +3,7 @@ import type { SceneMode } from '../scene/Viewport'
 import { CompositePanel } from './ops/CompositePanel'
 import { EstimatePanel } from './ops/EstimatePanel'
 import { ImportPanel } from './ops/ImportPanel'
+import { JobLogPanel } from './ops/JobLogPanel'
 import { ModelPanel } from './ops/ModelPanel'
 import { DigitisePanel } from './DigitisePanel'
 import { ObjectControls } from './ObjectControls'
@@ -117,6 +118,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <CompositePanel />
           <ModelPanel />
           <EstimatePanel />
+          <JobLogPanel />
         </>
       )}
       <SectionPanel />
