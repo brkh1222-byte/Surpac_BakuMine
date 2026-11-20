@@ -15,6 +15,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pyproj>=3.8.0",
     "xlrd>=2.0.2",
+    "pdfplumber>=0.11.10",
 ]
 
 [project.scripts]
@@ -31,6 +32,7 @@ dev = [
     "wellpathpy>=0.5.2",
     "gstools>=1.7.0",
     "pykrige>=1.7.3",
+    "reportlab>=5.1.0",
 ]
 
 [build-system]
