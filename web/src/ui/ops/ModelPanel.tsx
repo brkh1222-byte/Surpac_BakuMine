@@ -139,7 +139,7 @@ function CodeModel() {
   const model = models.find((m) => m.id === chosen) ?? models[0]
   const patchStep = (i: number, p: Partial<StepForm>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)))
   const patchAttr = (i: number, p: Partial<(typeof attributes)[number]>) => setAttributes((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)))
-  const known = [...(model?.attributes?.map((a) => a.name) ?? []), ...attributes.map((a) => a.name).filter(Boolean)]
+  const known = [...new Set([...(model?.attributes?.map((a) => a.name) ?? []), ...attributes.map((a) => a.name).filter(Boolean)])]
 
   const run = async () => {
     if (!model) return setError('Create a block model first')
