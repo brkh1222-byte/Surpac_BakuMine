@@ -137,6 +137,23 @@ class DemoSceneSource:
         self._drillholes: DrillholeData | None = None
         self._meshes: dict[str, Mesh] = {}
         self._blocks: BlockData | None = None
+        #: solids added at run time (section digitising), in memory: id -> (name, mesh)
+        self._added: dict[str, tuple[str, Mesh]] = {}
+        self._added_revision = 0
+
+    def add_mesh(self, object_id: str, name: str, mesh: Mesh) -> None:
+        """Adds (or replaces) a solid held in memory only; it is listed with the others."""
+        if object_id in self._MESHES or object_id in {"drillholes", self._BLOCKS[0]}:
+            raise ValueError(f"object id {object_id!r} is taken by the demo data")
+        with self._lock:
+            self._added[object_id] = (name, mesh)
+            self._added_revision += 1
+
+    def remove_mesh(self, object_id: str) -> None:
+        """Removes a solid added with :meth:`add_mesh`; ``KeyError`` when there is none."""
+        with self._lock:
+            del self._added[object_id]
+            self._added_revision += 1
 
     # ------------------------------------------------------------------ what exists
 
@@ -162,6 +179,7 @@ class DemoSceneSource:
         for path in self._files():
             stat = path.stat()
             digest.update(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns};".encode())
+        digest.update(f"added:{self._added_revision}".encode())
         return digest.hexdigest()[:12]
 
     def objects(self) -> list[ObjectInfo]:
@@ -173,6 +191,7 @@ class DemoSceneSource:
             out.append(ObjectInfo("drillholes", "Drillholes", "drillholes", "drillholes"))
         if self._has_blocks():
             out.append(ObjectInfo(*self._BLOCKS, "blockModels", "blocks"))
+        out.extend(ObjectInfo(k, name, "solids", "mesh") for k, (name, _) in self._added.items())
         return out
 
     # ------------------------------------------------------------------ data
@@ -210,6 +229,8 @@ class DemoSceneSource:
             return {}
 
     def mesh(self, object_id: str) -> Mesh:
+        if object_id in self._added:
+            return self._added[object_id][1]
         if object_id not in self._MESHES:
             raise KeyError(object_id)
         vertices, faces = self._mesh_files(self._MESHES[object_id][2])
