@@ -14,6 +14,8 @@ workbook, and applies the row rules of one source of an import recipe
 * :func:`depths_from_sample_ids` - ``to`` = the number at the end of the sample id,
                               ``from = to - length`` (or an explicit ``a-b``);
 * :func:`classify_qc`       - blanks, standards and duplicates among the samples;
+* :func:`is_total_label`    - ``Total`` / ``Нийт`` / ``Итого`` rows, which are dropped
+                              together with the rows that name no hole;
 * :func:`prepare_source`    - all of the above for one source of a recipe.
 
 Nothing here parses assay values: the result is still text, typed by
@@ -596,8 +598,8 @@ class Prepared:
     ``qc``      the rows set aside (interval tables), with ``qc_type``, ``sheet``, ``row``.
     ``mapping`` source column -> canonical name, as used.
     ``info``    what was read and decided: sheets (name, header row, rows), columns,
-                missing canonical columns, units of element columns, QC and sample-number
-                summaries.
+                missing canonical columns, units of element columns, rows dropped (total
+                rows, rows without a hole id), QC and sample-number summaries.
     ``notes``   importer notes (table, column, kind, count ...).
     """
 
@@ -708,12 +710,35 @@ def prepare_source(
         note("hole_id", "hole_id_pattern_not_matched", len(unmatched), examples=unmatched[:5])
 
     info: dict[str, Any] = {"sheets": sheet_info, "columns": headers}
+    dropped: dict[str, int] = {}
+    # total / summary rows: the hole id cell or the first filled cell says "Total", "Нийт"
+    if len(renamed) and headers:
+        cells = raw[headers].to_numpy(dtype=object)
+        labels = [next((str(c) for c in row if str(c).strip()), "") for row in cells]
+        total = np.array([is_total_label(label) for label in labels], dtype=bool)
+        if "hole_id" in targets and not from_sheet:
+            total |= np.array([is_total_label(v) for v in renamed["hole_id"]], dtype=bool)
+        if total.any():
+            dropped["total_rows"] = int(total.sum())
+            note("*", "total_rows_dropped", int(total.sum()),
+                 examples=sorted({label for label, t in zip(labels, total, strict=True) if t})[:5],
+                 rows=renamed["__row__"].to_numpy()[total][:20].tolist())  # fmt: skip
+            renamed = renamed.loc[~total].reset_index(drop=True)
     # the unit a header gives for an element column ("Au, g/t"), under the mapped name
     elements = {target: element_attribute(column) for column, target in resolved.items()}
     info["units"] = {target: found[1] for target, found in elements.items() if found and found[1]}
     qc_rows = pd.DataFrame()
     if kind == "interval" and len(renamed):
         renamed, qc_rows = _interval_rules(renamed, spec, name, info, note)
+    # rows that name no hole are nobody's collar, station or sample (QC rows are aside)
+    if "hole_id" in renamed.columns and len(renamed):
+        nameless = (renamed["hole_id"].astype(str).str.strip() == "").to_numpy(dtype=bool)
+        if nameless.any():
+            dropped["rows_without_hole_id"] = int(nameless.sum())
+            note("hole_id", "rows_without_hole_id_dropped", int(nameless.sum()),
+                 rows=renamed["__row__"].to_numpy()[nameless][:20].tolist())  # fmt: skip
+            renamed = renamed.loc[~nameless].reset_index(drop=True)
+    info["dropped"] = dropped
     present = set(renamed.columns) - {SHEET_COLUMN, "__row__"}
     info["rows"] = int(len(renamed))
     info["targets"] = sorted(present)

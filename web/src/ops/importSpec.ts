@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { HoleIdRule, SourceSpec } from './api'
+import type { DroppedRows, HoleIdRule, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -60,6 +60,18 @@ export function sourceSpec(form: SourceForm, interval: boolean, forPreview = fal
   }
   if (forPreview && form.previewSheet) spec.preview_sheet = form.previewSheet
   return spec
+}
+
+/** "collar: 1 total row, 2 without a hole id, 1 collar without coordinates (SYN-09)" */
+export function droppedText(table: string, dropped: DroppedRows): string {
+  const parts: string[] = []
+  if (dropped.total_rows) parts.push(`${dropped.total_rows} total / summary row${dropped.total_rows > 1 ? 's' : ''}`)
+  if (dropped.rows_without_hole_id) parts.push(`${dropped.rows_without_hole_id} without a hole id`)
+  if (dropped.collars_without_coordinates) {
+    const holes = dropped.holes_without_coordinates ?? []
+    parts.push(`${dropped.collars_without_coordinates} without coordinates${holes.length ? ` (${holes.slice(0, 8).join(', ')}${holes.length > 8 ? ', …' : ''})` : ''}`)
+  }
+  return `${table}: rows dropped: ${parts.join(', ')}`
 }
 
 export function holeIdRule(pattern: string, template: string): HoleIdRule | null {

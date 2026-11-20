@@ -117,6 +117,13 @@ export interface ValidationResult {
   truncated: boolean
 }
 
+export interface DroppedRows {
+  total_rows?: number
+  rows_without_hole_id?: number
+  collars_without_coordinates?: number
+  holes_without_coordinates?: string[]
+}
+
 export interface ImportResult extends ValidationResult {
   id: string
   name: string
@@ -127,6 +134,10 @@ export interface ImportResult extends ValidationResult {
   coordinates: CoordinateReport | null
   survey: { generated_from_collar: number; holes_without_azimuth_or_dip: string[] } | null
   sample_depth: Record<string, SampleDepthCheck[]>
+  /** per table: total_rows, rows_without_hole_id, collars_without_coordinates (counts) */
+  dropped_rows: Record<string, DroppedRows>
+  /** per interval table: attribute -> unit read from its header */
+  units: Record<string, Record<string, string>>
   dip_convention: string
   coordinate_order: string
   recipe: unknown

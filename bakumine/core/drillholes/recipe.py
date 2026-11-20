@@ -47,6 +47,11 @@ table) coming from *different* sources are merged into one: the first source lis
 cells that differ by more than ``tolerance`` (numbers) or at all (text) are reported as
 conflicts. So a hole may take its coordinates from one file and azimuth, dip and depth
 from another.
+
+Rows that are not data are dropped and counted (``reports["dropped_rows"]`` and the
+notes): total / summary rows (``Total``, ``Нийт``, ``Итого`` ... in the hole id cell or the
+first filled cell), rows without a hole id, and, once the sources are merged, collars that
+have neither projected coordinates nor longitude / latitude.
 """
 
 from __future__ import annotations
@@ -370,6 +375,24 @@ def prepare_table(
     return prepared
 
 
+def _collars_with_coordinates(collar: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """The collars that have a position (projected x and y, or a readable longitude and
+    latitude), and the hole ids of the rows that have none (a planned hole, a remark)."""
+    from .coordinates import _geographic
+
+    known = np.ones(len(collar), dtype=bool)
+    for axis in ("x", "y"):
+        if axis in collar.columns:
+            known &= collar[axis].notna().to_numpy(dtype=bool)
+        else:
+            known[:] = False
+    geographic = _geographic(collar)
+    if geographic is not None:
+        known |= np.isfinite(geographic[0]) & np.isfinite(geographic[1])
+    without = collar["hole_id"].astype(str).to_numpy()[~known].tolist()
+    return (collar.loc[known].reset_index(drop=True) if without else collar), without
+
+
 def _units(
     name: str, per_source: Sequence[Mapping[str, str]], labels: Sequence[str],
     metadata: DrillholeMetadata,
@@ -411,6 +434,7 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
     qc: dict[str, pd.DataFrame] = {}
     reports: dict[str, Any] = {
         "tables": {}, "qc": {}, "sample_depth": {}, "conflicts": {}, "units": {},
+        "dropped_rows": {},
     }  # fmt: skip
     for name, sources in recipe["tables"].items():
         kind = _kind(name)
@@ -440,6 +464,21 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
                         {"table": name, "column": "*", "kind": f"sources_{what}",
                          "count": merged[what]}  # fmt: skip
                     )
+        gone: dict[str, Any] = {}
+        for part in prepared:
+            for reason, count in part.info.get("dropped", {}).items():
+                gone[reason] = gone.get(reason, 0) + count
+        if kind == "collar":
+            table, without = _collars_with_coordinates(table)
+            if without:
+                gone["collars_without_coordinates"] = len(without)
+                gone["holes_without_coordinates"] = without[:_MAX_LISTED]
+                metadata.notes.append(
+                    {"table": name, "column": "x,y", "count": len(without),
+                     "kind": "collars_without_coordinates_dropped", "examples": without[:5]}
+                )  # fmt: skip
+        if gone:
+            reports["dropped_rows"][name] = gone
         units = _units(name, [p.info.get("units", {}) for p in prepared], labels, metadata)
         if units:
             reports["units"][name] = {c: u for c, u in units.items() if c in table.columns}

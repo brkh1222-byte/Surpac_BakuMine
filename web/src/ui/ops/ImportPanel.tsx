@@ -11,7 +11,7 @@
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { emptyForm, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { droppedText, emptyForm, holeIdRule, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -326,6 +326,9 @@ export function ImportPanel() {
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
             <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}</p>
           )))}
+          {Object.entries(result.dropped_rows ?? {}).map(([t, d]) => (
+            <p className="sidebar-note" key={t} data-testid={`import-dropped-${t}`}>{droppedText(t, d)}</p>
+          ))}
           {result.survey && <p className="sidebar-note" data-testid="import-survey-result">Survey made from the collar table: {result.survey.generated_from_collar} holes{result.survey.holes_without_azimuth_or_dip.length ? `; no azimuth / dip for ${result.survey.holes_without_azimuth_or_dip.join(', ')}` : ''}</p>}
           {result.coordinates && (
             <p className="sidebar-note" data-testid="import-coordinates">

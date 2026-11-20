@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyForm, holeIdRule, matchSheets, sourceSpec } from './importSpec'
+import { droppedText, emptyForm, holeIdRule, matchSheets, sourceSpec } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -25,6 +25,12 @@ describe('import panel helpers', () => {
     // a collar table has no sample rule or QC; the preview may name the sheet to show
     expect(sourceSpec(form, false, true)).toEqual({ sheets: ['A', 'B'], header_row: 3, header_rows: 2, hole_id_from_sheet: true, preview_sheet: 'B' })
     expect(sourceSpec({ ...emptyForm(), headerRow: '0', sampleDepth: true, sampleLength: 'x' }, true)).toEqual({ header_row: 0, sample_depth: { length: 1 } })
+  })
+
+  it('says which rows were dropped', () => {
+    expect(droppedText('collar', { total_rows: 1, rows_without_hole_id: 2, collars_without_coordinates: 1, holes_without_coordinates: ['SYN-05'] }))
+      .toBe('collar: rows dropped: 1 total / summary row, 2 without a hole id, 1 without coordinates (SYN-05)')
+    expect(droppedText('assay', { total_rows: 5 })).toBe('assay: rows dropped: 5 total / summary rows')
   })
 
   it('builds the hole id rule', () => {

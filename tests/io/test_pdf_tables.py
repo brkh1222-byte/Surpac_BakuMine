@@ -279,3 +279,23 @@ def test_cli_prints_the_page_check(collar_report, tmp_path, capsys):
         "page": 2, "rows_found": 18, "rows_written": 18, "header_rows": 0, "title_rows": 0,
         "numbering_rows": 0, "empty_rows": 0, "open_rows_closed": 1, "text_lines_outside": 0,
     }  # fmt: skip
+
+
+def test_extracted_collar_table_imports_without_its_total_row(collar_report, tmp_path, capsys):
+    path, rows = collar_report
+    assert main(["extract-tables", str(path), "--out", str(tmp_path), "--name", "c"]) == 0
+    code = main(["import", "--collar", str(tmp_path / "c_1.csv"), "--auto",
+                 "--coordinate-order", "auto", "--out", str(tmp_path / "db")])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert ("collar rows dropped: 1 total / summary row(s), 1 collar(s) without coordinates "
+            "(SYN25_46)") in out  # fmt: skip
+    collar = pd.read_parquet(tmp_path / "db" / "collar.parquet")
+    drawn = [r for r in rows if r[3]]
+    assert collar["hole_id"].tolist() == [r[1] for r in drawn] and len(collar) == len(rows) - 2
+    # X of the table is the northing
+    np.testing.assert_allclose(collar["y"], [float(r[3]) for r in drawn])
+    np.testing.assert_allclose(collar["x"], [float(r[4]) for r in drawn])
+    np.testing.assert_allclose(collar["max_depth"], [float(r[8]) for r in drawn])
+    survey = pd.read_parquet(tmp_path / "db" / "survey.parquet")
+    np.testing.assert_array_equal(survey["dip"], [float(r[7]) for r in drawn])

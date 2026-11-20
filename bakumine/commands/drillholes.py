@@ -400,6 +400,19 @@ def _print_import_reports(db) -> None:
                 f"    conflict {key} {row['column']}: kept {row['kept']} "
                 f"({row['kept_source']}), dropped {row['dropped']} ({row['dropped_source']})"
             )
+    for name, gone in reports.get("dropped_rows", {}).items():
+        parts = [
+            f"{gone[key]} {text}"
+            for key, text in (
+                ("total_rows", "total / summary row(s)"),
+                ("rows_without_hole_id", "without a hole id"),
+                ("collars_without_coordinates", "collar(s) without coordinates"),
+            )
+            if gone.get(key)
+        ]
+        holes = gone.get("holes_without_coordinates") or []
+        listed = f" ({', '.join(holes[:8])}{' ...' if len(holes) > 8 else ''})" if holes else ""
+        print(f"  {name} rows dropped: {', '.join(parts)}{listed}")
     coordinates = reports.get("coordinates")
     if coordinates:
         print(

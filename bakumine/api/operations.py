@@ -428,6 +428,8 @@ def _import(
                 t: {**c, "rows": c["rows"][:50]} for t, c in reports.get("conflicts", {}).items()
             },
             "coordinates": reports.get("coordinates"),
+            "dropped_rows": reports.get("dropped_rows", {}),
+            "units": reports.get("units", {}),
             "survey": reports.get("survey"),
             "sample_depth": {
                 t: [{k: v for k, v in c.items() if k not in ("holes", "preview")} for c in checks]
@@ -446,7 +448,7 @@ def _import(
 #: result keys left out of the log summary (long lists the dialogs show)
 _LONG = {
     "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
-    "recipe", "conflicts", "coordinates", "sample_depth", "survey",
+    "recipe", "conflicts", "coordinates", "sample_depth", "survey", "dropped_rows", "units",
 }  # fmt: skip
 
 
