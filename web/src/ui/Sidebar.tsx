@@ -5,6 +5,7 @@ import { CompositePanel } from './ops/CompositePanel'
 import { EstimatePanel } from './ops/EstimatePanel'
 import { ImportPanel } from './ops/ImportPanel'
 import { InterceptsPanel } from './ops/InterceptsPanel'
+import { SurfacePanel } from './ops/SurfacePanel'
 import { JobLogPanel } from './ops/JobLogPanel'
 import { ModelPanel } from './ops/ModelPanel'
 import { DigitisePanel } from './DigitisePanel'
@@ -119,6 +120,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <ImportPanel />
           <InterceptsPanel />
           <CompositePanel />
+          <SurfacePanel />
           <ModelPanel />
           <EstimatePanel />
           <ClassifyPanel />

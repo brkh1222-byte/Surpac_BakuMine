@@ -11,6 +11,9 @@ thing and runs them into a new project:
     code         bakumine blockmodel code --steps WORK/....json [--subblock] [--merge]
     estimate     bakumine estimate --plan WORK/....json
     report       bakumine blockmodel report --out WORK/....csv
+    surface_from_points / import_mesh
+                 bakumine surface from-points | surface import --out WORK/....obj
+                 + project add (:data:`bakumine.commands.geometry.REPLAY`)
 
 Objects a job reads that no earlier job made (solids, DTMs added to the project by hand)
 are copied from the source project with ``bakumine project add``; solids and DTMs are
@@ -274,6 +277,15 @@ def _classify(e: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 _MAPPERS["classify"] = _classify  # bakumine classify --params WORK/....json
+
+
+def _more_mappers() -> None:
+    from bakumine.commands import geometry
+
+    _MAPPERS.update(geometry.REPLAY)  # surface_from_points, import_mesh
+
+
+_more_mappers()
 
 
 def replay_steps(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
