@@ -178,7 +178,9 @@ class ImportOptions:
                             canonical attribute names forced to text / to float64;
                             otherwise a column is numeric when every non-missing cell is.
     ``keep_unmapped``       keep source columns absent from the column map (under their
-                            source header) instead of dropping them.
+                            source header) instead of dropping them. In a recipe whose map
+                            is suggested, ``False`` keeps of an interval table only the
+                            known columns and the element columns (``Au, g/t`` ...).
     ``delimiter``           CSV delimiter; ``None`` lets the reader detect it.
     """
 

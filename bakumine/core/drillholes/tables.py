@@ -636,6 +636,9 @@ def prepare_source(
 
     ``grids`` are the sheets already read (else ``path`` is read). ``hole_id`` is the
     recipe-wide ``{"pattern", "template"}`` used when the source has none of its own.
+    ``keep_unmapped=False`` drops the columns the column map does not name; when the map
+    is left to the suggester, an interval table keeps its known columns (hole, from, to,
+    sample id / type / length) and the element columns only.
     """
     name = name or kind
     if grids is None:
@@ -688,10 +691,22 @@ def prepare_source(
     mapping = spec.get("map")
     if not mapping:
         mapping = suggest_column_map(headers, kind).mapping  # type: ignore[arg-type]
+        if not keep_unmapped and kind == "interval":
+            # the suggester proposes every other column of an interval table as an
+            # attribute; "unmapped" are then the columns it did not recognise: neither a
+            # known column nor an element ("No", remarks, laboratory batch ...)
+            known = set(_SYNONYMS["interval"])
+            extra = [
+                column for column, target in mapping.items()
+                if target not in known and element_attribute(column) is None
+            ]  # fmt: skip
+            mapping = {c: t for c, t in mapping.items() if c not in extra}
+            note("*", "unrecognised_columns_dropped", len(extra), examples=extra[:8])
     mapping = {str(k): str(v) for k, v in mapping.items() if str(v).strip()}
     if from_sheet:
         mapping = {k: v for k, v in mapping.items() if v != "hole_id"}
     resolved = _resolve_column_map(headers, mapping, True, name)
+    every_cell = raw[headers].to_numpy(dtype=object) if headers else None
     if not keep_unmapped:
         raw = raw[[c for c in raw.columns if c in resolved or c in (SHEET_COLUMN, "__row__")]]
     renamed = raw.rename(columns=resolved)
@@ -715,9 +730,8 @@ def prepare_source(
     info: dict[str, Any] = {"sheets": sheet_info, "columns": headers}
     dropped: dict[str, int] = {}
     # total / summary rows: the hole id cell or the first filled cell says "Total", "Нийт"
-    if len(renamed) and headers:
-        cells = raw[headers].to_numpy(dtype=object)
-        labels = [next((str(c) for c in row if str(c).strip()), "") for row in cells]
+    if len(renamed) and every_cell is not None:
+        labels = [next((str(c) for c in row if str(c).strip()), "") for row in every_cell]
         total = np.array([is_total_label(label) for label in labels], dtype=bool)
         if "hole_id" in targets and not from_sheet:
             total |= np.array([is_total_label(v) for v in renamed["hole_id"]], dtype=bool)
