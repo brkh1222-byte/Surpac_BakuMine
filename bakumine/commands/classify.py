@@ -2,7 +2,9 @@
 
 The rules are those of :mod:`bakumine.core.estimation.classification` (JSON, see its
 docstring). ``--composites`` is needed only for the drillhole-support criteria
-(``min_holes``, ``max_hole_distance``) when the parameter file has ``hole_support``.
+(``min_holes``, ``max_hole_distance``) when the parameter file has ``hole_support``: at run
+level (``radius``, ``nth``, optional ``sample_filter`` ``{"column", "equals" | "in"}``) and /
+or in a class, with that class's own radius and n-th hole.
 """
 
 from __future__ import annotations

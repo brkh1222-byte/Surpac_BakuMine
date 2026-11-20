@@ -20,6 +20,9 @@ export const CRITERIA = [
 
 const HOLE_CRITERIA = ['min_holes', 'max_hole_distance']
 
+/** Per-class drillhole support, written among the criteria: "min_holes=3, hole_radius=50". */
+export const CLASS_SUPPORT = { hole_radius: 'radius', hole_nth: 'nth' } as const
+
 export interface ClassRow {
   /** free text: Measured, Indicated, B, C1, P1, ... */
   label: string
@@ -36,6 +39,8 @@ export interface ClassifyForm {
   /** radius of the hole count; blank = do not compute the drillhole support */
   holeRadius: string
   holeNth: string
+  /** composites that count for the drillhole support: "domain=MIN" or "domain=MIN|OX"; blank = all */
+  holeFilter?: string
   classes: ClassRow[]
   smooth: boolean
   minAgree: string
@@ -64,12 +69,41 @@ export const JORC_CLASSES: ClassRow[] = [
 
 /** "max_pass=1, min_samples = 8" -> {max_pass: 1, min_samples: 8}, or a message. */
 export function parseCriteria(text: string): Record<string, number> | string {
+  return parseNamed(text, CRITERIA)
+}
+
+/** Criteria and the class's own drillhole support ("hole_radius=75, hole_nth=2"), or a message. */
+export function parseClass(text: string): { criteria: Record<string, number>; hole_support?: Record<string, number> } | string {
+  const all = parseNamed(text, [...CRITERIA, ...Object.keys(CLASS_SUPPORT)])
+  if (typeof all === 'string') return all
+  const criteria: Record<string, number> = {}
+  const support: Record<string, number> = {}
+  for (const [name, value] of Object.entries(all)) {
+    if (name in CLASS_SUPPORT) support[CLASS_SUPPORT[name as keyof typeof CLASS_SUPPORT]] = value
+    else criteria[name] = value
+  }
+  if ('radius' in support && !(support.radius > 0)) return 'hole_radius must be positive'
+  if ('nth' in support && (!Number.isInteger(support.nth) || support.nth < 1)) return 'hole_nth: a whole number from 1'
+  return Object.keys(support).length > 0 ? { criteria, hole_support: support } : { criteria }
+}
+
+/** "domain=MIN" -> {column, equals}; "domain=MIN|OX" -> {column, in}; blank -> null; else a message. */
+export function parseSampleFilter(text: string): Record<string, unknown> | null | string {
+  if (!text.trim()) return null
+  const match = /^\s*([^=\s]+)\s*=\s*(.+?)\s*$/.exec(text)
+  if (!match) return 'Sample filter: write column=value (several values: column=A|B)'
+  const values = match[2].split('|').map((v) => v.trim()).filter(Boolean)
+  if (values.length === 0) return 'Sample filter: give a value'
+  return values.length === 1 ? { column: match[1], equals: values[0] } : { column: match[1], in: values }
+}
+
+function parseNamed(text: string, known: readonly string[]): Record<string, number> | string {
   const out: Record<string, number> = {}
   for (const item of text.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean)) {
     const match = /^([a-z_]+)\s*(?:=|<=|>=|:)\s*(\S+)$/.exec(item)
     if (!match) return `“${item}”: write name=value`
     const [, name, value] = match
-    if (!(CRITERIA as readonly string[]).includes(name)) return `“${name}” is not a criterion (${CRITERIA.join(', ')})`
+    if (!known.includes(name)) return `“${name}” is not a criterion (${CRITERIA.join(', ')})`
     if (name in out) return `“${name}” is given twice`
     const number = Number(value)
     if (!Number.isFinite(number)) return `${name}: “${value}” is not a number`
@@ -93,17 +127,25 @@ export function buildClassifyRequest(f: ClassifyForm): { params: Record<string, 
   if (output === f.attribute) return 'The class attribute needs another name than the grade'
   const rows = f.classes.filter((c) => c.label.trim() || c.criteria.trim())
   if (rows.length === 0) return 'Add at least one class'
-  const categories: { label: string; criteria: Record<string, number> }[] = []
+  const categories: { label: string; criteria: Record<string, number>; hole_support?: Record<string, number> }[] = []
   let usesHoles = false
+  let ownSupport = false
   for (const row of rows) {
     const label = row.label.trim()
     if (!label) return 'Every class needs a label'
     if (categories.some((c) => c.label === label)) return `Class “${label}” is listed twice`
-    const criteria = parseCriteria(row.criteria)
-    if (typeof criteria === 'string') return `${label}: ${criteria}`
+    const parsed = parseClass(row.criteria)
+    if (typeof parsed === 'string') return `${label}: ${parsed}`
+    const { criteria } = parsed
     usesHoles ||= HOLE_CRITERIA.some((name) => name in criteria)
-    categories.push({ label, criteria })
+    if (parsed.hole_support) {
+      if (!f.holeRadius.trim() && !('radius' in parsed.hole_support)) return `${label}: give hole_radius (there is no general hole radius)`
+      ownSupport = true
+    }
+    categories.push({ label, ...parsed })
   }
+  const filter = parseSampleFilter(f.holeFilter ?? '')
+  if (typeof filter === 'string') return filter
   const params: Record<string, unknown> = { attribute: f.attribute, output, categories }
   const body: { params: Record<string, unknown>; composites?: string } = { params }
   if (f.holeRadius.trim()) {
@@ -112,7 +154,11 @@ export function buildClassifyRequest(f: ClassifyForm): { params: Record<string, 
     const nth = integer(f.holeNth, 'Nth hole', 1, 1000)
     if (typeof nth === 'string') return nth
     if (!f.composites) return 'Pick the composites for the drillhole support'
-    params.hole_support = { radius, nth }
+    params.hole_support = filter ? { radius, nth, sample_filter: filter } : { radius, nth }
+    body.composites = f.composites
+  } else if (ownSupport) {
+    if (!f.composites) return 'Pick the composites for the drillhole support'
+    if (filter) for (const c of categories) if (c.hole_support) (c.hole_support as Record<string, unknown>).sample_filter = filter
     body.composites = f.composites
   } else if (usesHoles && f.composites) {
     return 'Give the hole radius for the drillhole support'

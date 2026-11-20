@@ -304,6 +304,119 @@ def test_classify_with_hole_support():
     assert names == ("au_nholes", "au_dhole") and model["au_nholes"].tolist() == [2, 2, 1, 1]
 
 
+def test_hole_support_sample_filter():
+    from bakumine.core.estimation.block_estimation import ColumnFilter
+
+    composites = pd.DataFrame(
+        {
+            "hole_id": ["A", "A", "B", "C"],
+            "x": [0.0, 0.0, 30.0, 100.0],
+            "y": 0.0,
+            "z": [0.0, -40.0, 0.0, 0.0],
+            "domain": ["WASTE", "MIN", "MIN", "OX"],
+        }
+    )
+    point = [[10.0, 0.0, 0.0]]
+    count, distance = hole_support(point, composites, radius=25.0, nth=2)
+    assert count.tolist() == [2] and distance.tolist() == [20.0]  # A at 10, B at 20
+    # only MIN composites: A's nearest is the one 40 m down, sqrt(10^2 + 40^2) away
+    only = ColumnFilter("domain", ("MIN",))
+    count, distance = hole_support(point, composites, radius=25.0, nth=2, sample_filter=only)
+    assert count.tolist() == [1] and distance[0] == pytest.approx(np.hypot(10.0, 40.0))
+    both = ColumnFilter("domain", ("MIN", "OX"))
+    _, distance = hole_support(point, composites, radius=25.0, nth=3, sample_filter=both)
+    assert distance.tolist() == [90.0]
+    with pytest.raises(ValueError, match="not in the sample table"):
+        hole_support(point, composites, radius=1.0, sample_filter=ColumnFilter("zone", ("A",)))
+
+
+def test_hole_support_per_class_and_sample_filter():
+    """B: 2 holes within 12 m. C: the 2nd hole within 21 m (its own radius and n-th hole)."""
+    model = row_model(4, au=[1.0, 1.0, 1.0, np.nan], au_pass=[1, 1, 1, 1])
+    # block centroids at x = 5, 15, 25, 35 (y = z = 5)
+    composites = pd.DataFrame(
+        {
+            "hole_id": ["A", "B", "C", "W"],
+            "x": [5.0, 5.0, 25.0, 25.0],
+            "y": [5.0, 15.0, 5.0, 6.0],
+            "z": 5.0,
+            "domain": ["MIN", "MIN", "MIN", "WASTE"],
+        }
+    )
+    spec = params(
+        [
+            {"label": "B", "criteria": {"min_holes": 2}},
+            {"label": "C", "criteria": {"max_hole_distance": 21.0, "min_holes": 3},
+             "hole_support": {"radius": 30.0, "nth": 2}},
+            {"label": "P"},
+        ],
+        hole_support={"radius": 12.0, "nth": 3,
+                      "sample_filter": {"column": "domain", "equals": "MIN"}},
+    )  # fmt: skip
+    # the class inherits the filter and overrides radius and nth
+    own = spec.support_of(1)
+    assert (own.radius, own.nth) == (30.0, 2)
+    assert own.sample_filter == spec.hole_support.sample_filter
+    assert spec.support_of(0) is spec.hole_support and spec.support_of(2) is spec.hole_support
+    assert spec.support_names(1) == ("au_nholes_2", "au_dhole_2")
+    written = ["au_nholes", "au_dhole", "au_nholes_2", "au_dhole_2"]
+    assert spec.written_names() == ["res_class", *written]
+    summary = classify(model, spec, composites)
+    assert summary.written == written
+    # MIN holes only (W is filtered out):
+    # block 0 (x 5):  A 0, B 10, C 20              -> 12 m: 2 holes; 30 m: 3 holes, 2nd at 10
+    # block 1 (x 15): A 10, C 10, B sqrt(200)      -> 12 m: 2 holes; 30 m: 3 holes, 2nd at 10
+    # block 2 (x 25): C 0, A 20, B sqrt(500)=22.4  -> 12 m: 1 hole;  30 m: 3 holes, 2nd at 20
+    assert model["au_nholes"].tolist() == [2, 2, 1, 0]
+    np.testing.assert_allclose(model["au_dhole"], [20.0, np.sqrt(200.0), np.sqrt(500.0), np.nan])
+    assert model["au_nholes_2"].tolist() == [3, 3, 3, 0]
+    np.testing.assert_allclose(model["au_dhole_2"], [10.0, 10.0, 20.0, np.nan])
+    assert labels(model) == ["B", "B", "C", None]
+    # without the filter W is a 2nd hole within 12 m of block 2: it becomes B
+    unfiltered = params(
+        [c.to_dict() for c in spec.categories], hole_support={"radius": 12.0, "nth": 3}
+    )
+    other = row_model(4, au=[1.0, 1.0, 1.0, np.nan], au_pass=[1, 1, 1, 1])
+    classify(other, unfiltered, composites)
+    assert labels(other) == ["B", "B", "B", None]
+    # a class alone may carry the support (no run-level hole_support)
+    alone = params(
+        [{"label": "C", "criteria": {"max_hole_distance": 15.0},
+          "hole_support": {"radius": 30.0, "nth": 2,
+                           "sample_filter": {"column": "domain", "in": ["MIN"]}}},
+         {"label": "P"}]
+    )  # fmt: skip
+    third = row_model(4, au=[1.0, 1.0, 1.0, np.nan], au_pass=[1, 1, 1, 1])
+    assert classify(third, alone, composites).written == ["au_nholes_1", "au_dhole_1"]
+    assert labels(third) == ["C", "C", "P", None]
+    # the stored per-class support is used when no composites are given
+    third.set("au_dhole_1", [99.0, 1.0, 1.0, 1.0])
+    classify(third, alone)
+    assert labels(third) == ["P", "C", "C", None]
+    # round trip, and old parameter files (no filter, no per-class support) are unchanged
+    again = ClassificationParams.from_dict(json.loads(json.dumps(spec.to_dict())))
+    assert again == spec and again.to_dict() == spec.to_dict()
+    old = {"bakumine_classification": 1, "attribute": "au", "output": "res_class",
+           "hole_support": {"radius": 50.0, "nth": 2},
+           "categories": [{"label": "B", "criteria": {"max_pass": 1, "min_holes": 3}},
+                          {"label": "P1"}], "smoothing": None}  # fmt: skip
+    loaded = ClassificationParams.from_dict(old)
+    assert loaded.hole_support == HoleSupport(50.0, 2) and loaded.hole_support.sample_filter is None
+    assert loaded.categories[0].hole_support is None
+    assert "sample_filter" not in loaded.to_dict()["hole_support"]
+    assert "hole_support" not in loaded.to_dict()["categories"][0]
+    assert loaded.written_names() == ["res_class", "au_nholes", "au_dhole"]
+    for bad in (
+        {"hole_support": {"radius": 10, "sample_filter": {"column": "domain"}}},
+        {"hole_support": {"radius": 10, "sample_filter": "MIN"}},
+        {"categories": [{"label": "B", "hole_support": {"radius": 10, "range": 3}}]},
+        {"categories": [{"label": "B", "hole_support": {"nth": 2}}]},  # no radius anywhere
+        {"categories": [{"label": "B", "hole_support": {"radius": -1}}]},
+    ):
+        with pytest.raises(ValueError):
+            params(**{"categories": JORC, **bad}).support_of(0)
+
+
 # --------------------------------------------------------------------------- smoothing
 
 

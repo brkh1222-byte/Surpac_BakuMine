@@ -4,6 +4,8 @@ Request::
 
     {"params": {"attribute": "au", "output": "res_class", "categories": [...],
                 "hole_support": {...} | null, "smoothing": {...} | null},
+                # hole_support may carry a sample_filter, and a class its own
+                # hole_support (radius, nth, ...)
      "composites": id | null}        # for the drillhole support
 
 Runs what ``bakumine classify`` runs
@@ -59,8 +61,7 @@ def _run(
         except KeyError:
             raise ops.OperationError(f"no composites {composites_id!r}") from None
         composites = ops._read_composites(project.path_of(composites_id))
-    names = params.input_names()
-    columns = [params.output, names["holes"], names["hole_distance"]]
+    columns = params.written_names()
     ops._claim(model_id)
     try:
         ops._will_modify(rec, folder, model_id, path, columns)

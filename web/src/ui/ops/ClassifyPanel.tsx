@@ -25,6 +25,7 @@ export function ClassifyPanel() {
   const [comps, setComps] = useState('')
   const [holeRadius, setHoleRadius] = useState('')
   const [holeNth, setHoleNth] = useState('3')
+  const [holeFilter, setHoleFilter] = useState('')
   const [classes, setClasses] = useState<ClassRow[]>(JORC_CLASSES)
   const [smooth, setSmooth] = useState(false)
   const [minAgree, setMinAgree] = useState('4')
@@ -41,10 +42,12 @@ export function ClassifyPanel() {
   const grade = candidates.includes(attribute) ? attribute : candidates[0] ?? ''
   const setRow = (i: number, patch: Partial<ClassRow>) => setClasses(classes.map((c, j) => (j === i ? { ...c, ...patch } : c)))
 
+  const ownSupport = classes.some((c) => /hole_(radius|nth)/.test(c.criteria))
+
   const run = async () => {
     const body = buildClassifyRequest({
-      model: model?.id ?? '', attribute: grade, output, composites: holeRadius.trim() ? comps || composites[0]?.id || '' : comps,
-      holeRadius, holeNth, classes, smooth, minAgree, maxSame: '0', iterations: '1',
+      model: model?.id ?? '', attribute: grade, output, composites: holeRadius.trim() || ownSupport ? comps || composites[0]?.id || '' : comps,
+      holeRadius, holeNth, holeFilter, classes, smooth, minAgree, maxSame: '0', iterations: '1',
     })
     if (typeof body === 'string') return setError(body)
     setBusy(true)
@@ -79,11 +82,12 @@ export function ClassifyPanel() {
         <button type="button" data-testid="classify-preset-jorc" onClick={() => setClasses(JORC_CLASSES)}>Measured / Indicated / Inferred</button>
         <button type="button" data-testid="classify-preset-cis" onClick={() => setClasses(CIS_CLASSES)}>B / C / P1</button>
       </div>
-      <p className="sidebar-note">Criteria as name=value, comma separated: {CRITERIA.join(', ')}.</p>
+      <p className="sidebar-note">Criteria as name=value, comma separated: {CRITERIA.join(', ')}. A class may have its own drillhole support: hole_radius=75, hole_nth=2.</p>
       <Text label="Hole radius (m)" id="classify-hole-radius" value={holeRadius} onChange={setHoleRadius} placeholder="use stored support" />
-      {holeRadius.trim() && (
+      {holeRadius.trim() && <Text label="Distance to hole no." id="classify-hole-nth" value={holeNth} onChange={setHoleNth} />}
+      {(holeRadius.trim() || ownSupport) && (
         <>
-          <Text label="Distance to hole no." id="classify-hole-nth" value={holeNth} onChange={setHoleNth} />
+          <Text label="Only composites with" id="classify-hole-filter" value={holeFilter} onChange={setHoleFilter} placeholder="all; e.g. domain=MIN" />
           <Select label="Composites" id="classify-composites" value={comps || composites[0]?.id || ''} onChange={setComps} options={composites.map((c) => ({ value: c.id, label: c.name }))} />
         </>
       )}

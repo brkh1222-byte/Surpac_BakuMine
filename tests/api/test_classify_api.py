@@ -216,6 +216,47 @@ def test_bad_requests_are_400_and_change_nothing(run):
     assert not joblog.read(run["folder"])[-1]["snapshot"]
 
 
+def test_per_class_support_and_sample_filter_equal_cli_and_undo(run, tmp_path):
+    client, ok = run["client"], run["ok"]
+    only_ore = {"column": "domain", "equals": "ORE"}
+    spec = {
+        "attribute": "au",
+        "hole_support": {"radius": 40.0, "nth": 3, "sample_filter": only_ore},
+        "categories": [
+            {"label": "B", "criteria": {"max_pass": 2, "min_holes": 4}},
+            {"label": "C", "criteria": {"max_hole_distance": 60.0},
+             "hole_support": {"radius": 60.0, "nth": 2}},
+            {"label": "P1"},
+        ],
+    }  # fmt: skip
+    before = load_model(run["path"])
+    result = ok(client.post(f"/api/v1/ops/models/{run['model']}/classify",
+                            json={"params": spec, "composites": run["comp"]}))  # fmt: skip
+    assert result["written"] == ["au_nholes", "au_dhole", "au_nholes_2", "au_dhole_2"]
+    assert all(c["blocks"] > 0 for c in result["classes"]), result["classes"]
+    model = load_model(run["path"])
+    c_class = model.get("res_class", decode=True) == "C"
+    assert (model["au_dhole_2"][c_class] <= 60.0).all()
+    # the filter matters: counting every composite, no block has fewer holes within 40 m
+    assert (model["au_nholes"] <= before["au_nholes"]).all()
+    assert (model["au_nholes"] < before["au_nholes"]).any()
+    params = tmp_path / "classes.json"
+    params.write_text(json.dumps(spec), encoding="utf-8")
+    copy = tmp_path / "model"
+    shutil.copytree(run["estimated"], copy)
+    composites = Project.open(run["folder"]).path_of(run["comp"])
+    assert main(["classify", str(copy), "--params", str(params), "--composites",
+                 str(composites)]) == 0  # fmt: skip
+    # the same values (the attribute order differs: the project's model was classified before)
+    by_cli = load_model(copy)
+    assert sorted(by_cli.attribute_names) == sorted(model.attribute_names)
+    for name in ["res_class", *result["written"]]:
+        np.testing.assert_array_equal(by_cli[name], model[name])
+    ok(client.post("/api/v1/ops/undo"))
+    same_model(load_model(run["path"]), before)
+    assert "au_nholes_2" not in load_model(run["path"])
+
+
 def test_replay_gives_an_identical_model(run, tmp_path):
     target = tmp_path / "replayed"
     assert main(["project", "replay", str(run["folder"]), "--into", str(target)]) == 0

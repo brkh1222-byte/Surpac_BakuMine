@@ -52,9 +52,25 @@ The estimation does not record which holes it used. With ``hole_support`` (``rad
   the 3rd), the distance to a hole being that to its nearest composite; NaN when there
   are fewer than ``nth`` holes.
 
+A class may carry its own ``hole_support`` (the same keys; those it leaves out are taken
+from the run-level one): its ``min_holes`` / ``max_hole_distance`` then use that radius
+and that n-th hole, written as ``<attr>_nholes_<k>`` / ``<attr>_dhole_<k>`` with ``k`` the
+1-based number of the class. So "B: 3 holes within 50 m; C: the 2nd hole within 75 m"
+needs no trick::
+
+    {"label": "B", "criteria": {"max_pass": 1, "min_holes": 3},
+     "hole_support": {"radius": 50}},
+    {"label": "C", "criteria": {"max_pass": 2, "max_hole_distance": 75},
+     "hole_support": {"radius": 75, "nth": 2}}
+
+``sample_filter`` (``{"column": name, "equals": value}`` or ``{"column": name, "in":
+[...]}``, the sample filter of an estimation domain) keeps only those composites, for
+example the composites of the mineralised domain that the estimate used.
+
 Both are **isotropic** straight-line distances in metres between the block centroid and
 composite midpoints (``x, y, z`` columns), over all composites of the table (with
-``value_column``: those with a value in that column). They describe the drilling around
+``value_column``: those with a value in that column; with ``sample_filter``: those it
+keeps). They describe the drilling around
 the block; they are not "the holes the estimate used". Without composites the two
 attributes must already be in the model.
 
@@ -81,7 +97,8 @@ purpose, and the summary counts the changed blocks.
 Parameter file (JSON, round trip through :class:`ClassificationParams`)::
 
     {"bakumine_classification": 1, "attribute": "au", "output": "res_class",
-     "hole_support": {"radius": 50.0, "nth": 3},
+     "hole_support": {"radius": 50.0, "nth": 3,
+                      "sample_filter": {"column": "domain", "equals": "MIN"}},
      "categories": [
        {"label": "Measured", "criteria": {"max_pass": 1, "min_samples": 8, "min_holes": 3,
                                           "max_nearest_distance": 25.0}},
@@ -103,7 +120,7 @@ import pandas as pd
 
 from bakumine.core.blockmodel.attributes import check_name
 from bakumine.core.blockmodel.blocks import BlockModel
-from bakumine.core.estimation.block_estimation import OutputNames
+from bakumine.core.estimation.block_estimation import ColumnFilter, OutputNames
 
 __all__ = [
     "CRITERIA",
@@ -137,6 +154,9 @@ _HOLE_KEYS = {"holes": "_nholes", "hole_distance": "_dhole"}
 INPUT_KEYS = (*OutputNames().names("").keys(), *_HOLE_KEYS)
 
 
+_SUPPORT_KEYS = ("radius", "nth", "hole_column", "value_column", "sample_filter")
+
+
 def _number(value: Any, what: str, *, minimum: float | None = None) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
         raise ValueError(f"{what} must be a finite number, got {value!r}")
@@ -160,10 +180,18 @@ class ClassRule:
     label: str
     criteria: dict[str, float] = field(default_factory=dict)
     where: str | None = None
+    #: drillhole-support settings of this class (keys of :class:`HoleSupport`), or None
+    hole_support: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.label, str) or not self.label.strip():
             raise ValueError("a class label must be a non-empty string")
+        if self.hole_support is not None:
+            if isinstance(self.hole_support, HoleSupport):
+                object.__setattr__(self, "hole_support", self.hole_support.to_dict())
+            _only(self.hole_support, _SUPPORT_KEYS, f"class {self.label!r}: hole_support")
+            own = {k: v for k, v in self.hole_support.items() if v is not None}
+            object.__setattr__(self, "hole_support", own or None)
         if not isinstance(self.criteria, dict):
             raise ValueError(f"class {self.label!r}: criteria must be an object")
         unknown = sorted(set(self.criteria) - set(CRITERIA))
@@ -185,12 +213,19 @@ class ClassRule:
         out: dict[str, Any] = {"label": self.label, "criteria": dict(self.criteria)}
         if self.where:
             out["where"] = self.where
+        if self.hole_support:
+            out["hole_support"] = dict(self.hole_support)
         return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ClassRule:
-        _only(data, ("label", "criteria", "where"), "a class")
-        return cls(data.get("label"), dict(data.get("criteria") or {}), data.get("where"))  # type: ignore[arg-type]
+        _only(data, ("label", "criteria", "where", "hole_support"), "a class")
+        return cls(
+            data.get("label"),  # type: ignore[arg-type]
+            dict(data.get("criteria") or {}),
+            data.get("where"),
+            data.get("hole_support") or None,
+        )
 
 
 @dataclass(frozen=True)
@@ -201,8 +236,17 @@ class HoleSupport:
     nth: int = 3
     hole_column: str = "hole_id"
     value_column: str | None = None
+    #: composites that count: a :class:`ColumnFilter` or its dict (column equals / in)
+    sample_filter: ColumnFilter | None = None
 
     def __post_init__(self) -> None:
+        if self.sample_filter is not None and not isinstance(self.sample_filter, ColumnFilter):
+            if not isinstance(self.sample_filter, dict):
+                raise ValueError(
+                    "hole_support sample_filter must be {'column': name, 'equals': value} "
+                    "or {'column': name, 'in': [...]}"
+                )
+            object.__setattr__(self, "sample_filter", ColumnFilter.from_dict(self.sample_filter))
         radius = _number(self.radius, "hole_support radius")
         if radius <= 0:
             raise ValueError("hole_support radius must be positive")
@@ -212,23 +256,27 @@ class HoleSupport:
         object.__setattr__(self, "nth", int(self.nth))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "radius": self.radius,
             "nth": self.nth,
             "hole_column": self.hole_column,
             "value_column": self.value_column,
         }
+        if self.sample_filter is not None:
+            out["sample_filter"] = self.sample_filter.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HoleSupport:
-        _only(data, ("radius", "nth", "hole_column", "value_column"), "hole_support")
-        if "radius" not in data:
+        _only(data, _SUPPORT_KEYS, "hole_support")
+        if data.get("radius") is None:
             raise ValueError("hole_support needs a radius")
         return cls(
             data["radius"],
             data.get("nth", 3),
             data.get("hole_column") or "hole_id",
             data.get("value_column") or None,
+            data.get("sample_filter") or None,
         )
 
 
@@ -298,6 +346,12 @@ class ClassificationParams:
         if self.hole_support is not None:
             check_name(names["holes"])
             check_name(names["hole_distance"])
+        for number in range(len(rules)):
+            if rules[number].hole_support:
+                for name in self.support_names(number):
+                    check_name(name)
+                    if name == self.output:
+                        raise ValueError(f"the class attribute {self.output!r} is an input")
 
     @property
     def labels(self) -> list[str]:
@@ -309,6 +363,30 @@ class ClassificationParams:
         names.update({k: self.attribute + s for k, s in _HOLE_KEYS.items()})
         names.update({k: str(v) for k, v in self.inputs.items() if v})
         return names
+
+    def support_of(self, number: int) -> HoleSupport | None:
+        """The drillhole support class ``number`` (0-based) uses: its own over the run's."""
+        own = self.categories[number].hole_support
+        if not own:
+            return self.hole_support
+        base = self.hole_support.to_dict() if self.hole_support else {}
+        support = HoleSupport.from_dict({**base, **own})
+        return self.hole_support if support == self.hole_support else support
+
+    def support_names(self, number: int) -> tuple[str, str]:
+        """(count, distance) attributes of the drillhole support of class ``number``."""
+        names = self.input_names()
+        if self.support_of(number) == self.hole_support:
+            return names["holes"], names["hole_distance"]
+        return f"{names['holes']}_{number + 1}", f"{names['hole_distance']}_{number + 1}"
+
+    def written_names(self) -> list[str]:
+        """Every attribute :func:`classify` may create or overwrite."""
+        names = self.input_names()
+        out = [self.output, names["holes"], names["hole_distance"]]
+        for number in range(len(self.categories)):
+            out += [n for n in self.support_names(number) if n not in out]
+        return out
 
     def used_inputs(self) -> list[str]:
         """Input keys some criterion reads, in table order."""
@@ -408,12 +486,14 @@ def hole_support(
     nth: int = 3,
     hole_column: str = "hole_id",
     value_column: str | None = None,
+    sample_filter: ColumnFilter | None = None,
     chunk_size: int = 20_000,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Holes around points: ``(n_holes_within_radius, distance_to_nth_nearest_hole)``.
 
     ``points`` is (m, 3); ``composites`` needs ``x, y, z`` and ``hole_column``. Distances
-    are isotropic and to composite midpoints (module docstring). The count is int32; the
+    are isotropic and to composite midpoints (module docstring). ``sample_filter`` keeps
+    the composites whose column equals one of its values. The count is int32; the
     distance is NaN where fewer than ``nth`` holes exist.
     """
     from scipy.spatial import cKDTree
@@ -427,6 +507,8 @@ def hole_support(
         if value_column not in composites.columns:
             raise ValueError(f"the composite table has no column {value_column!r}")
         keep &= composites[value_column].notna()
+    if sample_filter is not None:
+        keep &= sample_filter.mask(composites)
     xyz = composites.loc[keep, ["x", "y", "z"]].to_numpy(dtype=np.float64)
     holes = pd.factorize(composites.loc[keep, hole_column])[0].astype(np.int64)
     count = np.zeros(len(points), dtype=np.int32)
@@ -476,6 +558,7 @@ def add_hole_support(
     distance_name: str,
     hole_column: str = "hole_id",
     value_column: str | None = None,
+    sample_filter: ColumnFilter | None = None,
     where: Any = None,
 ) -> tuple[str, str]:
     """Write :func:`hole_support` of the block centroids as two attributes.
@@ -492,6 +575,7 @@ def add_hole_support(
         nth=nth,
         hole_column=hole_column,
         value_column=value_column,
+        sample_filter=sample_filter,
     )
     _write_hole_support(model, mask, count, distance, count_name, distance_name, radius, nth)
     return count_name, distance_name
@@ -601,37 +685,65 @@ def classify(
     used = params.used_inputs()
     estimated = ~np.isnan(np.asarray(model[params.attribute], dtype=np.float64))
 
-    computed: dict[str, np.ndarray] = {}
-    if params.hole_support is not None and composites is not None:
-        hs = params.hole_support
-        for key, kind in (("holes", "int"), ("hole_distance", "float")):
-            if names[key] in model and model.attribute(names[key]).kind != kind:
-                raise ValueError(f"attribute {names[key]!r} exists and is not {kind}")
-        count, distance = hole_support(
-            model.centroids()[estimated],
-            composites,
-            radius=hs.radius,
-            nth=hs.nth,
-            hole_column=hs.hole_column,
-            value_column=hs.value_column,
-        )
-        computed["holes"] = np.zeros(model.n_blocks, dtype=np.int32)
-        computed["holes"][estimated] = count
-        computed["hole_distance"] = np.full(model.n_blocks, np.nan)
-        computed["hole_distance"][estimated] = distance
+    # drillhole support: one computation per distinct setting (run level and per class)
+    supports = [params.support_of(n) for n in range(len(params.categories))]
+    support_names = [params.support_names(n) for n in range(len(params.categories))]
+    computed: dict[tuple[str, str], tuple[HoleSupport, np.ndarray, np.ndarray]] = {}
+    if composites is not None:
+        wanted: dict[tuple[str, str], HoleSupport] = {}
+        if params.hole_support is not None:
+            wanted[(names["holes"], names["hole_distance"])] = params.hole_support
+        for hs, pair in zip(supports, support_names, strict=True):
+            if hs is not None:
+                wanted.setdefault(pair, hs)
+        for pair in wanted:
+            for name, kind in zip(pair, ("int", "float"), strict=True):
+                if name in model and model.attribute(name).kind != kind:
+                    raise ValueError(f"attribute {name!r} exists and is not {kind}")
+        centroids = model.centroids()[estimated]
+        for pair, hs in wanted.items():
+            count, distance = hole_support(
+                centroids,
+                composites,
+                radius=hs.radius,
+                nth=hs.nth,
+                hole_column=hs.hole_column,
+                value_column=hs.value_column,
+                sample_filter=hs.sample_filter,
+            )
+            holes = np.zeros(model.n_blocks, dtype=np.int32)
+            holes[estimated] = count
+            far = np.full(model.n_blocks, np.nan)
+            far[estimated] = distance
+            computed[pair] = (hs, holes, far)
+
+    def support_column(number: int, key: str) -> np.ndarray:
+        pair = support_names[number]
+        position = 0 if key == "holes" else 1
+        if pair in computed:
+            return computed[pair][1 + position]
+        name = pair[position]
+        if name not in model:
+            raise ValueError(
+                f"the rules use the drillhole support ({name!r}): give hole_support "
+                "and the composites, or add the attribute first"
+            )
+        if model.attribute(name).kind == "category":
+            raise ValueError(f"attribute {name!r} is a category, not a number")
+        return np.asarray(model[name])
+
     columns: dict[str, np.ndarray] = {}
+    rule_columns: list[dict[str, np.ndarray]] = [{} for _ in params.categories]
     for key in used:
-        if key in computed:
-            columns[key] = computed[key]
+        if key in _HOLE_KEYS:
+            criterion = next(c for c, (k, _) in CRITERIA.items() if k == key)
+            for number, rule in enumerate(params.categories):
+                if criterion in rule.criteria:
+                    rule_columns[number][key] = support_column(number, key)
         elif names[key] in model:
             if model.attribute(names[key]).kind == "category":
                 raise ValueError(f"attribute {names[key]!r} is a category, not a number")
             columns[key] = np.asarray(model[names[key]])
-        elif key in _HOLE_KEYS:
-            raise ValueError(
-                f"the rules use the drillhole support ({names[key]!r}): give hole_support "
-                "and the composites, or add the attribute first"
-            )
         else:
             raise ValueError(
                 f"the rules use {names[key]!r}, which the model does not have "
@@ -647,7 +759,7 @@ def classify(
         meets = estimated & (codes < 0)
         for criterion, value in rule.criteria.items():
             key, comparison = CRITERIA[criterion]
-            column = columns[key]
+            column = rule_columns[number][key] if key in _HOLE_KEYS else columns[key]
             with np.errstate(invalid="ignore"):
                 meets &= (column <= value) if comparison == "<=" else (column >= value)
             if key == "pass_number":
@@ -662,13 +774,11 @@ def classify(
         codes = smoothed
 
     written: list[str] = []
-    if computed:
-        hs = params.hole_support
+    for pair, (hs, holes, far) in computed.items():
         _write_hole_support(
-            model, estimated, computed["holes"][estimated], computed["hole_distance"][estimated],
-            names["holes"], names["hole_distance"], hs.radius, hs.nth,  # type: ignore[union-attr]
-        )  # fmt: skip
-        written = [names["holes"], names["hole_distance"]]
+            model, estimated, holes[estimated], far[estimated], pair[0], pair[1], hs.radius, hs.nth
+        )
+        written += list(pair)
     description = f"resource class of {params.attribute}"
     if params.output in model:
         # replaced in place, so that the attribute keeps its position in the model

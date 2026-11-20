@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { JORC_CLASSES, buildClassifyRequest, describeClasses, parseCriteria, type ClassifyForm } from './classify'
+import { JORC_CLASSES, buildClassifyRequest, describeClasses, parseClass, parseCriteria, parseSampleFilter, type ClassifyForm } from './classify'
 
 const form: ClassifyForm = {
   model: 'model',
@@ -96,5 +96,56 @@ describe('describeClasses', () => {
       classes: [{ label: 'Measured', blocks: 10, volume: 1 }, { label: 'Indicated', blocks: 20, volume: 2 }],
     })
     expect(lines).toEqual(['Measured: 10 blocks (25.0 %)', 'Indicated: 20 blocks (50.0 %)', 'no class: 10 blocks (25.0 %)'])
+  })
+})
+
+describe('drillhole support per class and its sample filter', () => {
+  it('reads hole_radius / hole_nth among the criteria', () => {
+    expect(parseClass('max_pass=2, max_hole_distance=75, hole_radius=75, hole_nth=2')).toEqual({
+      criteria: { max_pass: 2, max_hole_distance: 75 },
+      hole_support: { radius: 75, nth: 2 },
+    })
+    expect(parseClass('max_pass=1')).toEqual({ criteria: { max_pass: 1 } })
+    expect(parseClass('hole_radius=0')).toMatch(/positive/)
+    expect(parseClass('hole_nth=1.5')).toMatch(/whole number/)
+    expect(parseCriteria('hole_radius=50')).toMatch(/not a criterion/)
+  })
+  it('reads the sample filter', () => {
+    expect(parseSampleFilter('')).toBeNull()
+    expect(parseSampleFilter(' domain = MIN ')).toEqual({ column: 'domain', equals: 'MIN' })
+    expect(parseSampleFilter('domain=MIN|OX')).toEqual({ column: 'domain', in: ['MIN', 'OX'] })
+    expect(parseSampleFilter('domain')).toMatch(/column=value/)
+  })
+  it('sends them with the request', () => {
+    const classes = [
+      { label: 'B', criteria: 'max_pass=1, min_holes=3' },
+      { label: 'C', criteria: 'max_pass=2, max_hole_distance=75, hole_radius=75, hole_nth=2' },
+      { label: 'P1', criteria: '' },
+    ]
+    expect(buildClassifyRequest({ ...form, classes, composites: 'comps', holeRadius: '50', holeNth: '3', holeFilter: 'domain=MIN' })).toEqual({
+      composites: 'comps',
+      params: {
+        attribute: 'au',
+        output: 'res_class',
+        hole_support: { radius: 50, nth: 3, sample_filter: { column: 'domain', equals: 'MIN' } },
+        categories: [
+          { label: 'B', criteria: { max_pass: 1, min_holes: 3 } },
+          { label: 'C', criteria: { max_pass: 2, max_hole_distance: 75 }, hole_support: { radius: 75, nth: 2 } },
+          { label: 'P1', criteria: {} },
+        ],
+      },
+    })
+    // no general radius: the class's own support needs its radius and the composites
+    expect(buildClassifyRequest({ ...form, classes: [{ label: 'C', criteria: 'min_holes=2, hole_nth=2' }], composites: 'comps' })).toMatch(/hole_radius/)
+    expect(buildClassifyRequest({ ...form, classes: [{ label: 'C', criteria: 'min_holes=2, hole_radius=60' }] })).toMatch(/composites/)
+    expect(buildClassifyRequest({ ...form, classes: [{ label: 'C', criteria: 'min_holes=2, hole_radius=60' }], composites: 'comps', holeFilter: 'domain=MIN' })).toEqual({
+      composites: 'comps',
+      params: {
+        attribute: 'au',
+        output: 'res_class',
+        categories: [{ label: 'C', criteria: { min_holes: 2 }, hole_support: { radius: 60, sample_filter: { column: 'domain', equals: 'MIN' } } }],
+      },
+    })
+    expect(buildClassifyRequest({ ...form, composites: 'comps', holeRadius: '50', holeFilter: 'domain' })).toMatch(/column=value/)
   })
 })
