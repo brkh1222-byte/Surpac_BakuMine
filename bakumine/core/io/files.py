@@ -8,6 +8,7 @@ extension   holds                    module
 ``.dxf``    strings and meshes       :mod:`bakumine.core.io.dxf`
 ``.obj``    one mesh                 :mod:`bakumine.core.io.obj`
 ``.ply``    one mesh                 :mod:`bakumine.core.io.ply`
+``.stl``    one mesh (read only)     :mod:`bakumine.core.io.stl`
 ==========  =======================  ================================================
 
 Everything returned is in internal coordinates ``x = east, y = north,
@@ -22,11 +23,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from bakumine.core.geometry.mesh import Mesh
-from bakumine.core.io import dxf, obj, ply, surpac_dtm, surpac_str
+from bakumine.core.io import dxf, obj, ply, stl, surpac_dtm, surpac_str
 from bakumine.core.io.strings import StringFile
 
 __all__ = [
     "MESH_EXTENSIONS",
+    "MESH_READ_EXTENSIONS",
     "STRING_EXTENSIONS",
     "read_mesh",
     "read_meshes",
@@ -35,7 +37,8 @@ __all__ = [
     "write_strings",
 ]
 
-MESH_EXTENSIONS = (".dtm", ".dxf", ".obj", ".ply")
+MESH_EXTENSIONS = (".dtm", ".dxf", ".obj", ".ply")  # read and write
+MESH_READ_EXTENSIONS = (*MESH_EXTENSIONS, ".stl")
 STRING_EXTENSIONS = (".str", ".dxf")
 
 
@@ -53,15 +56,15 @@ def read_meshes(path, **options) -> dict[str, Mesh]:
 
     Names are ``"<object>.<trisolation>"`` for ``.dtm`` (its ``.str`` is found
     next to it, or pass ``str_path=``), layer names for ``.dxf`` and the file
-    stem for ``.obj`` / ``.ply``.
+    stem for ``.obj`` / ``.ply`` / ``.stl``.
     """
-    ext = _extension(path, MESH_EXTENSIONS, "a mesh file")
+    ext = _extension(path, MESH_READ_EXTENSIONS, "a mesh file")
     if ext == ".dtm":
         result = surpac_dtm.read_surpac_dtm(path, **options)
         return {f"{t.object_id}.{t.trisolation_id}": t.mesh for t in result.trisolations}
     if ext == ".dxf":
         return dict(dxf.read_dxf(path, **options).meshes)
-    reader = obj.read_obj if ext == ".obj" else ply.read_ply
+    reader = {".obj": obj.read_obj, ".ply": ply.read_ply, ".stl": stl.read_stl}[ext]
     return {Path(path).stem: reader(path, **options)}
 
 
@@ -76,7 +79,8 @@ def write_mesh(path, meshes, **options) -> None:
 
     ``.dtm`` writes the ``.str`` next to it and one trisolation per mesh;
     ``.dxf`` writes 3DFACEs with the dict keys as layer names; ``.obj`` and
-    ``.ply`` hold a single mesh, so several are joined first.
+    ``.ply`` hold a single mesh, so several are joined first. ``.stl`` is read
+    only (single precision).
     """
     ext = _extension(path, MESH_EXTENSIONS, "a mesh file")
     if ext == ".dtm":

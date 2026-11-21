@@ -14,6 +14,11 @@ RAW_SHA256 = {
     "assay_BABBITT.csv": "121956eb0e158af5d6c13e66ea1d57b66bee36e9577c20d80b624b1a88140f2f",
 }
 
+# the domain wireframe of the PyGSLIB tutorial (binary STL, feet); see SOURCE.md
+WIREFRAME_SHA256 = {
+    "Mpz.stl": "a324327f6dd4802ad95c6570cce8488ea397311459a48ea2a75c20f6cd5e867b",
+}
+
 COLUMNS = {
     "collar": ["hole_id", "easting", "northing", "elevation", "depth"],
     "survey": ["hole_id", "depth", "dip", "azimuth"],
@@ -54,10 +59,15 @@ def test_every_csv_loads(path: Path):
     assert len(frame.columns) >= 4
 
 
-@pytest.mark.parametrize("name", sorted(RAW_SHA256))
+@pytest.mark.parametrize("name", sorted(RAW_SHA256 | WIREFRAME_SHA256))
 def test_raw_files_are_unmodified(name: str):
     digest = hashlib.sha256((DATASET / "raw" / name).read_bytes()).hexdigest()
-    assert digest == RAW_SHA256[name]
+    assert digest == (RAW_SHA256 | WIREFRAME_SHA256)[name]
+
+
+def test_raw_inventory():
+    names = {p.name for p in (DATASET / "raw").iterdir()}
+    assert names == set(RAW_SHA256) | set(WIREFRAME_SHA256)
 
 
 @pytest.mark.parametrize("name", sorted(COLUMNS))

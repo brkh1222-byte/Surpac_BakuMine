@@ -1,7 +1,7 @@
 """Bring an existing surface or solid file into the form the project stores.
 
-Reads ``.dxf``, ``.obj``, ``.ply`` or a Surpac text ``.dtm`` (with its ``.str`` next to
-it) through :mod:`bakumine.core.io.files`, welds vertices that coincide exactly (DXF
+Reads ``.dxf``, ``.obj``, ``.ply``, ``.stl`` or a Surpac text ``.dtm`` (with its ``.str``
+next to it) through :mod:`bakumine.core.io.files`, welds vertices that coincide exactly (DXF
 3DFACEs and some OBJ writers repeat them per triangle) and checks the mesh as the kind it
 is imported as:
 

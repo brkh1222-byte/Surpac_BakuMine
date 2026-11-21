@@ -53,8 +53,40 @@ author; we did not re-derive them from the NRRI CD-ROM files.
 | `raw/collar_BABBITT.csv` | 13437 | `2dbce5d751c283d0d71d9fc2afbebace62d74d6e3db2c92af9cbcac7b7f62c32` |
 | `raw/survey_BABBITT.csv` | 48545 | `5f41cfaf7adf4cdd7f9652e2db6d53520c5565489123ff6cec0fc0cf6a300c09` |
 | `raw/assay_BABBITT.csv` | 1475941 | `121956eb0e158af5d6c13e66ea1d57b66bee36e9577c20d80b624b1a88140f2f` |
+| `raw/Mpz.stl` | 3187534 | `a324327f6dd4802ad95c6570cce8488ea397311459a48ea2a75c20f6cd5e867b` |
 
-Not included: `Mpz.stl` (3.2 MB mineralised-zone wireframe in the same upstream folder).
+### Domain wireframe `raw/Mpz.stl`
+
+| | |
+|---|---|
+| Retrieved | 2026-11-21, anonymous HTTPS download |
+| URL | `https://raw.githubusercontent.com/opengeostat/pygslib/c26c3bff20c7cc16583c94fb850e17600b9a610d/doc/source/Tutorial_1/Babbitt/Mpz.stl` |
+| Commit | `c26c3bff20c7cc16583c94fb850e17600b9a610d` (same as the tables; still the head of `master` on 2026-11-21) |
+| Licence | MIT, as for the tables (see `LICENSE` and the limit stated above) |
+
+The mineralised-zone solid the PyGSLIB tutorial uses as its estimation domain (the tutorial
+text loads it as `domain.stl`). Facts checked on the file:
+
+- **Binary STL**, 63 749 triangles (84 + 50 x 63 749 bytes), 31 873 distinct vertices,
+  float32 coordinates: at eastings of 2.3 million the resolution is 0.25 ft.
+- **Feet, same grid as the holes**: X 2 289 334 to 2 302 998, Y 415 146 to 424 122,
+  Z -645.8 to 1690. Not stated in the file; established by the result: 46 % of the 10 ft
+  composites and 79 % of the Cu metal lie inside it, and the mean Cu of the composites inside
+  (0.2415 %, unassayed = 0 as in the tutorial) equals the tutorial's published 0.2415 %.
+- The surface is stepped (it looks extracted from a block or grid model), volume
+  62.63 x 10^9 ft3 = 1.773 x 10^9 m3.
+- **Not a closed solid as published**: one triangle is missing (a horizontal hole of
+  3227 ft2 at Z = 717.6 ft near X 2 289 400, Y 416 100) and three zero-thickness fins (pairs
+  of coincident triangles with opposite winding) hang on the surface. Removing the six fin
+  triangles and adding the missing one gives a closed, outward-oriented surface of 63 744
+  triangles; one vertex where two sheets touch remains non-manifold.
+  `scripts/run_babbitt_wireframe.py` does this repair at run time; the file here is the
+  unmodified download.
+- It reaches 54 ft south of the tutorial's block model (origin Y = 415 200 ft): 0.4 % of
+  its volume lies outside the model.
+
+The tutorial's published results and our reproduction of them are in
+`scripts/run_babbitt_wireframe.py` and `tests/cli/test_babbitt_wireframe.py`.
 
 ## Tables
 

@@ -228,7 +228,9 @@ def run_from_points(args: argparse.Namespace) -> int:
 
 
 def configure_import(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("file", help=".dxf, .obj, .ply or Surpac text .dtm (its .str next to it)")
+    parser.add_argument(
+        "file", help=".dxf, .obj, .ply, .stl or Surpac text .dtm (its .str next to it)"
+    )
     parser.add_argument("--kind", default="auto", choices=("auto", "dtm", "solid"),
                         help="auto: solid when the mesh is closed, else dtm")  # fmt: skip
     _add_outputs(parser, "mesh")
@@ -264,7 +266,7 @@ def configure_surface(parser: argparse.ArgumentParser) -> None:
     configure_import(
         sub.add_parser(
             "import",
-            help="read a surface or solid file (DXF / OBJ / PLY / .dtm)",
+            help="read a surface or solid file (DXF / OBJ / PLY / STL / .dtm)",
             description="Read a mesh file, check it and write it as a project object, "
             "OBJ or --geometry-dir files.",
         )

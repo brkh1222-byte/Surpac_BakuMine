@@ -272,8 +272,8 @@ def test_dispatch_strings_round_trip(tmp_path, ext):
 
 
 def test_dispatch_unknown_extension(tmp_path):
-    with pytest.raises(ValueError, match=r"'\.stl'.*supported"):
-        read_mesh(tmp_path / "a.stl")
+    with pytest.raises(ValueError, match=r"'\.3ds'.*supported"):
+        read_mesh(tmp_path / "a.3ds")
     with pytest.raises(ValueError, match="supported"):
         write_mesh(tmp_path / "a.mdl", cube(1.0))
     with pytest.raises(ValueError, match="supported"):
