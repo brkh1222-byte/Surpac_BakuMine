@@ -770,3 +770,25 @@ def test_five_thousand_holes_of_five_hundred_samples_in_seconds():
         )
     # "A few seconds": about 1.5 s on a 2024 laptop; the bound leaves room for slow CI.
     assert elapsed < 15.0, f"compositing took {elapsed:.1f} s"
+
+
+def test_composite_below_the_stated_hole_depth_is_located_with_a_warning():
+    """A sample that ends 0.6 m below the collar table's hole depth: its composite is on
+    the straight continuation of the hole (analytic for a straight hole), not NaN."""
+    collar = pd.DataFrame({"hole_id": ["S"], "x": [100.0], "y": [200.0], "z": [50.0],
+                           "max_depth": [10.0]})  # fmt: skip
+    survey = pd.DataFrame({"hole_id": ["S"], "depth": [0.0], "dip": [-60.0], "azimuth": [90.0]})
+    traces = desurvey(collar, survey)
+    samples = pd.DataFrame({"hole_id": ["S"] * 3, "depth_from": [8.0, 9.0, 10.0],
+                            "depth_to": [9.0, 10.0, 10.6], "g": [1.0, 2.0, 3.0]})  # fmt: skip
+    with pytest.warns(UserWarning, match="1 composite.*below the stated hole depth.*0.3"):
+        out = composite(samples, length=1.0, traces=traces)
+    np.testing.assert_allclose(out["depth_to"], [9.0, 10.0, 10.6])
+    middle = out["depth_from"].to_numpy() / 2 + out["depth_to"].to_numpy() / 2
+    np.testing.assert_allclose(out["x"], 100.0 + middle * np.cos(np.radians(60.0)), atol=1e-9)
+    np.testing.assert_allclose(out["y"], 200.0, atol=1e-9)
+    np.testing.assert_allclose(out["z"], 50.0 - middle * np.sin(np.radians(60.0)), atol=1e-9)
+    np.testing.assert_allclose(out["dz"], -np.sin(np.radians(60.0)), atol=1e-12)
+    # a hole without a trace still has no coordinates
+    other = composite(samples.assign(hole_id="X"), length=1.0, traces=traces)
+    assert np.isnan(other[["x", "y", "z"]].to_numpy()).all()

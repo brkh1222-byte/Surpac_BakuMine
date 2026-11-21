@@ -162,6 +162,34 @@ def _domain_values(intervals: pd.DataFrame, domain: object) -> pd.Series:
     return series
 
 
+def _locate_midpoints(
+    traces: HoleTraces, ids: np.ndarray, middle: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Midpoint coordinates and directions. A composite of samples that go deeper than
+    the stated hole depth has its midpoint past the end of the trace: it is located on
+    the straight continuation of the hole (direction at the end), with a warning, rather
+    than left without coordinates (the estimation refuses such samples)."""
+    xyz, direction = traces.xyz_at(ids, middle)
+    end = pd.Series(traces.max_depth, index=traces.hole_ids).reindex(ids).to_numpy(np.float64)
+    with np.errstate(invalid="ignore"):
+        past = ~np.isfinite(xyz).all(axis=1) & (middle > end)
+    if past.any():
+        xyz, direction = xyz.copy(), direction.copy()
+        end_xyz, end_dir = traces.xyz_at(ids[past], end[past])
+        over = middle[past] - end[past]
+        xyz[past] = end_xyz + over[:, None] * end_dir
+        direction[past] = end_dir
+        holes = sorted({str(h) for h in ids[past]})
+        warnings.warn(
+            f"{int(past.sum())} composite(s) in {len(holes)} hole(s) lie below the stated "
+            f"hole depth (by up to {float(over.max()):g}; {', '.join(holes[:6])}"
+            f"{' ...' if len(holes) > 6 else ''}): located on the straight continuation "
+            "of the hole. Check the hole depth of the collar table",
+            stacklevel=3,
+        )
+    return xyz, direction
+
+
 # --------------------------------------------------------------------------------------
 # bench levels on the desurveyed path
 # --------------------------------------------------------------------------------------
@@ -666,7 +694,7 @@ def composite(
     comp_ids = hole_ids[comp_hole[keep]]
     middle = 0.5 * (comp_from[keep] + comp_to[keep])
     if traces is not None and keep.any():
-        xyz, direction = traces.xyz_at(comp_ids, middle)
+        xyz, direction = _locate_midpoints(traces, comp_ids, middle)
     else:
         xyz = direction = np.full((int(keep.sum()), 3), np.nan)
     out: dict[str, object] = {
