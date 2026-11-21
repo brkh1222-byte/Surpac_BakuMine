@@ -844,7 +844,9 @@ def flag_database(
         if save_as == table:
             raise ValueError("save the intervals under another name than the assay table")
         if save_as in database.intervals and not overwrite:
-            raise ValueError(f"the database already has a table {save_as!r} (use overwrite)")
+            raise ValueError(
+                f"the database already has a table {save_as!r} (--overwrite replaces it)"
+            )
     traces = database.desurvey(method="minimum_curvature") if params.true_thickness else None
     result = mineralised_intervals(database.intervals[table], grade, params, traces=traces)
     if save_as is not None:
