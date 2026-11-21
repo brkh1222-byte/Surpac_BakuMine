@@ -189,6 +189,24 @@ Use the `frontend-design` skill for the UI and `dataviz` for colour ramps and le
 
 ---
 
+### Phase 8 — Proposed after the Surpac comparison research (2026-11-21) · NOT started, awaiting the owner's go
+
+From a web review of public Surpac material (course catalogues, tutorials, the 1996 "Appendix D - File Formats"). Tasks marked *(rule 7)* need the scope rule in CLAUDE.md relaxed first.
+
+- [ ] **P8.T1 Surpac `.dtm` I/O to the published format.** The 1996 appendix (https://www.cse.unr.edu/~fredh/papers/working/vr-mining/string.html) contradicts our provisional reader/writer: vertex numbers count the null (separator) records, line 1 is `<name>.str,<checksum>;...`, trisolation flags include `direction=solid`, no zero record before `END`. *Accept:* a hand-written fixture following the appendix's box example (not copied verbatim) reads to a valid closed solid of the right volume; multi-segment solids round-trip.
+- [ ] **P8.T2 Domain statistics and top-cut analysis** *(rule 7)*. Histogram, log-probability, CV, mean and CV against the cap, per domain. *Accept:* numbers match numpy/scipy on the synthetic deposit.
+- [ ] **P8.T3 Interactive variogram fitting.** Downhole + three directional experimental variograms with a model the user adjusts; auto-fit is only the seed. *Accept:* fitted model reproduces the synthetic deposit's known variogram within tolerance.
+- [ ] **P8.T4 Swath and grade-tonnage charts** in the report panel *(rule 7 for the charts; the tables exist)*.
+- [ ] **P8.T5 Kriging neighbourhood analysis.** Slope of regression, kriging efficiency, negative weights against min/max samples and discretisation.
+- [ ] **P8.T6 Section plot export (PDF/SVG)** *(rule 7)*: holes, assays, outlines, blocks, title block.
+- [ ] **P8.T7 Solid / DTM booleans.** Clip a solid to topography, intersect and outersect domains. *Accept:* volumes against trimesh/analytic cases.
+- [ ] **P8.T8 Search ellipsoid preview in 3D.**
+- [ ] **P8.T9 Indicator kriging** for skewed grades.
+- [ ] **P8.T10 Solids from sections:** ring holes, one-to-many splits, grade of a digitised segment.
+- [ ] **P8.T11 Trend surface to dynamic-anisotropy attributes** (trend DTM -> dip / dip direction per block).
+- [ ] **P8.T12 Retest on public data with a wireframe and a published result:** the Babbitt domain wireframe (`Mpz.stl`, pygslib repo, MIT) and the tutorial's published means; candidates not yet reachable: Northern Quarries iron (Tasmania MRT), Wolfram Camp (Queensland open data).
+- [ ] **P8.T13 Mineralised shell at a geological boundary.** On the real gold project the report grade is reproduced by a shell boundary below the reporting cut-off, not by the reporting cut-off applied per hole: let the shell cut-off differ from the reporting cut-off in the workflow panels, and add class rules by drill spacing as national reports state them.
+
 ## 5. Dependency map
 
 ```
