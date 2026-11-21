@@ -221,6 +221,32 @@ def test_mesh_import_endpoint_cli_python(env, tmp_path, capsys):
     assert kinds[result["id"]] == "solid" and kinds[surface["id"]] == "dtm"
     assert joblog.jobs(folder)[-1]["operation"] == "import_mesh"
 
+    # an STL in feet: a tetrahedron with 10 ft legs, scaled to metres (analytic volume)
+    corners = {"o": "0 0 0", "e": "10 0 0", "n": "0 10 0", "u": "0 0 10"}
+    facets = ["one", "oeu", "oun", "enu"]  # counter-clockwise seen from outside
+    text = "solid t\n" + "".join(
+        "facet normal 0 0 0\nouter loop\n"
+        + "".join(f"vertex {corners[c]}\n" for c in f)
+        + "endloop\nendfacet\n"
+        for f in facets
+    ) + "endsolid t\n"  # fmt: skip
+    (base / "feet.stl").write_text(text)
+    feet = upload(client, base / "feet.stl")
+    assert feet["files"][0]["roles"] == ["mesh"] and feet["files"][0]["n_faces"] == 4
+    r = client.post(f"{OPS}/meshes/import", json={"upload": feet["token"], "scale": 0.3048})
+    assert r.status_code == 200, r.text
+    scaled = r.json()
+    assert scaled["kind"] == "solid" and scaled["valid"] and scaled["scale"] == 0.3048
+    assert scaled["volume"] == pytest.approx(1000.0 / 6.0 * 0.3048**3, rel=1e-12)
+    assert joblog.jobs(folder)[-1]["replay"]["scale"] == 0.3048
+    assert main(["surface", "import", str(base / "feet.stl"), "--scale", "0.3048",
+                 "--geometry-dir", str(tmp_path), "--name", "feet"]) == 0  # fmt: skip
+    assert "(coordinates x 0.3048)" in capsys.readouterr().out
+    same_mesh(npy_mesh(tmp_path, "feet"), project_mesh(folder, scaled["id"]))
+    for wrong in (0, -1, "big", True):
+        bad = client.post(f"{OPS}/meshes/import", json={"upload": feet["token"], "scale": wrong})
+        assert bad.status_code == 400 and "scale" in bad.json()["detail"], wrong
+
     # a closed solid cannot be imported as a DTM; unknown files are refused at upload
     bad = client.post(f"{OPS}/meshes/import", json={"upload": solid["token"], "kind": "dtm"})
     assert bad.status_code == 400 and "not a surface" in bad.json()["detail"]

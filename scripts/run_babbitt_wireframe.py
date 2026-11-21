@@ -48,9 +48,11 @@ What differs here, by construction (measured in ``metrics.json`` ``diagnostics``
 * Composite midpoints: ours is the midpoint of the composite's actual length, PyGSLIB's the
   midpoint of the nominal 10 ft interval (they differ for the last composite of a hole).
   Desurvey methods may differ; 348 of 399 holes are vertical.
-* The fraction of a block inside the wireframe (``d1``) has no CLI command yet: it is computed
-  with ``bakumine.core.blockmodel.partial`` (column method) and stored as an attribute, as is
-  the inside flag of the composites (``points_in_solid``).
+* The fraction of a block inside the wireframe (``d1``) is computed here with
+  ``bakumine.core.blockmodel.partial`` (column method) and the inside flag of the composites
+  with ``points_in_solid``, because the repaired wireframe exists only in memory. The CLI
+  commands for a solid file are ``bakumine blockmodel fraction`` and ``bakumine composite
+  --flag-solid`` (added after this run was written).
 
 Density 2.7 t/m3 is the tutorial's figure (its tonnage formula; it prints no tonnage).
 """

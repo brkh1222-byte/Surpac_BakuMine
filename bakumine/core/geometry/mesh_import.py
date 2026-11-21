@@ -25,23 +25,37 @@ __all__ = ["KINDS", "import_mesh"]
 KINDS = ("auto", "dtm", "solid")
 
 
-def import_mesh(path: str | Path, kind: str = "auto") -> tuple[Mesh, dict[str, Any]]:
+def import_mesh(
+    path: str | Path, kind: str = "auto", scale: float = 1.0
+) -> tuple[Mesh, dict[str, Any]]:
     """The mesh of ``path`` ready to be stored, and a summary of it.
 
     The summary has ``kind`` (``dtm`` or ``solid``), ``n_vertices``, ``n_faces``,
     ``closed``, ``bounds`` and for a solid ``valid``, ``outward``, ``volume``, ``issues``.
+
+    ``scale`` multiplies every coordinate before anything is checked or measured: 0.3048
+    for a file in feet (the project is in metres). It is in the summary when it is not 1.
     """
+    import math
+
     from bakumine.core.geometry.dtm import DTM
     from bakumine.core.io.files import read_mesh
 
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise ValueError("scale must be a number")
+    scale = float(scale)
+    if not (math.isfinite(scale) and scale > 0.0):
+        raise ValueError(f"scale must be a positive number, got {scale!r}")
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"{path} not found")
     mesh = read_mesh(path)
     if mesh.n_faces == 0:
         raise ValueError(f"{path.name} holds no triangles")
+    if scale != 1.0:
+        mesh = Mesh(mesh.vertices * scale, mesh.faces, check=False)
     mesh = mesh.weld(0.0, remove_collapsed=True).remove_unreferenced_vertices()
     if mesh.n_faces == 0:
         raise ValueError(f"{path.name} holds only degenerate triangles")
@@ -77,4 +91,6 @@ def import_mesh(path: str | Path, kind: str = "auto") -> tuple[Mesh, dict[str, A
         n_faces=int(mesh.n_faces),
         bounds=[[float(v) for v in row] for row in mesh.bounds],
     )
+    if scale != 1.0:
+        info["scale"] = scale
     return mesh, info

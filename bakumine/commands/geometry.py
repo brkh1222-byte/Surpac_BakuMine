@@ -233,6 +233,9 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--kind", default="auto", choices=("auto", "dtm", "solid"),
                         help="auto: solid when the mesh is closed, else dtm")  # fmt: skip
+    parser.add_argument("--scale", type=float, default=1.0, metavar="FACTOR",
+                        help="multiply every coordinate by this before the mesh is checked "
+                        "(0.3048 for a file in feet; default 1)")  # fmt: skip
     _add_outputs(parser, "mesh")
     parser.set_defaults(func=_guarded(run_import))
 
@@ -240,12 +243,14 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
 def run_import(args: argparse.Namespace) -> int:
     from bakumine.core.geometry.mesh_import import import_mesh
 
-    mesh, info = import_mesh(args.file, args.kind)
+    mesh, info = import_mesh(args.file, args.kind, args.scale)
     line = f"{info['kind']}: {info['n_vertices']} vertices, {info['n_faces']} triangles"
     if info["kind"] == "solid":
         line += f", {'valid' if info['valid'] else 'NOT VALID'}"
         if info["volume"] is not None:
             line += f", volume {info['volume']:.1f} m3"
+    if "scale" in info:
+        line += f" (coordinates x {info['scale']:g})"
     print(line)
     for issue in info.get("issues") or []:
         print(f"  issue: {issue}")
@@ -330,7 +335,10 @@ def _replay_surface(e: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _replay_import(e: dict[str, Any]) -> list[dict[str, Any]]:
     replay = e.get("replay") or {}
-    return _finish(e, ["surface", "import", _where(replay), "--kind", replay["kind"]])
+    argv = ["surface", "import", _where(replay), "--kind", replay["kind"]]
+    if replay.get("scale") not in (None, 1, 1.0):
+        argv += ["--scale", repr(float(replay["scale"]))]
+    return _finish(e, argv)
 
 
 #: job-log operation -> mapper to CLI steps (merged into ``replay._MAPPERS``)

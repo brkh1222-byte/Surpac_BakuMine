@@ -28,7 +28,7 @@ from bakumine.core.project import Project, ProjectObject
 GEOMETRY_UPLOADS = "geometry_uploads"
 POINT_SUFFIXES = (".csv", ".txt", ".xlsx", ".xlsm")
 STRING_SUFFIXES = (".str", ".dxf")
-MESH_SUFFIXES = (".dtm", ".dxf", ".obj", ".ply")
+MESH_SUFFIXES = (".dtm", ".dxf", ".obj", ".ply", ".stl")
 _TOKEN = re.compile(r"[0-9a-f]{12}\Z")
 _ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError, OverflowError)
 
@@ -46,7 +46,7 @@ def _safe_name(filename: str) -> str:
     }:
         raise OperationError(
             f"{filename!r}: use a CSV / XLSX table of points, a .str or .dxf string file, "
-            "or a .dxf / .obj / .ply / .dtm mesh"
+            "or a .dxf / .obj / .ply / .stl / .dtm mesh"
         )
     return name
 
@@ -317,7 +317,8 @@ def _surface(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dic
 
 
 def import_mesh(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
-    """``bakumine surface import``: an uploaded DXF / OBJ / PLY / .dtm as a DTM or solid."""
+    """``bakumine surface import``: an uploaded DXF / OBJ / PLY / STL / .dtm as a DTM or
+    solid; ``scale`` multiplies the coordinates (0.3048 for a file in feet)."""
     return _record(folder, "import_mesh", request, lambda rec: _import_mesh(folder, request, rec))
 
 
@@ -329,11 +330,14 @@ def _import_mesh(folder: Path, request: dict[str, Any], rec: joblog.Recorder) ->
     sources = _Sources(folder, rec)
     path, relative = sources.upload(request, MESH_SUFFIXES)
     try:
-        mesh, info = read(path, str(request.get("kind") or "auto"))
+        scale = request.get("scale")
+        mesh, info = read(path, str(request.get("kind") or "auto"), 1.0 if scale is None else scale)
     except _ERRORS as exc:
         raise _fail(exc) from None
     name = _name(request, path.stem)
     rec.entry["replay"] = {"file": relative, "kind": info["kind"]}
+    if "scale" in info:
+        rec.entry["replay"]["scale"] = info["scale"]
     obj = _add_mesh(folder, info["kind"], name, mesh, f"imported from {path.name}")
     rec.entry["outputs"] = [obj.to_dict()]
     return {"id": obj.id, "name": obj.name, "source": path.name, **info}

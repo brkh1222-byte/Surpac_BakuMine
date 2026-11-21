@@ -162,6 +162,7 @@ function FromPoints() {
 function ImportFile() {
   const [upload, setUpload] = useState<GeometryUpload | null>(null)
   const [kind, setKind] = useState('auto')
+  const [scale, setScale] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -186,12 +187,14 @@ function ImportFile() {
   }
 
   const run = async () => {
-    if (!upload || !mesh) return setError(needs ? `Also choose ${needs.needs} (the string file of the .dtm)` : 'Choose a .dxf, .obj, .ply or .dtm file')
+    if (!upload || !mesh) return setError(needs ? `Also choose ${needs.needs} (the string file of the .dtm)` : 'Choose a .dxf, .obj, .ply, .stl or .dtm file')
+    const factor = scale.trim() === '' ? undefined : Number(scale.trim().replace(',', '.'))
+    if (factor !== undefined && !(Number.isFinite(factor) && factor > 0)) return setError('Scale: a positive number (0.3048 for a file in feet)')
     setBusy(true)
     setError(null)
     setResult(null)
     try {
-      const r = await geometryApi.importMesh({ upload: upload.token, file: mesh.file, kind, name: name.trim() || undefined })
+      const r = await geometryApi.importMesh({ upload: upload.token, file: mesh.file, kind, name: name.trim() || undefined, ...(factor !== undefined && factor !== 1 ? { scale: factor } : {}) })
       let text = `Saved “${r.name}” as a ${r.kind === 'dtm' ? 'surface (DTM)' : 'solid'}: ${fmt(r.n_faces, 0)} triangles.`
       if (r.kind === 'solid') text += r.valid ? ` Valid solid${r.volume != null ? `, volume ${fmt(r.volume, 0)} m³` : ''}.` : ` Not a valid solid: ${(r.issues ?? []).join('; ') || 'see validation'}.`
       setResult(text)
@@ -209,7 +212,7 @@ function ImportFile() {
       <h4 className="ops-heading">Import a surface or solid file</h4>
       <label className="control">
         <span>File</span>
-        <input type="file" multiple accept=".dxf,.obj,.ply,.dtm,.str" data-testid="mesh-import-file" title="DXF, OBJ, PLY, or a Surpac text .dtm together with its .str" onChange={(e) => { void addFiles(e.target.files); e.target.value = '' }} />
+        <input type="file" multiple accept=".dxf,.obj,.ply,.stl,.dtm,.str" data-testid="mesh-import-file" title="DXF, OBJ, PLY, STL, or a Surpac text .dtm together with its .str" onChange={(e) => { void addFiles(e.target.files); e.target.value = '' }} />
       </label>
       {upload && (
         <p className="sidebar-note" data-testid="mesh-import-info">
@@ -217,6 +220,7 @@ function ImportFile() {
         </p>
       )}
       <Select label="As" id="mesh-import-kind" value={kind} onChange={setKind} options={[{ value: 'auto', label: 'automatic (closed = solid)' }, { value: 'dtm', label: 'surface (DTM)' }, { value: 'solid', label: 'solid' }]} />
+      <Text label="Scale" id="mesh-import-scale" value={scale} onChange={setScale} placeholder="1 (0.3048 for a file in feet)" />
       <Text label="Name" id="mesh-import-name" value={name} onChange={setName} placeholder="(file name)" />
       <div className="control">
         <button type="button" data-testid="mesh-import-run" disabled={busy || !upload} onClick={() => void run()}>{busy ? 'Importing…' : 'Import'}</button>

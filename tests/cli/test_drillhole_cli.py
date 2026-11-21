@@ -188,6 +188,56 @@ def test_composite_options_and_capping(tmp_path, capsys):
     )
 
 
+def test_composites_flagged_by_solids(tmp_path, capsys):
+    """--flag-solid: the code of the first solid that holds the composite midpoint, checked
+    against the box limits directly; the rest stay missing."""
+    import numpy as np
+    import pandas as pd
+
+    from bakumine.core.geometry.primitives import cube
+    from bakumine.core.io.files import write_mesh
+
+    db = tmp_path / "db"
+    assert import_synth(capsys, db, "--auto")[0] == 0
+    plain = pd.read_parquet(_composites(capsys, db, tmp_path / "plain"))
+    centre = plain[["x", "y", "z"]].median().to_numpy()
+    write_mesh(tmp_path / "small.obj", cube(120.0, center=centre))
+    write_mesh(tmp_path / "large.obj", cube(300.0, center=centre))
+    code, out, err = run(capsys, "composite", db, "--length", 2, "--out", tmp_path / "flagged",
+                         "--flag-solid", f"{tmp_path / 'small.obj'}=CORE",
+                         "--flag-solid", f"{tmp_path / 'large.obj'}=HALO",
+                         "--flag-column", "zone")  # fmt: skip
+    assert code == 0, err
+    flagged = pd.read_parquet(tmp_path / "flagged.parquet")
+    assert len(flagged) == len(plain)
+    offset = np.abs(flagged[["x", "y", "z"]].to_numpy() - centre).max(axis=1)
+    want = np.where(offset < 60.0, "CORE", np.where(offset < 150.0, "HALO", None))
+    assert (offset != 60.0).all() and (offset != 150.0).all()  # nothing exactly on a face
+    assert flagged["zone"].astype(object).fillna("-").tolist() == [w or "-" for w in want]
+    n = {c: int((want == c).sum()) for c in ("CORE", "HALO")}
+    assert n["CORE"] > 0 and n["HALO"] > 0 and (flagged["zone"].isna()).any()
+    assert f"zone = CORE: {n['CORE']} composites inside small.obj" in out
+    assert f"zone = HALO: {n['HALO']} composites inside large.obj ({n['CORE']} already" in out
+    assert f"zone missing: {int(flagged['zone'].isna().sum())} composites in no solid" in out
+    # refused: bad spelling, a missing file, an open mesh, a column that is there already
+    box = cube(10.0)
+    write_mesh(tmp_path / "open.obj", box.submesh(np.arange(box.n_faces - 2)))
+    for flags, message in (
+        (["--flag-solid", "small.obj"], "FILE=CODE"),
+        (["--flag-solid", f"{tmp_path / 'none.obj'}=A"], "not found"),
+        (["--flag-solid", f"{tmp_path / 'open.obj'}=A"], "not a closed solid"),
+        (["--flag-solid", f"{tmp_path / 'small.obj'}=A", "--flag-column", "au"], "already a"),
+    ):
+        code, _, err = run(capsys, "composite", db, "--length", 2, "--out", tmp_path / "x", *flags)
+        assert code == 2 and message in err, (flags, err)
+
+
+def _composites(capsys, db, out):
+    code, _, err = run(capsys, "composite", db, "--length", 2, "--out", out)
+    assert code == 0, err
+    return out.with_suffix(".parquet")
+
+
 def test_end_to_end_on_babbitt_raw_files(tmp_path, capsys):
     """Raw public files, column maps guessed from the headers, feet, positive-down dips."""
     db = tmp_path / "babbitt"

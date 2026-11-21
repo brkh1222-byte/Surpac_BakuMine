@@ -19,6 +19,9 @@ HELP_EXPORT = "Export blocks to a block model CSV (centroid, size, attributes pe
 HELP_IMPORT = "Import a block model CSV as a new model, or into an existing one"
 HELP_CREATE = "Create an empty block model from origin / size / shape, or fitted to geometry"
 HELP_CODE = "Code a block model with assignment steps from a JSON file (optional sub-blocking)"
+HELP_FRACTION = (
+    "Store the fraction of each block that lies inside a solid (for partial-block reports)"
+)
 HELP_REPORT = "Report volume, tonnes, grade and metal, grouped by attribute, bench and cut-off"
 
 Handler = Callable[[argparse.Namespace], int]
@@ -354,6 +357,67 @@ def run_code(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------------- fraction
+
+
+def configure_fraction(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("model", help="block model folder")
+    parser.add_argument("--solid", required=True, metavar="FILE",
+                        help="closed mesh: .obj, .ply, .dxf, .stl or Surpac text .dtm")  # fmt: skip
+    parser.add_argument("--attribute", required=True, metavar="NAME",
+                        help="float attribute to write (created if missing): 0 outside, "
+                             "1 inside, the fraction for the blocks the solid cuts")  # fmt: skip
+    parser.add_argument("--side", choices=("inside", "outside"), default="inside",
+                        help="which side of the solid is measured (default: inside)")  # fmt: skip
+    parser.add_argument("--method", choices=("column", "lattice"), default="column",
+                        help="column: exact along vertical lines through each cut block "
+                             "(default); lattice: count sample points")  # fmt: skip
+    parser.add_argument("--samples", type=int, default=5, metavar="N",
+                        help="lines (column) or points (lattice) per block axis (default 5)")
+    parser.add_argument("--percent", action="store_true",
+                        help="store 0..100 instead of 0..1 (the report's --partial wants 0..1)")
+    parser.add_argument("--out", help="model folder to write (default: update MODEL in place)")
+    parser.set_defaults(func=_guarded(run_fraction))
+
+
+def run_fraction(args: argparse.Namespace) -> int:
+    from bakumine.core.blockmodel.constraints import SolidConstraint
+    from bakumine.core.blockmodel.partial import assign_partial
+    from bakumine.core.blockmodel.storage import load_model, save_model
+    from bakumine.core.io.files import read_mesh
+
+    if args.samples < 1:
+        raise CommandError("--samples must be 1 or more")
+    solid = Path(args.solid)
+    if not solid.is_file():
+        raise CommandError(f"{solid} not found")
+    mesh = read_mesh(solid).weld(0.0, remove_collapsed=True).remove_unreferenced_vertices()
+    if not mesh.is_closed:
+        raise CommandError(
+            f"{solid.name} is not a closed solid: inside / outside is not defined for it "
+            "(`bakumine surface import` lists what is wrong)"
+        )
+    model = load_model(args.model)
+    fraction = assign_partial(
+        model, args.attribute, SolidConstraint(mesh, side=args.side),
+        scale=100.0 if args.percent else 1.0, samples=args.samples, method=args.method,
+    )  # fmt: skip
+    volumes = model.volumes()
+    inside = float((fraction * volumes).sum())
+    cut = int(((fraction > 0.0) & (fraction < 1.0)).sum())
+    print(
+        f"{args.attribute}: {int((fraction >= 1.0).sum())} blocks entirely {args.side}, "
+        f"{cut} cut by the solid, {int((fraction <= 0.0).sum())} entirely on the other side"
+    )
+    line = f"volume {args.side} the solid within the model: {inside:.1f} m3"
+    if args.side == "inside":
+        line += f" (the solid itself: {abs(float(mesh.volume)):.1f} m3)"
+    print(line)
+    header = save_model(model, args.out or args.model)
+    _wrote(header.path, f"{header.n_blocks} blocks, {len(header.attributes)} attributes")
+    return 0
+
+
 # --------------------------------------------------------------------- report
 
 
@@ -435,6 +499,7 @@ SUBCOMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None]]] = 
     "import-csv": (HELP_IMPORT, configure_import),
     "create": (HELP_CREATE, configure_create),
     "code": (HELP_CODE, configure_code),
+    "fraction": (HELP_FRACTION, configure_fraction),
     "report": (HELP_REPORT, configure_report),
 }
 

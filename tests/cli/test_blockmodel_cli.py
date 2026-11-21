@@ -201,3 +201,44 @@ def test_report_groups_cutoffs_benches_and_where(saved, capsys, tmp_path):
     code, out, err = run(capsys, "blockmodel", "report", path, "--cutoffs", "a,b",
                          "--density", 2.7)  # fmt: skip
     assert code == 2 and "--cutoffs expects numbers" in err
+
+
+def test_fraction_of_blocks_inside_a_solid(tmp_path, capsys):
+    """`blockmodel fraction` against the analytic volume of a box that cuts blocks, and the
+    report weighted by it; a mesh that is not closed is refused."""
+    from bakumine.core.geometry.primitives import cube
+    from bakumine.core.io.files import write_mesh
+
+    model_dir = tmp_path / "model"
+    save_model(BlockModel(BlockModelDefinition((0.0, 0.0, 0.0), (10.0, 10.0, 10.0), (4, 4, 4))),
+               model_dir)  # fmt: skip
+    # 8 .. 32 on every axis: cuts blocks, between the 5 sample lines of a block (1, 3, .. 9),
+    # so that the sampled fraction is the exact one
+    solid = cube(24.0, center=(20.0, 20.0, 20.0))
+    write_mesh(tmp_path / "box.obj", solid)
+    code, out, _ = run(capsys, "blockmodel", "fraction", model_dir, "--solid",
+                       tmp_path / "box.obj", "--attribute", "in_box")  # fmt: skip
+    assert code == 0, out
+    assert "8 blocks entirely inside, 56 cut by the solid, 0 entirely on the other side" in out
+    model = load_model(model_dir)
+    fraction = model["in_box"]
+    assert float((fraction * model.volumes()).sum()) == pytest.approx(24.0**3, rel=1e-9)
+    assert fraction.min() > 0.0 and fraction.max() == 1.0
+    # corner block 0..10: the box takes 2 m of each axis
+    assert fraction[0] == pytest.approx((2.0 / 10.0) ** 3, rel=1e-9)
+    code, out, _ = run(capsys, "blockmodel", "report", model_dir, "--partial", "in_box",
+                       "--density", 2.0)  # fmt: skip
+    assert code == 0 and f"{24**3 * 2:,.0f}" in out  # tonnes of the box
+    # the other side, as percent, into another folder
+    code, out, _ = run(capsys, "blockmodel", "fraction", model_dir, "--solid", tmp_path / "box.obj",
+                       "--attribute", "out_pct", "--side", "outside", "--percent",
+                       "--method", "lattice", "--samples", 5, "--out", tmp_path / "m2")  # fmt: skip
+    assert code == 0, out
+    other = load_model(tmp_path / "m2")
+    np.testing.assert_allclose(other["out_pct"] + 100.0 * fraction, 100.0, atol=1e-9)
+    assert "out_pct" not in load_model(model_dir)
+    # an open mesh has no inside
+    write_mesh(tmp_path / "open.obj", solid.submesh(np.arange(solid.n_faces - 2)))
+    code, _, err = run(capsys, "blockmodel", "fraction", model_dir, "--solid",
+                       tmp_path / "open.obj", "--attribute", "x")  # fmt: skip
+    assert code == 2 and "not a closed solid" in err

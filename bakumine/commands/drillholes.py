@@ -13,6 +13,7 @@ import sys
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 HELP_IMPORT = "Import collar/survey/interval tables (CSV/XLSX) into a drillhole database folder"
 HELP_VALIDATE = "Check a drillhole database and write the findings"
@@ -1123,6 +1124,22 @@ def configure_composite(parser: argparse.ArgumentParser) -> None:
         "--method", choices=METHODS, default="minimum_curvature", help="desurvey method"
     )
     parser.add_argument(
+        "--flag-solid",
+        action="append",
+        default=[],
+        metavar="FILE=CODE",
+        help="write CODE into the --flag-column of the composites whose midpoint is inside "
+        "this closed mesh (.obj, .ply, .dxf, .stl, Surpac text .dtm). Repeatable: the first "
+        "solid that holds a composite gives its code; the others stay missing. For the "
+        "sample filter of an estimation (column equals CODE)",
+    )
+    parser.add_argument(
+        "--flag-column",
+        default="solid",
+        metavar="NAME",
+        help="column written by --flag-solid (default: solid)",
+    )
+    parser.add_argument(
         "--out", help="output path without extension (default: <database>/composites_<table>)"
     )
     parser.set_defaults(func=_guarded(run_composite))
@@ -1167,6 +1184,59 @@ def _parse_fill(items: list[str] | None) -> float | dict[str, float] | None:
             raise CommandError("--fill-missing expects one VALUE, or ATTR=VALUE for each attribute")
         fill[name] = _number(value, "--fill-missing")
     return fill
+
+
+def _flag_solids(out: Any, items: list[str], column: str) -> list[str]:
+    """--flag-solid FILE=CODE: code of the first solid holding each composite midpoint,
+    written into ``out[column]`` in place. Returns the lines to print."""
+    import numpy as np
+    import pandas as pd
+
+    from bakumine.core.geometry.inside import points_in_solid
+    from bakumine.core.io.files import read_mesh
+
+    if not items:
+        return []
+    if column in out.columns:
+        raise CommandError(
+            f"--flag-column {column!r} is already a column of the composites; choose another"
+        )
+    solids = []
+    for item in items:
+        file, sep, code = item.rpartition("=")
+        if not sep or not file.strip() or not code.strip():
+            raise CommandError(f"--flag-solid expects FILE=CODE, got {item!r}")
+        path = Path(file.strip())
+        if not path.is_file():
+            raise CommandError(f"{path} not found")
+        mesh = read_mesh(path).weld(0.0, remove_collapsed=True).remove_unreferenced_vertices()
+        if not mesh.is_closed:
+            raise CommandError(
+                f"{path.name} is not a closed solid: inside / outside is not defined for it"
+            )
+        solids.append((path.name, code.strip(), mesh))
+    xyz = out[["x", "y", "z"]].to_numpy(dtype=np.float64)
+    located = np.isfinite(xyz).all(axis=1)
+    codes = np.full(len(out), None, dtype=object)
+    lines = []
+    for name, code, mesh in solids:
+        inside = np.zeros(len(out), dtype=bool)
+        if located.any():
+            inside[located] = points_in_solid(mesh, xyz[located])
+        new = inside & pd.isna(codes)
+        codes[new] = code
+        lines.append(
+            f"{column} = {code}: {int(new.sum())} composites inside {name}"
+            + (f" ({int((inside & ~new).sum())} already in an earlier solid)"
+               if (inside & ~new).any() else "")  # fmt: skip
+        )
+    out[column] = pd.Series(codes, index=out.index, dtype=object)
+    rest = int(pd.isna(codes).sum())
+    lines.append(
+        f"{column} missing: {rest} composites in no solid"
+        + (f" ({int((~located).sum())} of them without coordinates)" if (~located).any() else "")
+    )
+    return lines
 
 
 def run_composite(args: argparse.Namespace) -> int:
@@ -1249,6 +1319,7 @@ def run_composite(args: argparse.Namespace) -> int:
             drop_empty=not args.keep_empty,
             on_invalid=on_invalid,
         )
+    flagged = _flag_solids(out, args.flag_solid, args.flag_column)
     base = Path(args.out) if args.out else Path(args.database) / f"composites_{args.table}"
     _write_table(out, base, ("parquet", "csv"), f"{len(out)} composites")
     if cap_report is not None:
@@ -1276,6 +1347,8 @@ def run_composite(args: argparse.Namespace) -> int:
         f"{out['length'].max():.3f}, total {out['length'].sum():.1f}"
     )
     print(f"midpoints located on a trace: {int(out['x'].notna().sum())} of {len(out)}")
+    for line in flagged:
+        print(line)
     if "domain" in out.columns:
         counts = out["domain"].fillna("(none)").value_counts()
         print("domains: " + ", ".join(f"{code} x {n}" for code, n in counts.items()))
