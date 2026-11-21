@@ -11,9 +11,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { ofKind, opsApi, useOps, type JobState } from '../../ops/api'
-import { MAX_STRUCTURES, STRUCTURE_TYPES, buildEstimateSpec, type EstimateForm, type PassForm, type StructureForm } from '../../ops/builders'
+import { MAX_STRUCTURES, OVERWRITE_LABEL, STRUCTURE_TYPES, buildEstimateSpec, jobStatusText, type EstimateForm, type PassForm, type StructureForm } from '../../ops/builders'
 import { PlaneHint } from './ImplicitSolidPanel'
-import { Error, Panel, Select, Text, message, opts } from './common'
+import { Check, Error, Panel, Select, Text, message, opts, useClearOnUndo } from './common'
 
 const pass = (name: string, factor: string, min: string): PassForm => ({ name, radiusFactor: factor, minSamples: min, maxSamples: '16', maxPerHole: '' })
 const structure = (sill: string): StructureForm => ({ type: 'spherical', sill, ranges: '', orientation: 'search', angles: '', dip: '', dipAzimuth: '', pitch: '' })
@@ -35,6 +35,7 @@ const INITIAL: EstimateForm = {
   sampleColumn: '',
   sampleValues: '',
   passes: [pass('pass 1', '1', '1')],
+  overwrite: false,
 }
 
 export function EstimatePanel() {
@@ -56,6 +57,10 @@ export function EstimatePanel() {
   const patchStructure = (i: number, p: Partial<StructureForm>) => patch({ structures: form.structures.map((x, j) => (j === i ? { ...x, ...p } : x)) })
   const patchPass = (i: number, p: Partial<PassForm>) => patch({ passes: form.passes.map((x, j) => (j === i ? { ...x, ...p } : x)) })
   const running = job?.status === 'queued' || job?.status === 'running'
+  // an undo reverted the model this summary describes; a running job keeps its progress
+  useClearOnUndo(() => {
+    if (!running) setJob(null)
+  })
 
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
@@ -168,6 +173,7 @@ export function EstimatePanel() {
       ))}
       <div className="control"><button type="button" data-testid="estimate-add-pass" onClick={() => patch({ passes: [...form.passes, pass(`pass ${form.passes.length + 1}`, String(form.passes.length + 1), '1')] })}>Add pass</button></div>
 
+      <Check label={OVERWRITE_LABEL} id="estimate-overwrite" checked={form.overwrite ?? false} onChange={(v) => patch({ overwrite: v })} />
       <div className="control">
         <button type="button" data-testid="estimate-run" disabled={running || !model || !comp} onClick={() => void run()}>{running ? 'Running…' : 'Run estimation'}</button>
         {running && <button type="button" data-testid="estimate-cancel" onClick={() => void cancel()}>Cancel</button>}
@@ -176,7 +182,7 @@ export function EstimatePanel() {
       {job && (
         <div data-testid="estimate-job" data-status={job.status}>
           <progress max={1} value={job.progress} data-testid="estimate-progress" />
-          <p className="sidebar-note">{job.status}{job.message ? `: ${job.message}` : ''}</p>
+          <p className="sidebar-note" data-testid="estimate-status">{jobStatusText(job)}</p>
           {job.error && <p className="sidebar-error" role="alert" data-testid="estimate-job-error">{job.error}</p>}
           {job.summary && !job.summary.cancelled && (
             <>

@@ -153,3 +153,24 @@ def test_replay_rebuilds_the_same_solids(env, tmp_path, capsys):
         replayed = Project.open(target).get(out["id"])
         assert (replayed.kind, replayed.path) == (out["kind"], out["path"])
         same_mesh(project_mesh(target, out["id"]), project_mesh(folder, out["id"]))
+
+
+@pytest.mark.parametrize(
+    ("extra", "text"),
+    [
+        ({"resolution": 1e-6}, "coarsen the resolution"),
+        ({"resolution": 1e-6, "max_extrapolation": 60}, "coarsen the resolution"),
+        ({"max_extrapolation": 1e9}, "max_extrapolation"),
+    ],
+)
+def test_implicit_solid_refuses_a_grid_that_cannot_be_meant(env, extra, text):
+    """Final review: these answered with numpy's "array is too big; arr.size * ..."."""
+    client, folder = env["client"], env["folder"]
+    before = len(Project.open(folder).list("solid"))
+    request = {"database": "drillholes", "table": "geology", "column": "rock", "codes": ["ORE"],
+               "anisotropy": "none", "name": "too fine"}  # fmt: skip
+    r = client.post(f"{OPS}/solids/implicit", json=request | extra)
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert text in detail and "arr.size" not in detail and "array is too big" not in detail
+    assert len(Project.open(folder).list("solid")) == before

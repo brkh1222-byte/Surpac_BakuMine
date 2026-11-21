@@ -22,6 +22,17 @@ export interface ConstraintForm {
   expression: string
 }
 
+/** Deepest sub-blocking of a new model (bakumine.core.blockmodel.definition.MAX_SUBBLOCK_DEPTH). */
+export const MAX_SUBBLOCK_DEPTH = 3
+
+/** The sub-block depth field: a whole number from 0 to MAX_SUBBLOCK_DEPTH ('' = 0), or a message. */
+export function subBlockDepth(text: string): number | string {
+  const t = text.trim()
+  const value = t === '' ? 0 : Number(t)
+  if (!Number.isInteger(value) || value < 0 || value > MAX_SUBBLOCK_DEPTH) return `Sub-block depth: a whole number from 0 to ${MAX_SUBBLOCK_DEPTH}`
+  return value
+}
+
 export const EMPTY_CONSTRAINT: ConstraintForm = { type: 'none', ref: '', side: '', outside: false, expression: '' }
 
 export interface StepForm {
@@ -154,6 +165,17 @@ export interface EstimateForm extends OrientationForm {
   sampleColumn: string
   sampleValues: string
   passes: PassForm[]
+  /** Estimate again the blocks that already have a value (default: they are kept). */
+  overwrite?: boolean
+}
+
+/** Label of the checkbox the server names when a run estimated nothing (operations.OVERWRITE_LABEL). */
+export const OVERWRITE_LABEL = 'Estimate again blocks that already have a value'
+
+/** Status line of a job: the status, and its message unless that only repeats the status. */
+export function jobStatusText(job: { status: string; message?: string | null }): string {
+  const text = (job.message ?? '').trim()
+  return text && text.toLowerCase() !== job.status.toLowerCase() ? `${job.status}: ${text}` : job.status
 }
 
 export function buildEstimateSpec(f: EstimateForm): Record<string, unknown> | string {
@@ -211,5 +233,6 @@ export function buildEstimateSpec(f: EstimateForm): Record<string, unknown> | st
   }
   if (passes.length === 0) return 'Add at least one pass'
   spec.passes = passes
+  if (f.overwrite) spec.overwrite = true
   return spec
 }

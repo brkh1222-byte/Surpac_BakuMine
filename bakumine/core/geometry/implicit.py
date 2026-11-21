@@ -90,6 +90,11 @@ __all__ = [
 ]
 
 KERNELS = ("linear", "cubic", "thin_plate")
+#: the grid is coarsened (with a warning) to stay under ``max_nodes``; a resolution that
+#: would have to be coarsened by more than this factor is refused instead
+MAX_COARSENING = 100.0
+#: ``max_extrapolation`` may be at most this many diagonals of the drillholes' extent
+MAX_EXTRAPOLATION_EXTENTS = 10.0
 _KERNEL_ID = {"linear": 0, "cubic": 1, "thin_plate": 2}
 _MIN_DEGREE = {"linear": 0, "cubic": 1, "thin_plate": 1}
 _SCIPY_KERNEL = {"linear": "linear", "cubic": "cubic", "thin_plate": "thin_plate_spline"}
@@ -1116,6 +1121,17 @@ def implicit_solid(
     # field ----------------------------------------------------------------
     if max_extrapolation is not None and not (max_extrapolation > 0):
         raise ValueError("max_extrapolation must be > 0")
+    if max_extrapolation is not None:
+        # a distance far beyond the drilling is a typo, and would only coarsen the grid
+        reach = float(np.linalg.norm(np.ptp(constraints.xyz, axis=0)))
+        limit = MAX_EXTRAPOLATION_EXTENTS * max(reach, constraints.sample_spacing)
+        if not max_extrapolation <= limit:
+            raise ValueError(
+                f"max_extrapolation {max_extrapolation:g} m is more than "
+                f"{MAX_EXTRAPOLATION_EXTENTS:g} times the extent of the drillholes "
+                f"({reach:.0f} m): give a distance of the order of the hole spacing, "
+                f"at most {limit:.0f} m"
+            )
     hole_points = None
     if max_extrapolation is not None:
         step = min(constraints.sample_spacing, max_extrapolation / 4.0)
@@ -1175,6 +1191,17 @@ def implicit_solid(
     lo = local.min(axis=0) - margin
     hi = local.max(axis=0) + margin
     spacing = resolution * stretch
+    # counted in floating point: a tiny resolution overflows the integer product
+    nodes = float(np.prod(np.ceil((hi - lo) / spacing) + 1.0))
+    if not nodes <= MAX_COARSENING**3 * max_nodes:
+        fits = resolution * (nodes / max_nodes) ** (1.0 / 3.0)
+        extent = " x ".join(f"{v:.0f}" for v in hi - lo)
+        raise ValueError(
+            f"resolution {resolution:g} m over a grid of {extent} m gives {nodes:.3g} "
+            f"nodes, more than {MAX_COARSENING:g} times too fine for the limit of "
+            f"{max_nodes:,} nodes: coarsen the resolution (about {fits:.2g} m fits) or "
+            "reduce max_extrapolation"
+        )
     shape = np.ceil((hi - lo) / spacing).astype(np.int64) + 1
     coarsened = 1.0
     if int(np.prod(shape)) > max_nodes:

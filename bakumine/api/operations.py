@@ -42,6 +42,23 @@ class BusyError(OperationError):
     """The model is being estimated (HTTP 409)."""
 
 
+#: longest display name of a project object
+MAX_NAME_LENGTH = 200
+
+
+def object_name(value: Any, default: str, limit: int = MAX_NAME_LENGTH) -> str:
+    """The ``name`` of a request: text of at most ``limit`` characters (``default`` when
+    it is left out or blank)."""
+    if value is None:
+        value = default
+    if not isinstance(value, str):
+        raise OperationError("name must be text")
+    name = value.strip() or default
+    if len(name) > limit:
+        raise OperationError(f"name: at most {limit} characters, got {len(name)}")
+    return name
+
+
 _busy: set[str] = set()
 _busy_lock = threading.Lock()
 
@@ -97,10 +114,17 @@ def _uploaded_tables(folder: Path) -> list[str]:
     return sorted({p.stem.partition("+")[0] for p in uploads.glob("*.*") if p.is_file()})
 
 
+#: longest name of an uploaded table
+MAX_TABLE_NAME = 64
+
+
 def _check_upload_name(name: str) -> None:
-    """Table names are also glob patterns of the uploads folder: no wildcards."""
+    """Table names are also glob patterns of the uploads folder: no wildcards. They name a
+    file, so their length is bounded (file systems allow 255 bytes)."""
     from bakumine.core.drillholes.importer import _check_table_name
 
+    if len(name) > MAX_TABLE_NAME:
+        raise OperationError(f"a table name has at most {MAX_TABLE_NAME} characters")
     if name not in ("collar", "survey"):
         try:
             _check_table_name(name)
@@ -333,6 +357,11 @@ def import_database(
     alone); ``maps`` is the short form: one column map per table, every uploaded table is
     imported. What is left out is detected. ``holes`` = ``{"include": [...], "exclude":
     [...]}``: hole names or wildcard patterns kept / left out in every table."""
+    try:
+        name = object_name(name, "drillholes")
+    except OperationError as exc:  # logged like every rejected request
+        joblog.Recorder(folder, "import", {"name": name}).finish("error", error=str(exc))
+        raise
     params = {"name": name, "maps": maps, "options": options}
     for key, value in (
         ("tables", tables), ("hole_id", hole_id), ("merge", merge), ("holes", holes),
@@ -517,12 +546,43 @@ def _coded_columns(request: dict[str, Any]) -> list[str] | None:
     return [str(n) for n in [*names, *(s.get("attribute") for s in steps)] if n]
 
 
-def job_log(folder: Path) -> dict[str, Any]:
-    """The log, newest first, and the job an undo would revert."""
+#: entries of the log one request returns unless it asks for another number
+LOG_PAGE, MAX_LOG_PAGE = 200, 1000
+
+
+def job_log(folder: Path, limit: int = LOG_PAGE, before: str | None = None) -> dict[str, Any]:
+    """A page of the log, newest first, and the job an undo would revert.
+
+    ``limit`` entries, starting with the newest or, with ``before`` (a job id), with the
+    one logged just before that job; ``total`` counts the whole log and ``has_more`` says
+    whether older entries are left. Parameters are shortened for display
+    (:func:`bakumine.core.joblog.shorten`) and the replay data is left out: the file keeps
+    both in full for ``bakumine project replay``.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LOG_PAGE:
+        raise OperationError(f"limit must be a whole number from 1 to {MAX_LOG_PAGE}")
+    entries = list(reversed(joblog.jobs(folder)))
+    start = 0
+    if before:
+        ids = [e.get("id") for e in entries]
+        if before not in ids:
+            raise OperationError(f"no job {str(before)[:40]!r} in the log")
+        start = ids.index(before) + 1
+    def shown(entry: dict[str, Any]) -> dict[str, Any]:
+        return {
+            k: (joblog.shorten(v) if k in ("params", "summary") else v)
+            for k, v in entry.items()
+            if k != "replay"
+        }
+
     candidate = joblog.undo_candidate(folder)
     return {
-        "jobs": list(reversed(joblog.jobs(folder))),
+        "jobs": [shown(e) for e in entries[start : start + limit]],
+        "total": len(entries),
+        "has_more": start + limit < len(entries),
         "undo": candidate["id"] if candidate else None,
+        # the Undo button names the job also when it is older than the page
+        "undo_job": shown(candidate) if candidate else None,
         "keep_snapshots": joblog.keep_snapshots(),
     }
 
@@ -635,16 +695,21 @@ def _composite(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> d
     from bakumine.core.drillholes.importer import load_database
 
     project = Project.open(folder)
+    given_name = object_name(request.get("name"), "")
     try:
         db_obj = project.get(request["database"])
         if db_obj.kind != "database":
             raise KeyError(request["database"])
-    except KeyError:
-        raise OperationError(f"no drillhole database {request.get('database')!r}") from None
+    except (KeyError, TypeError):
+        wanted = str(request.get("database"))[:80]
+        raise OperationError(f"no drillhole database {wanted!r}") from None
     rec.entry["inputs"] = [db_obj.to_dict()]
     db = load_database(project.path_of(db_obj))
     table = request.get("table") or "assay"
     mode = request.get("mode") or "downhole"
+    for key, value in (("table", table), ("mode", mode)):
+        if not isinstance(value, str):
+            raise OperationError(f"{key} must be text")
     if table not in db.intervals:
         raise OperationError(f"no interval table {table!r}; database has {list(db.intervals)}")
     samples = db.intervals[table]
@@ -697,7 +762,7 @@ def _composite(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> d
         raise _fail(exc) from None
     if not len(out):
         raise OperationError("no composites were produced")
-    name = str(request.get("name") or f"composites_{table}")
+    name = given_name or f"composites_{table}"
     with tempfile.TemporaryDirectory() as tmp:
         # The name is display text: the file name is a slug of it, never a path.
         file = Path(tmp) / f"{_slug(name)}.parquet"
@@ -740,13 +805,22 @@ def create_model(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
 
 def _create(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
     from bakumine.core.blockmodel.blocks import BlockModel
-    from bakumine.core.blockmodel.definition import BlockModelDefinition
+    from bakumine.core.blockmodel.definition import MAX_SUBBLOCK_DEPTH, BlockModelDefinition
     from bakumine.core.blockmodel.storage import save_model
     from bakumine.core.drillholes.importer import load_database
 
     project = Project.open(folder)
+    name = object_name(request.get("name"), "model")
     size = _triple(request.get("size"), "size")
-    options: dict[str, Any] = {"max_depth": int(request.get("max_depth") or 0)}
+    depth = request.get("max_depth") or 0
+    if isinstance(depth, bool) or not isinstance(depth, int | float) or (
+        int(depth) != depth or not 0 <= depth <= MAX_SUBBLOCK_DEPTH
+    ):  # fmt: skip
+        raise OperationError(
+            f"sub-block depth must be a whole number from 0 to {MAX_SUBBLOCK_DEPTH}, "
+            f"got {str(depth)[:40]!r}"
+        )
+    options: dict[str, Any] = {"max_depth": int(depth)}
     if request.get("angles"):
         options["angles"] = _triple(request["angles"], "angles")
     try:
@@ -785,7 +859,7 @@ def _create(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict
         model = BlockModel(definition)
         with tempfile.TemporaryDirectory() as tmp:
             header = save_model(model, Path(tmp) / "model")
-            obj = project.add("model", Path(tmp) / "model", request.get("name") or "model")
+            obj = project.add("model", Path(tmp) / "model", name)
             rec.entry["outputs"] = [obj.to_dict()]
     except OperationError:
         raise
@@ -850,6 +924,10 @@ def _code(source: Any, model_id: str, request: dict[str, Any], rec: joblog.Recor
     from bakumine.core.blockmodel.storage import load_model, save_model
 
     path = _model_path(source.folder, model_id)
+    for key in ("attributes", "steps"):
+        items = request.get(key, [])
+        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+            raise OperationError(f"{key} must be a list of objects")
     _claim(model_id)
     try:
         _will_modify(rec, source.folder, model_id, path, _coded_columns(request))
@@ -926,7 +1004,8 @@ def build_plan(spec: dict[str, Any]) -> Any:
     variogram {nugget, structures [{type, sill, ranges?, angles? or plane?}]} (up to three
     structures; ranges and orientation default to the ellipsoid's), domain {name,
     block_constraint, sample_filter}, passes [{name, radius_factor, min_samples,
-    max_samples, max_per_hole}], discretisation.
+    max_samples, max_per_hole}], discretisation, overwrite (true: blocks that already have
+    a value are estimated again; default false: they are kept).
     """
     from bakumine.core.estimation.block_estimation import (
         EstimationDomain,
@@ -994,7 +1073,15 @@ def build_plan(spec: dict[str, Any]) -> Any:
         attribute = spec.get("attribute")
         if not attribute:
             raise OperationError("give the grade attribute")
-        return EstimationPlan(attribute, [domain], value_column=spec.get("value_column") or None)
+        overwrite = spec.get("overwrite", False)
+        if not isinstance(overwrite, bool):
+            raise OperationError("overwrite must be true or false")
+        return EstimationPlan(
+            attribute,
+            [domain],
+            value_column=spec.get("value_column") or None,
+            overwrite=overwrite,
+        )
     except OperationError:
         raise
     # AttributeError: a list or a number where the plan has an object (``.get``)
@@ -1056,7 +1143,9 @@ def run_estimation(
     except KeyError:
         raise OperationError(f"no composites {composites_id!r}") from None
     model = load_model(path)
+    had_attribute = plan.attribute in model
     try:
+        _check_sample_filters(plan, table)
         summary = plan.run(
             model, table, resolver=project_resolver(source), progress=on_progress, cancel=cancel
         )
@@ -1065,6 +1154,8 @@ def run_estimation(
     if not summary.cancelled:
         save_model(model, path)
     result = summary.to_dict()
+    if not summary.cancelled and summary.n_targeted == 0:
+        result["note"] = _nothing_targeted(plan, summary, had_attribute)
     result.update(
         n_targeted=int(summary.n_targeted),
         n_estimated=int(summary.n_estimated),
@@ -1072,6 +1163,44 @@ def run_estimation(
     )
     result["table"] = summary.to_frame().replace({np.nan: None}).to_dict(orient="records")
     return result
+
+
+#: label of the Estimation panel's checkbox, named in the note of a run that did nothing
+OVERWRITE_LABEL = "Estimate again blocks that already have a value"
+
+
+def _filter_text(sample_filter: Any) -> str:
+    values = ", ".join(repr(v) for v in sample_filter.values[:8])
+    if len(sample_filter.values) > 8:
+        values += f", ... ({len(sample_filter.values) - 8} more)"
+    return f"{sample_filter.column} = {values}"
+
+
+def _check_sample_filters(plan: Any, table: pd.DataFrame) -> None:
+    """A sample filter that keeps no composite is a mistake in the request, not a result."""
+    from bakumine.core.estimation.block_estimation import ColumnFilter
+
+    for domain in plan.domains:
+        sample_filter = domain.sample_filter
+        if isinstance(sample_filter, ColumnFilter) and not sample_filter.mask(table).any():
+            found = pd.unique(table[sample_filter.column].dropna())
+            shown = ", ".join(repr(v) for v in found[:8]) + (", ..." if len(found) > 8 else "")
+            raise OperationError(
+                f"no composite matches the sample filter {_filter_text(sample_filter)}: "
+                f"column {sample_filter.column!r} holds {shown or 'no values'}"
+            )
+
+
+def _nothing_targeted(plan: Any, summary: Any, had_attribute: bool) -> str:
+    """Why a run that completed estimated no block (the CLI prints the same kind of note)."""
+    selected = sum(d.n_constraint for d in summary.domains)
+    if selected and had_attribute and not plan.overwrite:
+        return (
+            f"no block was estimated: all {selected} selected blocks already have a value of "
+            f"{plan.attribute}, and blocks that have a value are kept. Tick "
+            f'"{OVERWRITE_LABEL}" (overwrite: true) to estimate them anew.'
+        )
+    return "no block was estimated: the constraints of the domain select no block"
 
 
 def _estimated_columns(plan: Any) -> list[str]:
@@ -1121,9 +1250,11 @@ def start_estimation(source: Any, model_id: str, composites_id: str, spec: dict[
                 source, model_id, composites_id, plan, progress, lambda: job.cancel_requested
             )
             job.summary = result
-            job.status = "cancelled" if result.get("cancelled") else "done"
-            if job.status == "done":
+            # the status says "done" / "cancelled"; the message only what it does not say
+            job.message = result.get("note") or ""
+            if not result.get("cancelled"):
                 job.progress = 1.0
+            job.status = "cancelled" if result.get("cancelled") else "done"
             rec.finish(job.status, summary=_brief(result))
         except Exception as exc:  # reported to the client
             job.error, job.status = str(exc), "error"

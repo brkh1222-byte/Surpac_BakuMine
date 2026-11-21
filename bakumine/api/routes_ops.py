@@ -14,7 +14,9 @@
     POST   /ops/estimate                      starts a job; returns {id, ...}
     GET    /ops/jobs/{id}                     status, progress, summary
     POST   /ops/jobs/{id}/cancel
-    GET    /ops/log                           job log (jobs.jsonl), newest first; undo target
+    GET    /ops/log?limit=&before=            job log (jobs.jsonl), newest first: a page of
+                                              ``limit`` (default 200) entries older than job
+                                              ``before``, with ``total``; undo target
     POST   /ops/undo                          revert the newest model-changing job (P6.T7)
 
 They wrap :mod:`bakumine.api.operations`, which calls the core functions the CLI uses.
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from bakumine.api import operations as ops
 from bakumine.api.project_source import ProjectSceneSource
@@ -113,7 +115,7 @@ def post_import(body: Json, source: Source) -> dict[str, Any]:
     return _guard(
         lambda: ops.import_database(
             folder,
-            body.get("name", "drillholes"),
+            body.get("name"),
             body.get("maps"),
             body.get("options"),
             body.get("tables"),
@@ -175,8 +177,13 @@ def cancel_job(job_id: str) -> dict[str, Any]:
 
 
 @router.get("/log")
-def get_log(source: Source) -> dict[str, Any]:
-    return ops.job_log(_project(source).folder)
+def get_log(
+    source: Source,
+    limit: Annotated[int, Query(ge=1, le=ops.MAX_LOG_PAGE)] = ops.LOG_PAGE,
+    before: Annotated[str | None, Query(max_length=64)] = None,
+) -> dict[str, Any]:
+    folder = _project(source).folder
+    return _guard(lambda: ops.job_log(folder, limit, before))
 
 
 @router.post("/undo")

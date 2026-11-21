@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest'
-import { buildReportRequest, fetchReport, fetchReportCsv, formatCell, parseNumbers, type ReportSettings } from './report'
+import { buildReportRequest, fetchReport, fetchReportCsv, formatCell, keepKnown, parseNumbers, type ReportSettings } from './report'
 
 const base: ReportSettings = { grades: [], density: '', groupBy: [], cutoffs: '', benchHeight: '', where: '' }
 
@@ -50,4 +50,13 @@ test('the client posts the body to the report and report.csv endpoints', async (
     '/api/v1/scene/objects/block-model/report',
     '/api/v1/scene/objects/block-model/report.csv',
   ])
+})
+
+test('selections of attributes the model no longer has are dropped (review finding 7)', () => {
+  const s: ReportSettings = { ...base, grades: ['au', 'cu'], groupBy: ['rock', 'res_class'], density: 'sg' }
+  const kept = keepKnown(s, ['au'], ['rock'])
+  expect(kept).toEqual({ ...s, grades: ['au'], groupBy: ['rock'], density: '' })
+  expect(keepKnown(s, ['au', 'cu', 'sg'], ['rock', 'res_class'])).toBe(s)
+  expect(keepKnown({ ...base, density: '2,7' }, [], []).density).toBe('2,7')
+  expect(keepKnown({ ...base, density: ' 2.65 ' }, [], []).density).toBe(' 2.65 ')
 })

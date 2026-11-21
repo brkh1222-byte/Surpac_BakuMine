@@ -21,7 +21,14 @@ from typing import Any
 
 import numpy as np
 
-from bakumine.api.operations import INPUTS, OperationError, _fail, _record, _slug
+from bakumine.api.operations import (
+    INPUTS,
+    OperationError,
+    _fail,
+    _record,
+    _slug,
+    object_name,
+)
 from bakumine.core import joblog
 from bakumine.core.project import Project, ProjectObject
 
@@ -36,9 +43,19 @@ _ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError, OverflowError)
 # ------------------------------------------------------------------ uploads
 
 
+#: longest stored name of an uploaded file (file systems allow 255 bytes)
+MAX_FILE_NAME = 120
+
+
 def _safe_name(filename: str) -> str:
+    if len(str(filename)) > 4096:
+        raise OperationError(f"the file name is too long (at most {MAX_FILE_NAME} characters)")
     name = re.sub(r"[^A-Za-z0-9_.\-]+", "_", Path(str(filename).replace("\\", "/")).name)
     name = name.lstrip(".")
+    if len(name) > MAX_FILE_NAME:
+        raise OperationError(
+            f"the file name {name[:40]!r}... is too long (at most {MAX_FILE_NAME} characters)"
+        )
     if not name or Path(name).suffix.lower() not in {
         *POINT_SUFFIXES,
         *STRING_SUFFIXES,
@@ -96,7 +113,11 @@ def _describe(path: Path) -> dict[str, Any]:
     except OperationError:
         raise
     except Exception as exc:  # unreadable file
-        raise OperationError(f"{path.name}: {_fail(exc)}") from None
+        # readers name the file by its full path: the client is told the file name only
+        text = str(_fail(exc)).replace(str(path), path.name).replace(str(path.parent), "")
+        if not text.startswith(path.name):
+            text = f"{path.name}: {text}"
+        raise OperationError(text) from None
     return out
 
 
@@ -113,17 +134,22 @@ def store_geometry_upload(
 ) -> dict[str, Any]:
     """Keep an uploaded file; returns ``{token, files: [description, ...]}``."""
     name = _safe_name(filename)
+    created = not token
     if token:
         target = _upload_dir(folder, token)
     else:
         token = uuid.uuid4().hex[:12]
         target = folder / GEOMETRY_UPLOADS / token
         target.mkdir(parents=True)
-    (target / name).write_bytes(content)
     try:
+        (target / name).write_bytes(content)
         files = [_describe(p) for p in sorted(target.iterdir()) if p.is_file()]
-    except OperationError:
+    except (OperationError, OSError) as exc:
         (target / name).unlink(missing_ok=True)
+        if created:  # a rejected first file leaves no empty token folder behind
+            shutil.rmtree(target, ignore_errors=True)
+        if isinstance(exc, OSError):
+            raise OperationError(f"{name}: the file could not be stored") from None
         raise
     return {"token": token, "file": name, "files": files}
 
@@ -203,10 +229,7 @@ def _add_mesh(folder: Path, kind: str, name: str, mesh: Any, comment: str) -> Pr
 
 
 def _name(request: dict[str, Any], default: str) -> str:
-    name = str(request.get("name") or default).strip()
-    if not name or len(name) > 80:
-        raise OperationError("give a name of at most 80 characters")
-    return name
+    return object_name(request.get("name"), default[:80], 80)
 
 
 def _list(value: Any, what: str) -> list[Any]:
@@ -327,6 +350,7 @@ def _import_mesh(folder: Path, request: dict[str, Any], rec: joblog.Recorder) ->
 
     if not isinstance(request, dict):
         raise OperationError("the request must be an object")
+    _name(request, "mesh")  # a bad name is refused before the file is read
     sources = _Sources(folder, rec)
     path, relative = sources.upload(request, MESH_SUFFIXES)
     try:

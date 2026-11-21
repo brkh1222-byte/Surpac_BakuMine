@@ -95,10 +95,14 @@ import numpy as np
 
 from bakumine.core.estimation.rotation import CONVENTIONS, DEFAULT_CONVENTION, rotation_matrix
 
-__all__ = ["MAX_DEPTH", "BlockModelDefinition", "cell_index"]
+__all__ = ["MAX_DEPTH", "MAX_SUBBLOCK_DEPTH", "BlockModelDefinition", "cell_index"]
 
 #: largest sub-blocking depth per axis (sub-indices are stored in uint8)
 MAX_DEPTH = 8
+#: deepest sub-blocking offered when a model is created (``blockmodel create``, the API
+#: and the viewer): the depth the coding and estimation tests cover. The block table
+#: itself holds up to :data:`MAX_DEPTH` levels (block CSV files of other software).
+MAX_SUBBLOCK_DEPTH = 3
 
 _ORTHO_TOL = 1e-9
 _DIVISIBILITY_TOL = 1e-9

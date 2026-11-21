@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { ofKind, useOps } from '../../ops/api'
 import { CRITERIA, JORC_CLASSES, buildClassifyRequest, describeClasses, runClassify, type ClassRow, type ClassifyResult } from '../../ops/classify'
-import { Check, Error, Panel, Select, Text, message, opts } from './common'
+import { Check, Error, Panel, Select, Text, message, opts, useClearOnUndo } from './common'
 
 const CIS_CLASSES: ClassRow[] = [
   { label: 'B', criteria: 'max_pass=1, min_samples=8, min_holes=3' },
@@ -28,10 +28,15 @@ export function ClassifyPanel() {
   const [holeFilter, setHoleFilter] = useState('')
   const [classes, setClasses] = useState<ClassRow[]>(JORC_CLASSES)
   const [smooth, setSmooth] = useState(false)
+  const [overwriteOutput, setOverwriteOutput] = useState(false)
   const [minAgree, setMinAgree] = useState('4')
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ClassifyResult | null>(null)
   const [busy, setBusy] = useState(false)
+  useClearOnUndo(() => {
+    setResult(null)
+    setError(null)
+  })
 
   const model = models.find((m) => m.id === chosen) ?? models[0]
   const names = new Set((model?.attributes ?? []).map((a) => a.name))
@@ -47,7 +52,7 @@ export function ClassifyPanel() {
   const run = async () => {
     const body = buildClassifyRequest({
       model: model?.id ?? '', attribute: grade, output, composites: holeRadius.trim() || ownSupport ? comps || composites[0]?.id || '' : comps,
-      holeRadius, holeNth, holeFilter, classes, smooth, minAgree, maxSame: '0', iterations: '1',
+      holeRadius, holeNth, holeFilter, classes, smooth, minAgree, maxSame: '0', iterations: '1', overwriteOutput,
     })
     if (typeof body === 'string') return setError(body)
     setBusy(true)
@@ -69,6 +74,9 @@ export function ClassifyPanel() {
       {models.length > 1 && <Select label="Model" id="classify-model" value={model?.id ?? ''} onChange={setChosen} options={models.map((m) => ({ value: m.id, label: m.name }))} />}
       <Select label="Estimated grade" id="classify-attribute" value={grade} onChange={setAttribute} options={opts(candidates)} />
       <Text label="Class attribute" id="classify-output" value={output} onChange={setOutput} />
+      {names.has(output.trim()) && (
+        <Check label="Replace this attribute even if no classification wrote it" id="classify-overwrite-output" checked={overwriteOutput} onChange={setOverwriteOutput} />
+      )}
       <p className="ops-heading">Classes, best first (first match wins)</p>
       {classes.map((c, i) => (
         <div className="ops-block" key={i}>

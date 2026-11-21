@@ -28,6 +28,7 @@ def _implicit(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dic
     if not isinstance(request, dict):
         raise OperationError("the request must be an object")
     folder = source.folder
+    _name(request, "solid")  # a bad name is refused before anything is computed
     sources = _Sources(folder, rec)
     database = sources.obj(request.get("database"), "database")
     topography = None

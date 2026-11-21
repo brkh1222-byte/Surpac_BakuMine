@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildEstimateSpec, type EstimateForm } from './builders'
+import { buildEstimateSpec, jobStatusText, type EstimateForm } from './builders'
 
 describe('estimation request with nested structures', () => {
   const form: EstimateForm = {
@@ -52,5 +52,24 @@ describe('estimation request with nested structures', () => {
     expect(buildEstimateSpec({ ...form, structures: [one, one, one, one] })).toMatch(/At most 3/)
     expect(buildEstimateSpec({ ...form, dip: '' })).toMatch(/Search ellipsoid: Give the dip/)
     expect(buildEstimateSpec({ ...form, orientation: 'angles', angles: '1, 2' })).toMatch(/Angles: three numbers/)
+  })
+})
+
+describe('re-estimating (review finding 1)', () => {
+  const form: EstimateForm = {
+    attribute: 'au', method: 'nn', power: '2', radii: '50, 50, 50', angles: '0, 0, 0', nugget: '0', structures: [],
+    domainName: '', blockWhere: '', sampleColumn: '', sampleValues: '',
+    passes: [{ name: '', radiusFactor: '1', minSamples: '1', maxSamples: '16', maxPerHole: '' }],
+  }
+  it('the checkbox becomes overwrite: true; unticked, the key is left out', () => {
+    expect(buildEstimateSpec(form)).not.toHaveProperty('overwrite')
+    expect(buildEstimateSpec({ ...form, overwrite: false })).not.toHaveProperty('overwrite')
+    expect(buildEstimateSpec({ ...form, overwrite: true })).toMatchObject({ attribute: 'au', overwrite: true })
+  })
+  it('the status line does not repeat the status', () => {
+    expect(jobStatusText({ status: 'done', message: 'done' })).toBe('done')
+    expect(jobStatusText({ status: 'done', message: '' })).toBe('done')
+    expect(jobStatusText({ status: 'running', message: 'ORE: pass 2' })).toBe('running: ORE: pass 2')
+    expect(jobStatusText({ status: 'done', message: 'no block was estimated: ...' })).toBe('done: no block was estimated: ...')
   })
 })

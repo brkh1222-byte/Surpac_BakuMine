@@ -240,7 +240,8 @@ def configure_create(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--padding", default="0", metavar="P|PX,PY,PZ",
                         help="margin added on every side with --extent-from (metres)")  # fmt: skip
     parser.add_argument("--max-depth", type=int, default=0,
-                        help="sub-blocking depth (smallest block = size / 2**depth)")  # fmt: skip
+                        help="sub-blocking depth, 0 to 3 (smallest block = size / 2**depth)",
+                        )  # fmt: skip
     parser.add_argument("--angles", metavar="BEARING,PLUNGE,DIP",
                         help="model rotation in degrees (default none)")  # fmt: skip
     parser.add_argument("--overwrite", action="store_true",
@@ -273,9 +274,14 @@ def _extent_points(items: list[str], geometry_dir: str | None):
 
 def run_create(args: argparse.Namespace) -> int:
     from bakumine.core.blockmodel.blocks import BlockModel
-    from bakumine.core.blockmodel.definition import BlockModelDefinition
+    from bakumine.core.blockmodel.definition import MAX_SUBBLOCK_DEPTH, BlockModelDefinition
     from bakumine.core.blockmodel.storage import is_model_folder, save_model
 
+    if not 0 <= args.max_depth <= MAX_SUBBLOCK_DEPTH:
+        raise CommandError(
+            f"--max-depth must be a whole number from 0 to {MAX_SUBBLOCK_DEPTH}, "
+            f"got {args.max_depth}"
+        )
     size = _triple(args.size, "--size")
     options: dict = {"max_depth": args.max_depth}
     angles = _triple(args.angles, "--angles")

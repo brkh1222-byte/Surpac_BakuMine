@@ -368,10 +368,16 @@ def table_from_grid(grid: pd.DataFrame, header: Header) -> tuple[pd.DataFrame, i
 # --------------------------------------------------------------------------------------
 # hole ids
 # --------------------------------------------------------------------------------------
+#: largest width / precision in a hole id template, and longest hole id it may produce
+MAX_ID_FORMAT_WIDTH, MAX_HOLE_ID_LENGTH = 64, 128
+
+
 class _GroupFormatter(string.Formatter):
     """``{1:02d}`` works on a regex group: the text is made an int for integer formats."""
 
     def format_field(self, value: Any, format_spec: str) -> str:
+        if any(int(n) > MAX_ID_FORMAT_WIDTH for n in re.findall(r"\d+", format_spec)):
+            raise ValueError(f"width and precision are at most {MAX_ID_FORMAT_WIDTH}")
         if format_spec and format_spec[-1] in "dxXobn":
             value = int(value)
         elif format_spec and format_spec[-1] in "eEfFgG%":
@@ -403,8 +409,12 @@ def normalise_hole_ids(
             continue
         try:
             known[value] = formatter.format(template, match.group(0), *match.groups(default=""))
+            if len(known[value] or "") > MAX_HOLE_ID_LENGTH:
+                raise ValueError(f"the hole id would be longer than {MAX_HOLE_ID_LENGTH}")
         except (ValueError, IndexError, KeyError, TypeError) as exc:
-            raise ValueError(f"hole id template {template!r} on {value!r}: {exc}") from None
+            raise ValueError(
+                f"hole id template {template[:80]!r} on {value[:80]!r}: {exc}"
+            ) from None
     unmatched = [v for v, new in known.items() if new is None and v]
     return ids.map(lambda v: known[v] if known[v] is not None else v), unmatched
 

@@ -8,12 +8,14 @@ import { useState } from 'react'
 import { ofKind, opsApi, useOps } from '../../ops/api'
 import {
   EMPTY_CONSTRAINT,
+  MAX_SUBBLOCK_DEPTH,
   buildCodeRequest,
   nums,
+  subBlockDepth,
   type ConstraintForm,
   type StepForm,
 } from '../../ops/builders'
-import { Check, Error, Panel, Select, Text, message, opts } from './common'
+import { Check, Error, Panel, Select, Text, message, opts, useClearOnUndo } from './common'
 
 function CreateModel() {
   const summary = useOps((s) => s.summary)
@@ -32,7 +34,9 @@ function CreateModel() {
   const run = async () => {
     const sz = nums(size)
     if (!sz || sz.length !== 3) return setError('Block size: three numbers')
-    const body: Record<string, unknown> = { name, size: sz, max_depth: Number(depth) || 0 }
+    const maxDepth = subBlockDepth(depth)
+    if (typeof maxDepth === 'string') return setError(maxDepth)
+    const body: Record<string, unknown> = { name, size: sz, max_depth: maxDepth }
     if (how === 'grid') {
       const o = nums(origin)
       const sh = nums(shape)
@@ -80,7 +84,7 @@ function CreateModel() {
         </>
       )}
       <Text label="Block size" id="model-size" value={size} onChange={setSize} placeholder="dx, dy, dz" />
-      <Text label="Sub-block depth" id="model-depth" value={depth} onChange={setDepth} placeholder="0 = no sub-blocks" />
+      <Text label="Sub-block depth" id="model-depth" value={depth} onChange={setDepth} placeholder={`0 (none) to ${MAX_SUBBLOCK_DEPTH}`} />
       <div className="control">
         <button type="button" data-testid="model-create" onClick={() => void run()}>Create model</button>
       </div>
@@ -136,6 +140,7 @@ function CodeModel() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<string[] | null>(null)
   const [busy, setBusy] = useState(false)
+  useClearOnUndo(() => setResult(null))
   const model = models.find((m) => m.id === chosen) ?? models[0]
   const patchStep = (i: number, p: Partial<StepForm>) => setSteps((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)))
   const patchAttr = (i: number, p: Partial<(typeof attributes)[number]>) => setAttributes((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)))

@@ -38,6 +38,10 @@ describe('parseCriteria', () => {
 })
 
 describe('buildClassifyRequest', () => {
+  it('asks to replace an attribute no classification wrote only when ticked (review finding 2)', () => {
+    expect((buildClassifyRequest(form) as { params: Record<string, unknown> }).params).not.toHaveProperty('overwrite_output')
+    expect((buildClassifyRequest({ ...form, overwriteOutput: true }) as { params: Record<string, unknown> }).params.overwrite_output).toBe(true)
+  })
   it('builds the classes in order', () => {
     expect(buildClassifyRequest(form)).toEqual({
       params: {

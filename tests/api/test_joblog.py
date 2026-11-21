@@ -90,6 +90,10 @@ def run(tmp_path_factory):
     states["coded"] = load_model(path)
     log = ok(client.get("/api/v1/ops/log"))
     assert log["jobs"][0]["operation"] == "code" and log["undo"] == log["jobs"][0]["id"]
+    # the Undo button can name the job also when it is older than the page shown
+    older = ok(client.get("/api/v1/ops/log", params={"before": log["undo"]}))
+    assert all(j["id"] != log["undo"] for j in older["jobs"])
+    assert older["undo_job"]["id"] == log["undo"] and older["undo_job"]["operation"] == "code"
     states["undo_code"] = ok(client.post("/api/v1/ops/undo"))
     states["after_undo_code"] = (load_model(path), read_header(path).checksum)
     ok(client.post(f"/api/v1/ops/models/{model_id}/code", json=coding(truth)))
@@ -203,8 +207,10 @@ def test_nothing_to_undo_is_409(tmp_path):
     try:
         client = TestClient(app)
         assert client.post("/api/v1/ops/undo").status_code == 409
-        assert client.get("/api/v1/ops/log").json() == {"jobs": [], "undo": None,
-                                                         "keep_snapshots": 5}  # fmt: skip
+        assert client.get("/api/v1/ops/log").json() == {
+            "jobs": [], "total": 0, "has_more": False, "undo": None, "undo_job": None,
+            "keep_snapshots": 5,
+        }  # fmt: skip
     finally:
         set_scene_source(None)
 

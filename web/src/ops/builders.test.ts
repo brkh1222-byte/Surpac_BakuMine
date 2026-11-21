@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EMPTY_CONSTRAINT, buildCodeRequest, buildEstimateSpec, stepConstraint, type EstimateForm, type StepForm } from './builders'
+import { EMPTY_CONSTRAINT, MAX_SUBBLOCK_DEPTH, buildCodeRequest, buildEstimateSpec, stepConstraint, subBlockDepth, type EstimateForm, type StepForm } from './builders'
 
 const step = (p: Partial<StepForm>): StepForm => ({ attribute: 'rock', value: 'ORE', first: EMPTY_CONSTRAINT, combine: 'and', second: EMPTY_CONSTRAINT, ...p })
 
@@ -49,5 +49,13 @@ describe('estimation request', () => {
     expect(buildEstimateSpec({ ...form, radii: '1, 2' })).toMatch(/Radii/)
     expect(buildEstimateSpec({ ...form, structures: [{ type: 'spherical', sill: '' }] })).toMatch(/structure/)
     expect(buildEstimateSpec({ ...form, passes: [] })).toMatch(/pass/)
+  })
+})
+
+describe('sub-block depth of a new model (review finding 9)', () => {
+  it('is a whole number from 0 to 3, as the API and the CLI accept', () => {
+    expect(subBlockDepth('')).toBe(0)
+    expect(subBlockDepth(' 3 ')).toBe(MAX_SUBBLOCK_DEPTH)
+    for (const bad of ['4', '8', '-1', '1.5', 'x']) expect(subBlockDepth(bad)).toMatch(/0 to 3/)
   })
 })

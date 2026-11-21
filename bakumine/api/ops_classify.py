@@ -3,7 +3,9 @@
 Request::
 
     {"params": {"attribute": "au", "output": "res_class", "categories": [...],
-                "hole_support": {...} | null, "smoothing": {...} | null},
+                "hole_support": {...} | null, "smoothing": {...} | null,
+                "overwrite_output": false},   # true: replace an attribute named like
+                                              # "output" that no classification wrote
                 # hole_support may carry a sample_filter, and a class its own
                 # hole_support (radius, nth, ...)
      "composites": id | null}        # for the drillhole support

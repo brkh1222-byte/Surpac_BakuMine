@@ -137,6 +137,13 @@ __all__ = [
 
 FORMAT_VERSION = 1
 MAX_CLASSES = 100
+MAX_LABEL_LENGTH = 64
+#: largest ``nth`` of a drillhole support (the distance to the n-th nearest hole)
+MAX_NTH = 1000
+#: a drillhole-support radius may be at most this many diagonals of the model
+MAX_RADIUS_DIAGONALS = 10.0
+#: start of the description of a class attribute: how :func:`classify` knows its own output
+CLASS_DESCRIPTION = "resource class of "
 
 #: criterion -> (input key, comparison)
 CRITERIA: dict[str, tuple[str, str]] = {
@@ -151,6 +158,17 @@ CRITERIA: dict[str, tuple[str, str]] = {
     "max_hole_distance": ("hole_distance", "<="),
 }
 _HOLE_KEYS = {"holes": "_nholes", "hole_distance": "_dhole"}
+#: smallest value of a criterion that can still be met (a pass number starts at 1, counts,
+#: distances and variances at 0); ``min_slope`` and ``min_efficiency`` have none
+CRITERION_MINIMUM: dict[str, float] = {
+    "max_pass": 1,
+    "min_samples": 0,
+    "max_mean_distance": 0,
+    "max_nearest_distance": 0,
+    "max_kriging_variance": 0,
+    "min_holes": 0,
+    "max_hole_distance": 0,
+}
 INPUT_KEYS = (*OutputNames().names("").keys(), *_HOLE_KEYS)
 
 
@@ -175,6 +193,25 @@ def _only(data: dict[str, Any], known: tuple[str, ...], what: str) -> None:
         )
 
 
+def _check_radius(value: Any, what: str) -> float:
+    radius = _number(value, what)
+    if radius <= 0:
+        raise ValueError(f"{what} must be positive, got {value!r}")
+    return radius
+
+
+def _check_nth(value: Any, what: str) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or int(value) != value
+        or not 1 <= value <= MAX_NTH
+    ):
+        raise ValueError(f"{what} must be a whole number from 1 to {MAX_NTH}, got {value!r}")
+    return int(value)
+
+
 @dataclass(frozen=True)
 class ClassRule:
     """One rule set: a label, criteria (see :data:`CRITERIA`) and an optional expression."""
@@ -188,11 +225,20 @@ class ClassRule:
     def __post_init__(self) -> None:
         if not isinstance(self.label, str) or not self.label.strip():
             raise ValueError("a class label must be a non-empty string")
+        if len(self.label) > MAX_LABEL_LENGTH:
+            raise ValueError(
+                f"class label {self.label[:20]!r}...: at most {MAX_LABEL_LENGTH} characters, "
+                f"got {len(self.label)}"
+            )
         if self.hole_support is not None:
             if isinstance(self.hole_support, HoleSupport):
                 object.__setattr__(self, "hole_support", self.hole_support.to_dict())
             _only(self.hole_support, _SUPPORT_KEYS, f"class {self.label!r}: hole_support")
             own = {k: v for k, v in self.hole_support.items() if v is not None}
+            if "radius" in own:
+                _check_radius(own["radius"], f"class {self.label!r}: hole_support radius")
+            if "nth" in own:
+                _check_nth(own["nth"], f"class {self.label!r}: hole_support nth")
             object.__setattr__(self, "hole_support", own or None)
         if not isinstance(self.criteria, dict):
             raise ValueError(f"class {self.label!r}: criteria must be an object")
@@ -203,7 +249,7 @@ class ClassRule:
                 f"known: {', '.join(CRITERIA)}"
             )
         clean = {
-            k: _number(v, f"class {self.label!r}: {k}")
+            k: _number(v, f"class {self.label!r}: {k}", minimum=CRITERION_MINIMUM.get(k))
             for k, v in self.criteria.items()
             if v is not None
         }
@@ -249,13 +295,8 @@ class HoleSupport:
                     "or {'column': name, 'in': [...]}"
                 )
             object.__setattr__(self, "sample_filter", ColumnFilter.from_dict(self.sample_filter))
-        radius = _number(self.radius, "hole_support radius")
-        if radius <= 0:
-            raise ValueError("hole_support radius must be positive")
-        object.__setattr__(self, "radius", radius)
-        if isinstance(self.nth, bool) or int(self.nth) != self.nth or self.nth < 1:
-            raise ValueError(f"hole_support nth must be a positive integer, got {self.nth!r}")
-        object.__setattr__(self, "nth", int(self.nth))
+        object.__setattr__(self, "radius", _check_radius(self.radius, "hole_support radius"))
+        object.__setattr__(self, "nth", _check_nth(self.nth, "hole_support nth"))
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -322,8 +363,12 @@ class ClassificationParams:
     hole_support: HoleSupport | None = None
     smoothing: Smoothing | None = None
     inputs: dict[str, str] = field(default_factory=dict)
+    #: replace ``output`` also when it exists and was not written by a classification
+    overwrite_output: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.overwrite_output, bool):
+            raise ValueError("overwrite_output must be true or false")
         if not isinstance(self.attribute, str) or not self.attribute:
             raise ValueError('give the estimated grade attribute: "attribute": "au"')
         if not isinstance(self.output, str) or not self.output:
@@ -396,7 +441,7 @@ class ClassificationParams:
         return [k for k in INPUT_KEYS if k in used]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "bakumine_classification": FORMAT_VERSION,
             "attribute": self.attribute,
             "output": self.output,
@@ -405,11 +450,14 @@ class ClassificationParams:
             "categories": [r.to_dict() for r in self.categories],
             "smoothing": self.smoothing.to_dict() if self.smoothing else None,
         }
+        if self.overwrite_output:
+            out["overwrite_output"] = True
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ClassificationParams:
         keys = ("bakumine_classification", "attribute", "output", "inputs", "hole_support",
-                "categories", "smoothing")  # fmt: skip
+                "categories", "smoothing", "overwrite_output")  # fmt: skip
         _only(data, keys, "classification parameters")
         if data.get("bakumine_classification", FORMAT_VERSION) != FORMAT_VERSION:
             raise ValueError(
@@ -433,6 +481,7 @@ class ClassificationParams:
             ),
             smoothing=Smoothing.from_dict(data["smoothing"]) if data.get("smoothing") else None,
             inputs=dict(inputs),
+            overwrite_output=data.get("overwrite_output", False),
         )
 
     def save(self, path: str | Path) -> Path:
@@ -500,6 +549,12 @@ def hole_support(
     are isotropic and to composite midpoints (module docstring). ``sample_filter`` keeps
     the composites whose column equals one of its values. The count is int32; the
     distance is NaN where fewer than ``nth`` holes exist.
+
+    The nearest composites of a point are searched in growing numbers until they hold
+    ``nth`` holes and reach past ``radius``. Where that would take more neighbours than
+    twice the number of holes (a radius that covers most of the drilling, a large
+    ``nth``), the distance to every hole is computed instead, hole by hole, so the time
+    does not grow with the radius.
     """
     from scipy.spatial import cKDTree
 
@@ -522,10 +577,23 @@ def hole_support(
     if n == 0 or len(points) == 0:
         return count, distance
     tree = cKDTree(xyz)
+    n_holes = int(holes.max()) + 1
+    hole_trees: list[Any] = []
     for start in range(0, len(points), chunk_size):
         pending = np.arange(start, min(start + chunk_size, len(points)))
         k = min(n, max(8, 4 * nth))
         while pending.size:
+            if 2 * n_holes < k < n:  # more neighbours than holes: hole by hole is cheaper
+                if not hole_trees:
+                    hole_trees = [cKDTree(xyz[holes == h]) for h in range(n_holes)]
+                step = max(1, 4_000_000 // n_holes)
+                for a in range(0, pending.size, step):
+                    rows = pending[a : a + step]
+                    nearest = np.column_stack([t.query(points[rows])[0] for t in hole_trees])
+                    count[rows] = (nearest <= radius).sum(axis=1)
+                    if nth <= n_holes:
+                        distance[rows] = np.partition(nearest, nth - 1, axis=1)[:, nth - 1]
+                break
             step = max(1, 4_000_000 // k)  # bounds the (rows, k) arrays
             left = []
             for a in range(0, pending.size, step):
@@ -675,17 +743,30 @@ def classify(
 ) -> ClassificationSummary:
     """Classify the estimated blocks of ``model`` in place; see the module docstring.
 
-    Writes the category attribute ``params.output`` (replaced when it exists; its
-    dictionary is the labels in rule order) and, with ``params.hole_support`` and
-    ``composites``, the two drillhole-support attributes. Nothing is written when the
-    parameters do not fit the model (``ValueError``).
+    Writes the category attribute ``params.output`` (its dictionary is the labels in rule
+    order) and, with ``params.hole_support`` and ``composites``, the two drillhole-support
+    attributes. An existing ``params.output`` is replaced only when an earlier
+    classification wrote it (its description starts with :data:`CLASS_DESCRIPTION`) or
+    with ``params.overwrite_output``: any other attribute of that name (a rock code, a
+    domain) is refused. A drillhole-support radius larger than
+    :data:`MAX_RADIUS_DIAGONALS` diagonals of the model is refused too. Nothing is written
+    when the parameters do not fit the model (``ValueError``).
     """
     if params.attribute not in model:
         raise ValueError(f"the model has no attribute {params.attribute!r}")
     if model.attribute(params.attribute).kind != "float":
         raise ValueError(f"{params.attribute!r} is not a float (grade) attribute")
-    if params.output in model and model.attribute(params.output).kind != "category":
-        raise ValueError(f"attribute {params.output!r} exists and is not a category")
+    if params.output in model:
+        existing = model.attribute(params.output)
+        if existing.kind != "category":
+            raise ValueError(f"attribute {params.output!r} exists and is not a category")
+        if not params.overwrite_output and not is_class_attribute(existing):
+            raise ValueError(
+                f"attribute {params.output!r} is already in the model and was not written by "
+                "a classification, so it is not replaced: choose another name for the class "
+                'attribute ("output"), or set "overwrite_output": true to replace it'
+            )
+    _check_support_radii(model, params)
     names = params.input_names()
     used = params.used_inputs()
     estimated = ~np.isnan(np.asarray(model[params.attribute], dtype=np.float64))
@@ -784,7 +865,7 @@ def classify(
             model, estimated, holes[estimated], far[estimated], pair[0], pair[1], hs.radius, hs.nth
         )
         written += list(pair)
-    description = f"resource class of {params.attribute}"
+    description = f"{CLASS_DESCRIPTION}{params.attribute}"
     if params.output in model:
         # replaced in place, so that the attribute keeps its position in the model
         spec = model.attribute(params.output)
@@ -813,6 +894,36 @@ def classify(
         classes=classes,
         written=written,
     )
+
+
+def is_class_attribute(spec: Any) -> bool:
+    """Whether the attribute ``spec`` was written by :func:`classify` (by its description)."""
+    return spec.kind == "category" and str(spec.description).startswith(CLASS_DESCRIPTION)
+
+
+def model_diagonal(model: BlockModel) -> float:
+    """Length of the diagonal of the model's box, in metres."""
+    definition = model.definition
+    extent = np.asarray(definition.block_size, dtype=float) * np.asarray(definition.shape)
+    return float(np.linalg.norm(extent))
+
+
+def _check_support_radii(model: BlockModel, params: ClassificationParams) -> None:
+    """A radius far beyond the model counts every hole for every block: surely a typo."""
+    limit = MAX_RADIUS_DIAGONALS * model_diagonal(model)
+    supports = [("hole_support", params.hole_support)]
+    supports += [
+        (f"class {rule.label!r}: hole_support", params.support_of(number))
+        for number, rule in enumerate(params.categories)
+        if rule.hole_support
+    ]
+    for what, support in supports:
+        if support is not None and support.radius > limit:
+            raise ValueError(
+                f"{what} radius {support.radius:g} m is larger than {MAX_RADIUS_DIAGONALS:g} "
+                f"times the diagonal of the model ({limit:g} m): give a radius of the order "
+                "of the drillhole spacing"
+            )
 
 
 def read_composites(path: str | Path) -> pd.DataFrame:

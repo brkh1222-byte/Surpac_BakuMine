@@ -274,6 +274,10 @@ interface OpsState {
   refresh: () => Promise<void>
   /** An operation changed the project: refresh the lists and reload the scene. */
   changed: () => Promise<void>
+  /** Number of undos done in this session: a panel clears the result it shows when it grows. */
+  undos: number
+  /** An undo changed the project under the panels: count it, then as `changed`. */
+  undone: () => Promise<void>
 }
 
 export const useOps = create<OpsState>()((set, get) => ({
@@ -289,6 +293,11 @@ export const useOps = create<OpsState>()((set, get) => ({
   changed: async () => {
     await get().refresh()
     clearResources()
+  },
+  undos: 0,
+  undone: async () => {
+    set((s) => ({ undos: s.undos + 1 }))
+    await get().changed()
   },
 }))
 

@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useOps } from '../../ops/api'
-import { formatDuration, formatParams, jobLogApi, jobStatus, jobSubject, operationLabel, undoTarget, type JobLog } from '../../ops/joblog'
+import { formatDuration, formatParams, jobLogApi, jobStatus, jobSubject, operationLabel, shownText, undoTarget, withOlder, type JobLog } from '../../ops/joblog'
 import { Error, Panel, message } from './common'
 
 const ROW = { display: 'flex', gap: 6, flexDirection: 'row' } as const
@@ -33,12 +33,24 @@ function JobLogBody() {
     void load()
   }, [load, summary])
 
+  const loadOlder = async () => {
+    const last = log?.jobs[log.jobs.length - 1]
+    if (!log || !last) return
+    try {
+      setLog(withOlder(log, await jobLogApi.log(undefined, last.id)))
+      setError(null)
+    } catch (e) {
+      setError(message(e))
+    }
+  }
+
   const target = undoTarget(log)
+  const shown = shownText(log)
   const undo = async () => {
     setBusy(true)
     try {
       await jobLogApi.undo()
-      await useOps.getState().changed()
+      await useOps.getState().undone()
       await load()
     } catch (e) {
       setError(message(e))
@@ -79,6 +91,12 @@ function JobLogBody() {
             </li>
           ))}
         </ol>
+      )}
+      {shown && (
+        <div className="control" style={ROW}>
+          <span className="sidebar-note" data-testid="joblog-shown">{shown}</span>
+          {log?.has_more && <button type="button" data-testid="joblog-older" onClick={() => void loadOlder()}>Load older</button>}
+        </div>
       )}
     </>
   )

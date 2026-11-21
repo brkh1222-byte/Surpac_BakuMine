@@ -27,10 +27,16 @@ export interface LoggedJob {
 }
 
 export interface JobLog {
-  /** newest first */
+  /** newest first: the newest page (200 by default), then the pages loaded with "Load older" */
   jobs: LoggedJob[]
+  /** number of jobs in the whole log */
+  total?: number
+  /** older jobs are left to load */
+  has_more?: boolean
   /** id of the job an undo would revert, or null */
   undo: string | null
+  /** the entry of that job, also when it is older than the jobs loaded */
+  undo_job?: LoggedJob | null
   keep_snapshots: number
 }
 
@@ -50,6 +56,7 @@ const OPERATION_LABELS: Record<string, string> = {
   create_model: 'Create model',
   code: 'Code model',
   estimate: 'Estimate',
+  classify: 'Classify',
   report: 'Report',
   undo: 'Undo',
 }
@@ -76,7 +83,19 @@ export function jobStatus(job: LoggedJob): string {
 /** The job the Undo button reverts, if the server offers one. */
 export function undoTarget(log: JobLog | null): LoggedJob | null {
   if (!log?.undo) return null
-  return log.jobs.find((j) => j.id === log.undo) ?? null
+  return log.jobs.find((j) => j.id === log.undo) ?? (log.undo_job?.id === log.undo ? log.undo_job : null)
+}
+
+/** "showing the last 200 of 1234 jobs" while older jobs are not loaded; null otherwise. */
+export function shownText(log: JobLog | null): string | null {
+  if (!log || log.total == null || log.jobs.length >= log.total) return null
+  return `showing the last ${log.jobs.length} of ${log.total} jobs`
+}
+
+/** The log with an older page appended (jobs already shown are not repeated). */
+export function withOlder(log: JobLog, older: JobLog): JobLog {
+  const seen = new Set(log.jobs.map((j) => j.id))
+  return { ...older, jobs: [...log.jobs, ...older.jobs.filter((j) => !seen.has(j.id))] }
 }
 
 /** One line about what a job worked on: the undone job of an undo, else its objects. */
@@ -94,6 +113,15 @@ export function formatParams(params: Record<string, unknown>): string {
   return JSON.stringify(params, null, 2)
 }
 
+/** Query of a log page: the newest ``limit`` jobs, or those logged before job ``before``. */
+export function logQuery(limit?: number, before?: string): string {
+  const query = new URLSearchParams()
+  if (limit != null) query.set('limit', String(limit))
+  if (before) query.set('before', before)
+  const text = query.toString()
+  return text ? `/log?${text}` : '/log'
+}
+
 async function call<T>(method: string, path: string): Promise<T> {
   const response = await fetch(`/api/v1/ops${path}`, { method })
   if (!response.ok) {
@@ -105,6 +133,6 @@ async function call<T>(method: string, path: string): Promise<T> {
 }
 
 export const jobLogApi = {
-  log: () => call<JobLog>('GET', '/log'),
+  log: (limit?: number, before?: string) => call<JobLog>('GET', logQuery(limit, before)),
   undo: () => call<UndoResult>('POST', '/undo'),
 }

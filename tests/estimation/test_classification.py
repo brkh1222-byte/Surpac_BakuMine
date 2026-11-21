@@ -225,8 +225,10 @@ def brute_force(points, xyz, holes, radius, nth):
 
 @pytest.mark.parametrize(
     ("n_holes", "per_hole", "radius", "nth"),
-    [(12, 30, 40.0, 3), (2, 50, 500.0, 3), (40, 3, 15.0, 1), (5, 1, 1e6, 5), (1, 1, 10.0, 1)],
-)
+    [(12, 30, 40.0, 3), (2, 50, 500.0, 3), (40, 3, 15.0, 1), (5, 1, 1e6, 5), (1, 1, 10.0, 1),
+     # a radius beyond everything and an nth beyond the holes: the hole-by-hole path
+     (6, 100, 1e6, 3), (3, 400, 1e12, 2), (8, 60, 60.0, 50), (8, 60, 60.0, 8)],
+)  # fmt: skip
 def test_hole_support_against_brute_force(n_holes, per_hole, radius, nth):
     rng = np.random.default_rng(n_holes * 1000 + nth)
     collars = rng.uniform(0, 200, (n_holes, 2))

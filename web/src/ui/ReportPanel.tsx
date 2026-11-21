@@ -4,8 +4,8 @@
  * `bakumine.core.report.report` (the same code as `bakumine blockmodel report`); Export CSV
  * downloads that CSV. `Where` takes the same expression as the CLI's `--where`.
  */
-import { useState } from 'react'
-import { buildReportRequest, fetchReport, fetchReportCsv, formatCell, type ReportSettings, type ReportTable } from '../report/report'
+import { useEffect, useState } from 'react'
+import { buildReportRequest, fetchReport, fetchReportCsv, formatCell, keepKnown, type ReportSettings, type ReportTable } from '../report/report'
 import { useBlocks } from '../state/blocks'
 
 const EMPTY: ReportSettings = { grades: [], density: '', groupBy: [], cutoffs: '', benchHeight: '', where: '' }
@@ -19,9 +19,20 @@ export function ReportPanel() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
+  // the table is wider than the sidebar: "Wide view" lays it over the viewport, every column in sight
+  const [wide, setWide] = useState(false)
 
   const id = chosen && models[chosen] ? chosen : ids[0]
   const model = id ? models[id] : undefined
+  // an undo (or another change) can remove an attribute that is still ticked: drop it, or
+  // Run report would ask for an attribute the model does not have
+  const numericKey = (model?.attributes ?? []).filter((a) => a.type === 'numeric').map((a) => a.name).join('\n')
+  const categoricalKey = (model?.attributes ?? []).filter((a) => a.type === 'categorical').map((a) => a.name).join('\n')
+  const hasModel = model !== undefined
+  useEffect(() => {
+    if (!hasModel) return
+    setSettings((s) => keepKnown(s, numericKey ? numericKey.split('\n') : [], categoricalKey ? categoricalKey.split('\n') : []))
+  }, [numericKey, categoricalKey, hasModel])
   if (!model || !id) return null
   const numeric = model.attributes.filter((a) => a.type === 'numeric')
   const categorical = model.attributes.filter((a) => a.type === 'categorical')
@@ -136,7 +147,19 @@ export function ReportPanel() {
           </div>
           {error && <p className="sidebar-error" role="alert" data-testid="report-error">{error}</p>}
           {table && (
-            <div className="report-table-wrap">
+            <div className="control">
+              <button type="button" data-testid="report-wide" aria-pressed={wide} onClick={() => setWide(!wide)}>
+                {wide ? 'Close wide view' : 'Wide view'}
+              </button>
+            </div>
+          )}
+          {table && (
+            <div className={wide ? 'report-table-wrap is-wide' : 'report-table-wrap'} data-testid="report-table-wrap">
+              {wide && (
+                <button type="button" className="report-wide-close" data-testid="report-wide-close" onClick={() => setWide(false)} aria-label="Close wide view">
+                  Close
+                </button>
+              )}
               <table className="report-table" data-testid="report-table">
                 <thead>
                   <tr>{table.columns.map((c) => <th key={c}>{c}</th>)}</tr>

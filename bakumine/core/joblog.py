@@ -11,6 +11,12 @@ A line is written with a single ``write`` on a file opened for appending, then f
 a crash leaves at most one damaged last line, which readers skip. Nothing is rewritten:
 undoing a job appends an ``"operation": "undo"`` line whose ``params.job`` names it.
 
+Size: the entry of a job that did not complete (``error``, ``cancelled``) stores its
+parameters shortened (:func:`shorten`: long strings and long lists end in ``"... (N
+more)"``; at most :data:`MAX_FAILED_BYTES` in all) and its error text cut to
+:data:`MAX_ERROR_LENGTH`, so that a rejected request cannot fill the log. The entry of a
+completed job is stored in full: ``bakumine project replay`` reads its parameters.
+
 Undo snapshots live in ``<project>/.snapshots/<job id>/``. An operation that only changes
 attribute values (estimation) saves the affected columns; one that may change the block
 structure (coding with sub-blocks or merging) copies the whole model folder. Only the
@@ -36,6 +42,11 @@ import numpy as np
 LOG_FILE = "jobs.jsonl"
 SNAPSHOTS = ".snapshots"
 KEEP_SNAPSHOTS = 5
+#: display / failed-entry limits of :func:`shorten`
+MAX_STRING, MAX_ITEMS, MAX_DEPTH = 200, 20, 6
+#: most bytes of JSON the parameters (and the replay data) of a failed entry may take
+MAX_FAILED_BYTES = 4096
+MAX_ERROR_LENGTH = 2000
 
 _lock = threading.Lock()
 
@@ -68,6 +79,53 @@ def _plain(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return value
+
+
+def shorten(
+    value: Any, max_string: int = MAX_STRING, max_items: int = MAX_ITEMS, depth: int = MAX_DEPTH
+) -> Any:
+    """A copy of a JSON value with long strings, lists and objects cut short.
+
+    A cut string ends in ``"... (N more)"`` (characters), a cut list has that as its last
+    item, a cut object has it under the key ``"..."``; below ``depth`` levels only
+    ``"..."`` is left.
+    """
+    if isinstance(value, str):
+        if len(value) <= max_string:
+            return value
+        return f"{value[:max_string]}... ({len(value) - max_string} more)"
+    if isinstance(value, dict):
+        if depth <= 0:
+            return "..."
+        out = {
+            str(shorten(str(k), max_string, max_items, depth)): shorten(
+                v, max_string, max_items, depth - 1
+            )
+            for k, v in list(value.items())[:max_items]
+        }
+        if len(value) > max_items:
+            out["..."] = f"... ({len(value) - max_items} more)"
+        return out
+    if isinstance(value, list | tuple):
+        if depth <= 0:
+            return "..."
+        out_list = [shorten(v, max_string, max_items, depth - 1) for v in value[:max_items]]
+        if len(value) > max_items:
+            out_list.append(f"... ({len(value) - max_items} more)")
+        return out_list
+    return value
+
+
+def capped(value: Any, max_bytes: int = MAX_FAILED_BYTES) -> Any:
+    """:func:`shorten` until the JSON text of ``value`` fits in ``max_bytes``."""
+    value = _plain(value)
+    size = 0
+    for max_string, max_items, depth in ((MAX_STRING, MAX_ITEMS, MAX_DEPTH), (60, 6, 3)):
+        short = shorten(value, max_string, max_items, depth)
+        size = len(json.dumps(short, ensure_ascii=False, default=str).encode())
+        if size <= max_bytes:
+            return short
+    return {"...": f"... ({size} bytes of parameters not stored)"}
 
 
 # ------------------------------------------------------------------------ the log
@@ -167,6 +225,13 @@ class Recorder:
         if status != "done" and self.entry["snapshot"]:
             drop_snapshot(self.folder, self.id)  # the model was not changed
             self.entry["snapshot"] = False
+        if status != "done":  # never replayed: keep what explains it, not the whole request
+            self.entry["params"] = capped(self.entry["params"])
+            if "replay" in self.entry:
+                self.entry["replay"] = capped(self.entry["replay"])
+        if error is not None and len(error) > MAX_ERROR_LENGTH:
+            rest = len(error) - MAX_ERROR_LENGTH
+            self.entry["error"] = f"{error[:MAX_ERROR_LENGTH]}... ({rest} more)"
         append(self.folder, self.entry)
 
 

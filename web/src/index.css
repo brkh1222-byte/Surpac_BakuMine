@@ -1245,11 +1245,61 @@ input {
   cursor: ew-resize;
 }
 
-/* Report panel */
-.report-toggle { width: 100%; text-align: left; }
+/* Report panel and the operation panels (same markup) */
+.report-toggle {
+  width: 100%;
+  padding: 7px 10px 6px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.report-toggle:hover { background: var(--panel-hover); }
+/* Without these the browser's button face shows: in the dark theme an enabled button read as
+   disabled (muted text on grey, 2.1:1). Enabled: the text colour on the raised panel;
+   disabled: muted, faded and flat. */
+.report-panel .object-controls button,
+.report-wide-close {
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+.report-panel .object-controls button:hover:not(:disabled),
+.report-wide-close:hover { background: var(--panel-hover); }
+.report-panel .object-controls button[aria-pressed='true'] { border-color: var(--accent); }
+.report-panel .object-controls button:disabled {
+  color: var(--text-muted);
+  background: none;
+  border-style: dashed;
+  opacity: 0.6;
+  cursor: default;
+}
 .report-set { border: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .report-set legend { font-size: 11px; opacity: 0.7; }
 .report-table-wrap { overflow-x: auto; max-height: 260px; }
+/* "Wide view": the table over the viewport, next to the sidebar, every column in sight */
+.report-table-wrap.is-wide {
+  position: fixed;
+  z-index: 30;
+  left: 236px;
+  right: 8px;
+  bottom: 32px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+}
+.report-table-wrap.is-wide .report-table { font-size: 12px; }
+.report-wide-close { float: right; margin: 0 0 6px 8px; }
 .report-table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
 .report-table th, .report-table td { padding: 2px 6px; text-align: right; white-space: nowrap; }
 .report-table tr.is-total td { font-weight: 600; border-top: 1px solid currentColor; }

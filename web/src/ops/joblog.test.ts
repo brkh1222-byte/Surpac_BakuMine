@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { formatDuration, formatParams, jobLogApi, jobStatus, jobSubject, operationLabel, undoTarget, type JobLog, type LoggedJob } from './joblog'
+import { formatDuration, formatParams, jobLogApi, jobStatus, jobSubject, logQuery, operationLabel, shownText, undoTarget, withOlder, type JobLog, type LoggedJob } from './joblog'
 
 const job = (p: Partial<LoggedJob>): LoggedJob => ({
   id: 'j',
@@ -34,6 +34,21 @@ describe('job log panel logic', () => {
     expect(undoTarget({ ...log, undo: null })).toBeNull()
     expect(undoTarget({ ...log, undo: 'gone' })).toBeNull()
     expect(undoTarget(null)).toBeNull()
+    // older than the page loaded: the server sends the entry along
+    expect(undoTarget({ ...log, jobs: [], undo_job: est })).toBe(est)
+  })
+
+  it('pages the log: count shown, older pages appended once (review finding 4)', () => {
+    const page: JobLog = { jobs: [job({ id: 'c' }), job({ id: 'b' })], total: 5, has_more: true, undo: null, keep_snapshots: 5 }
+    expect(shownText(page)).toBe('showing the last 2 of 5 jobs')
+    const older: JobLog = { jobs: [job({ id: 'b' }), job({ id: 'a' })], total: 5, has_more: false, undo: null, keep_snapshots: 5 }
+    const both = withOlder(page, older)
+    expect(both.jobs.map((j) => j.id)).toEqual(['c', 'b', 'a'])
+    expect(both.has_more).toBe(false)
+    expect(shownText({ ...both, total: 3 })).toBeNull()
+    expect(shownText({ jobs: [], undo: null, keep_snapshots: 5 })).toBeNull()
+    expect(logQuery()).toBe('/log')
+    expect(logQuery(200, 'abc')).toBe('/log?limit=200&before=abc')
   })
 
   it('labels status, operations and subjects', () => {
@@ -62,6 +77,7 @@ describe('job log client', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(jobLogApi.log()).resolves.toEqual({ jobs: [], undo: null, keep_snapshots: 5 })
     await expect(jobLogApi.undo()).rejects.toThrow('nothing to undo')
-    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/v1/ops/log', '/api/v1/ops/undo'])
+    await jobLogApi.log(50, 'x1')
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/v1/ops/log', '/api/v1/ops/undo', '/api/v1/ops/log?limit=50&before=x1'])
   })
 })

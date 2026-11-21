@@ -45,6 +45,20 @@ export function parseNumbers(text: string): number[] | null {
   return out
 }
 
+/**
+ * The settings without the attributes the model no longer has (an undo removed them):
+ * grades and density among ``numeric``, group-by among ``categorical``. A density given as
+ * a number is kept. The same object is returned when nothing was dropped.
+ */
+export function keepKnown(s: ReportSettings, numeric: string[], categorical: string[]): ReportSettings {
+  const grades = s.grades.filter((g) => numeric.includes(g))
+  const groupBy = s.groupBy.filter((g) => categorical.includes(g))
+  const text = s.density.trim()
+  const density = !text || Number.isFinite(Number(text.replace(',', '.'))) || numeric.includes(text) ? s.density : ''
+  if (grades.length === s.grades.length && groupBy.length === s.groupBy.length && density === s.density) return s
+  return { ...s, grades, groupBy, density }
+}
+
 /** The request for the settings; a string is returned when a field is not valid. */
 export function buildReportRequest(s: ReportSettings, units: Record<string, string | null> = {}): ReportRequest | string {
   const body: ReportRequest = {

@@ -46,6 +46,8 @@ export interface ClassifyForm {
   minAgree: string
   maxSame: string
   iterations: string
+  /** replace a Class attribute of this name that no classification wrote (a rock code, ...) */
+  overwriteOutput?: boolean
 }
 
 export interface ClassifyResult {
@@ -147,6 +149,7 @@ export function buildClassifyRequest(f: ClassifyForm): { params: Record<string, 
   const filter = parseSampleFilter(f.holeFilter ?? '')
   if (typeof filter === 'string') return filter
   const params: Record<string, unknown> = { attribute: f.attribute, output, categories }
+  if (f.overwriteOutput) params.overwrite_output = true
   const body: { params: Record<string, unknown>; composites?: string } = { params }
   if (f.holeRadius.trim()) {
     const radius = Number(f.holeRadius)

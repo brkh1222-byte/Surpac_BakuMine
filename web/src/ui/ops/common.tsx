@@ -1,5 +1,5 @@
 /** Shared pieces of the operation dialogs: a collapsible panel and small form fields. */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useOps } from '../../ops/api'
 
 export function Panel({ id, title, children }: { id: string; title: string; children: ReactNode }) {
@@ -59,4 +59,20 @@ export function opts(values: string[], blank?: string): { value: string; label: 
 
 export function message(e: unknown): string {
   return e instanceof globalThis.Error ? e.message : String(e)
+}
+
+/**
+ * Calls ``clear`` when an undo (job log) changed the project after this panel was shown: the
+ * result the panel shows describes a model state that is gone.
+ */
+export function useClearOnUndo(clear: () => void): void {
+  const undos = useOps((s) => s.undos)
+  const seen = useRef(undos)
+  const latest = useRef(clear)
+  latest.current = clear
+  useEffect(() => {
+    if (undos === seen.current) return
+    seen.current = undos
+    latest.current()
+  }, [undos])
 }
