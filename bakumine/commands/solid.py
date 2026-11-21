@@ -21,7 +21,14 @@ from pathlib import Path
 from typing import Any
 
 from bakumine.commands.blockmodel import CommandError, _guarded
-from bakumine.commands.geometry import _add_outputs, _database, _emit, _finish, _floats
+from bakumine.commands.geometry import (
+    _add_outputs,
+    _database,
+    _emit,
+    _finish,
+    _floats,
+    _need_output,
+)
 
 HELP_SOLID = "Solids: implicit solid of logged codes straight from the drillholes"
 
@@ -132,6 +139,7 @@ def format_axes(anisotropy: dict[str, Any]) -> str:
 def run_implicit_command(args: argparse.Namespace) -> int:
     from bakumine.core.geometry.implicit_request import run_implicit
 
+    _need_output(args)
     request = {
         "table": args.table,
         "column": args.column,

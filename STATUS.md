@@ -70,7 +70,7 @@ The API / web security review is done too (8 confirmed findings fixed, see §5).
 | Section digitising (P5.T7) | Draw / edit / snap strings on sections, save `.str`, build solid | 5 synthetic sections by script | Valid watertight solid, volume -0.76 % |
 | UI dialogs (P6.T2–T6) | Import wizard, compositing, block model create / code, estimation (background job, progress, cancel), report panel | Endpoints equal CLI (rtol 1e-6); P7.T1 e2e drives raw CSVs → report | e2e: tonnes -0.05 %, metal -2.4 %, 4 s |
 | Project, job log, undo (P6.T1, P6.T7) | `project.json` folder, object tree, append-only `jobs.jsonl`, replay, undo via snapshots (last 5, checksum-guarded) | Reopen restores; replay into a fresh project | Replay of the synthetic chain: bit-identical model; undo after code and after estimate: bit-identical |
-| CLI (P1.T7 and later) | `import, validate, desurvey, composite, blockmodel create / code / info / export-csv / import-csv / report, estimate, project init / add / list / replay / export-log / export-geometry, synth` | `tests/cli/`, gate script | |
+| CLI (P1.T7 and later) | `import, extract-tables, validate, desurvey, intercepts, composite, surface from-points / import, solid implicit, blockmodel create / code / fraction / info / export-csv / import-csv / report, estimate-plan, estimate, classify, project init / add / list / replay / export-log / export-geometry, synth` | `tests/cli/`, gate script | |
 | Performance (P7.T4) | `scripts/bench_perf.py`, 5M blocks, 20k composites | Plan targets | All targets met; no code changed. Random composites are easier than real drilling |
 
 ## 3. Provisional: not verified against Surpac
@@ -91,7 +91,13 @@ to these five. None has been checked against Surpac.
 
 ### 3.2 `.str` and `.dtm` layouts
 
-Written from research.md §5.6 only; no Surpac file or manual was used. Binary `.str` / `.dtm` are
+First written from research.md §5.6; on 2026-11-21 (P8.T1) compared with, and corrected to, the
+published "Appendix D - File Formats" of the Surpac manual (1996). **The table below is the
+state before that correction and is kept for the record: `.str` items 1-5 are confirmed by the
+appendix; `.dtm` items 1, 3, 5, 7 and 9 were wrong and are fixed** (header is the string file
+name; flags `neighbours, closed, direction=solid`; vertex numbers count the null records; no
+record of zeros; triangles clockwise seen from outside). The current rules are in the module
+docstrings. Not checked against a file from a current Surpac version. Binary `.str` / `.dtm` are
 detected and rejected. `describe_surpac_file(path)` is the tool for inspecting the first real
 file. All layout constants are isolated at the top of each module. (§8 P2.T8 counted 14
 assumptions; the current docstrings list 8 for `.str` and 10 for `.dtm`, including the
@@ -158,7 +164,7 @@ binary-variant note in each.)
 | `classify_boxes` | Conservative by sampling; not proven |
 | Viewer frame rate | All 2M blocks as instances (`lod=full`): 26 fps, below the 30 fps target. Shell LOD meets it (2 ms/frame) |
 | Viewer, not inspected | Rotated block model never looked at on screen; opacity < 1 not inspected (instances are not depth-sorted). Real mouse / trackpad input and camera-motion jitter not tested. Only Chromium tested. Dipping / oblique sections: unit tests and screenshots only (e2e covers W-E) |
-| Viewer, not done | Cap / fill of cut solids, key-plan inset (P5.T6 optional); 3D ellipsoid preview in the estimation dialog; solid / DTM import dialog (CLI `project add` only); capping options in the UI |
+| Viewer, not done | Cap / fill of cut solids, key-plan inset (P5.T6 optional); 3D ellipsoid preview in the estimation dialog; capping options in the UI (a solid / DTM import panel was added after the first real-data test) |
 | Report panel | No dedicated Playwright test (§8 P6.T1/T6); it now appears in the README screenshot run (`make screenshots`) |
 | Picking | Meshes over 300k triangles are excluded from cursor picking |
 | Dynamic anisotropy | Slow if every block has distinct angles; `angle_step` mitigation not benchmarked |

@@ -15,24 +15,32 @@ formats only.
 
 ## Features
 
-- **Drillholes**: import collar / survey / interval tables (CSV, XLSX) with column mapping,
-  feet to metres, dip conventions, below-detection rules; 18 validation checks; desurvey
+- **Drillholes**: import collar / survey / interval tables (CSV, XLSX, XLS; one sheet per
+  hole, two-row headers, several files merged per table, tables extracted from text PDFs)
+  with column mapping, feet to metres, dip conventions, below-detection rules, QC rows set
+  aside, an import recipe that replays the import; 18 validation checks; desurvey
   (minimum curvature, balanced tangent, tangent); downhole, bench and domain compositing,
-  grade capping. Missing assays stay missing (NaN), never 0.
-- **Geometry**: triangle meshes with validation and repair, DTM surfaces, inside/outside
-  tests, sections, solids from section strings, implicit solids from drillhole codes.
+  grade capping; mineralised intervals / significant intercepts at a cut-off (minimum
+  thickness, internal waste, true thickness). Missing assays stay missing (NaN), never 0.
+- **Geometry**: triangle meshes with validation and repair, DTM surfaces (from collars,
+  points and breaklines, or imported), inside/outside tests, sections, solids from section
+  strings, implicit solids from drillhole codes.
 - **Block model**: regular or rotated grid, octree sub-blocking (up to depth 3) on solid and
   surface contacts, float / integer / category attributes, constraints (solid, DTM, plane,
   attribute expression, combined), calculations with a safe expression language.
 - **Estimation**: search ellipsoids with octant and per-hole limits, NN, IDW, OK / SK (point
   or block), nested variogram models, multi-pass plans per domain, dynamic anisotropy,
-  experimental and fitted variograms, cross-validation, swath and global checks.
+  experimental and fitted variograms, cross-validation, swath and global checks; resource
+  classification by pass, sample count, distances, kriging quality and drillhole support.
 - **Report**: volume, tonnes, grade and metal by attribute, bench and cut-off; CSV out.
 - **Viewer** (browser): drillholes coloured by assay or code, solids and surfaces, blocks
   coloured by any attribute, a block filter, section tools (W-E / S-N / plan / drawn line /
   through a hole, stepping, clip or ghost), digitising strings on a section and building a
   solid from them, and sidebar panels that run the whole workflow on a project.
-- **CLI**: every step runs from `bakumine <command>`.
+- **CLI**: the whole chain from raw tables to the classified report runs from
+  `bakumine <command>` (list below). Not on the command line: variogram calculation and
+  fitting, cross-validation and swath checks (Python API, see `scripts/run_babbitt.py`),
+  and solids from section strings (viewer, or Python API).
 
 ## Requirements
 
@@ -128,7 +136,7 @@ orthographic, vertical exaggeration and a light theme.
 ## Walkthrough B: the same model from the command line
 
 One script runs the whole chain on the synthetic data and compares the result with the
-truth (about 5 s):
+truth (5 to 20 s):
 
 ```sh
 uv run python scripts/gate_synthetic.py          # writes data/synthetic/gate_out/
@@ -158,8 +166,26 @@ uv run bakumine blockmodel report $O/model --where 'rock == "ORE"' --grade au:g/
 `coding.json` and `plan.json` are the JSON forms of the coding steps and estimation passes of
 walkthrough A; the script writes them into `gate_out/` and they are a good template.
 `uv run bakumine --help` lists every command and `uv run bakumine <command> --help` its
-options (`blockmodel info | export-csv | import-csv | create | code | report`,
-`project init | add | list`, `synth` to generate a new synthetic deposit, ...).
+options:
+
+| Command | What it does |
+|---|---|
+| `import` | Drillhole tables into a database folder (`--auto` or `--map`; `--recipe` replays an import) |
+| `extract-tables` | Tables of a text PDF (report appendix) as CSV files for `import` |
+| `validate`, `desurvey` | The 18 checks; hole paths |
+| `intercepts` | Mineralised intervals / significant intercepts at a cut-off; `--save-as` stores them as a domain table |
+| `composite` | Downhole, bench or domain composites; `--flag-solid FILE=CODE` marks those inside a solid |
+| `surface from-points`, `surface import` | Topography from collars and points; an existing mesh file (`--scale 0.3048` for feet) |
+| `solid implicit` | A solid from coded drillhole intervals |
+| `blockmodel create / code / fraction` | Empty model; coding against solids and surfaces; fraction of each block inside a solid |
+| `estimate-plan`, `estimate` | Write the estimation plan from flags; run it (`--overwrite` to estimate again) |
+| `classify` | Resource classes from a parameter file (`classify --help` shows a complete one) |
+| `blockmodel report / info / export-csv / import-csv` | Volume, tonnes, grade, metal by class, bench, cut-off; exchange |
+| `project init / add / list / replay / export-log / export-geometry` | Project folders and the job log |
+| `synth` | A new synthetic deposit with known truth |
+
+Re-running a step: `blockmodel create` refuses to replace a model without `--overwrite`,
+and `estimate` keeps blocks that already have a value unless `--overwrite` is given.
 
 ## Working with a project folder
 
@@ -195,7 +221,7 @@ the command line or in the sidebar (*Surfaces and solids*, *Implicit solid*):
 # topography: collars (+ point tables, strings, breaklines), extended 200 m beyond the data
 uv run bakumine surface from-points --database DB --points survey.csv --breaklines crest.str \
     --extend-padding 200 --project PATH --name Topography
-# an existing surface or solid file (DXF, OBJ, PLY, Surpac text .dtm with its .str)
+# an existing surface or solid file (DXF, OBJ, PLY, STL, Surpac text .dtm with its .str)
 uv run bakumine surface import pit.dxf --kind dtm --project PATH
 # a solid of the intervals logged ORE; the body dips 70 degrees towards 090
 uv run bakumine solid implicit DB --column rock --code ORE --dip 70 --dip-azimuth 90 \
@@ -225,15 +251,20 @@ uv run python scripts/run_babbitt.py --no-cv     # skip cross-validation (faster
 ```
 
 The script's docstring explains each choice and the numbers it reaches. There is no logged
-geology or wireframe in that data set, and the density (2.9 t/m3) is assumed.
+geology in that data set, and the density (2.9 t/m3) is assumed.
+
+`scripts/run_babbitt_wireframe.py` repeats the PyGSLIB tutorial on the same holes with its
+public domain wireframe (`Mpz.stl`) and compares with the tutorial's published numbers:
+composite count equal, domain and declustered means within 0.2 %, nearest-neighbour block
+mean +0.12 %, kriging -0.86 % and inverse distance +1.23 % (both explained in the script).
 
 ## File formats
 
 | In | Out |
 |---|---|
-| Drillhole tables: CSV, XLSX | Drillhole database and composites: Parquet folder; composites CSV |
+| Drillhole tables: CSV, XLSX, XLS; tables of text PDFs via `extract-tables` | Drillhole database and composites: Parquet folder; composites CSV |
 | Block model CSV (`blockmodel import-csv`) | Block model: folder of Parquet + JSON (lossless); block CSV (`blockmodel export-csv`) |
-| Meshes: OBJ, PLY, DXF (3DFACE / polyface), Surpac-style `.dtm` | Meshes: OBJ, PLY, DXF, `.dtm` |
+| Meshes: OBJ, PLY, DXF (3DFACE / polyface), STL (ASCII or binary), Surpac text `.dtm` | Meshes: OBJ, PLY, DXF, `.dtm` |
 | Strings: Surpac-style `.str`, DXF polylines | Strings: `.str`, DXF |
 | | Report: CSV |
 

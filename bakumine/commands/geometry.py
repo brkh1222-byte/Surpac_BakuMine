@@ -53,14 +53,19 @@ def _add_outputs(parser: argparse.ArgumentParser, kind: str) -> None:
     group.add_argument("--summary", metavar="JSON", help="also write the summary as JSON")
 
 
+def _need_output(args: argparse.Namespace) -> None:
+    """Said before the work, not after it."""
+    if not (args.out or args.geometry_dir or args.project):
+        raise CommandError("give --out, --geometry-dir or --project (where the mesh goes)")
+
+
 def _emit(mesh: Any, kind: str, name: str, args: argparse.Namespace, summary: dict) -> None:
     import numpy as np
 
     from bakumine.core.io.files import write_mesh
     from bakumine.core.io.obj import write_obj
 
-    if not (args.out or args.geometry_dir or args.project):
-        raise CommandError("give --out, --geometry-dir or --project")
+    _need_output(args)
     what = f"{kind}, {mesh.n_vertices} vertices, {mesh.n_faces} triangles"
     if args.out:
         path = Path(args.out)
@@ -145,6 +150,7 @@ def run_from_points(args: argparse.Namespace) -> int:
     from bakumine.core.geometry import surface_points as sp
     from bakumine.core.io.files import read_strings
 
+    _need_output(args)
     if len(args.columns) not in (0, 1, len(args.points)):
         raise CommandError("give --columns once, or once per --points table")
     clouds, sources = [], []
@@ -243,6 +249,7 @@ def configure_import(parser: argparse.ArgumentParser) -> None:
 def run_import(args: argparse.Namespace) -> int:
     from bakumine.core.geometry.mesh_import import import_mesh
 
+    _need_output(args)
     mesh, info = import_mesh(args.file, args.kind, args.scale)
     line = f"{info['kind']}: {info['n_vertices']} vertices, {info['n_faces']} triangles"
     if info["kind"] == "solid":
