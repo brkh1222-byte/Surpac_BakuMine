@@ -1,6 +1,6 @@
 # BakuMine Block Modeller: status
 
-Status as of 2026-11-20, `main` at `b7e2aeb` (P7.T6 logged). Sources: `plan.md` §4 and the §8
+Status as of 2026-11-22, `main` after the final review (plan.md §8, 2026-11-22 00:20). Sources: `plan.md` §4 and the §8
 progress log, `research.md`, the module docstrings in `bakumine/core/io/` and
 `bakumine/core/estimation/rotation.py`. Numbers are copied from §8 unless marked otherwise. Where
 §8 says that something was not verified, this file says the same.
@@ -168,7 +168,7 @@ binary-variant note in each.)
 | Report panel | No dedicated Playwright test (§8 P6.T1/T6); it now appears in the README screenshot run (`make screenshots`) |
 | Picking | Meshes over 300k triangles are excluded from cursor picking |
 | Dynamic anisotropy | Slow if every block has distinct angles; `angle_step` mitigation not benchmarked |
-| Job log replay | Constraint-JSON report filters and non-default import options are not replayable |
+| Job log replay | Constraint-JSON report filters are not replayable; digitised strings and solids are not in the job log, so a replay does not rebuild them |
 | DXF | 2D polyline z fix (P7.T5) tested on constructed files only, not on real DXF exports |
 | Babbitt data | Units feet, dips positive down, 70 holes with a sentinel survey at 90 000. No geology table: the domain (footwall contact, basal / upper zones) is inferred from grades and gaps, not logged geology. Density 2.9 t/m³ assumed. LOHO xval corr 0.39. Upstream (NRRI TR-2003/21) has no explicit licence: confirm before redistributing |
 | Performance numbers | One machine, mostly agent-measured; random composites are easier than real drilling |
@@ -201,7 +201,7 @@ uv run pytest tests/cli/test_babbitt_run.py        # Babbitt acceptance assertio
 
 | Suite | Count | Source |
 |---|---|---|
-| pytest (`make check`) | 1382 passed, 3 skipped | orchestrator run after the P7.T5 security merge |
+| pytest (`make check`) | 1832 passed, 3 skipped | orchestrator run after the final review merge |
 | of which strict xfail | 3 | `tests/estimation/test_experimental.py` |
-| vitest | 140 passed | orchestrator run after the P7.T5 security merge |
-| Playwright e2e | 56 passed | orchestrator `make e2e` after the P7.T5 security merge |
+| vitest | 190 passed | orchestrator run after the final review merge |
+| Playwright e2e | 60 passed | orchestrator `make e2e` after the final review merge |
