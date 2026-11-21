@@ -237,9 +237,10 @@ geology or wireframe in that data set, and the density (2.9 t/m3) is assumed.
 | Strings: Surpac-style `.str`, DXF polylines | Strings: `.str`, DXF |
 | | Report: CSV |
 
-The Surpac-style text layouts (`.str`, `.dtm`, block CSV) are **provisional**: they were
-written from documentation and have not yet been checked against files exported by Surpac
-(the assumptions are listed in the module docstrings in `bakumine/core/io/`). Binary
+The `.str` and `.dtm` text layouts follow Surpac's published format description of 1996
+(vertex numbering, winding and file structure; see the module docstrings in
+`bakumine/core/io/`), but have not been checked against files exported by a current Surpac.
+The block CSV layout is still **provisional**. Binary
 Surpac files and `.mdl` models are not read.
 
 Coordinates are `x = east, y = north, z = up`, in metres, float64; Surpac's `Y, X, Z` order is

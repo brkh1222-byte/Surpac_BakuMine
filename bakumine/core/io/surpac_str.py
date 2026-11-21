@@ -4,10 +4,13 @@ PROVISIONAL — not yet validated against a file exported by Surpac.
 ==================================================================
 
 This module is written clean-room from the layout described in research.md
-section 5.6, which is itself a recollection of public descriptions of the
-format. No Surpac-exported file and no Surpac manual were available. Every
-item below is an ASSUMPTION until a real export has been read with
-:func:`bakumine.core.io.surpac_dtm.describe_surpac_file`:
+section 5.6. On 2026-11-21 it was compared with the published "Appendix D -
+File Formats" of the Surpac manual (1996; URL in the docstring of
+:mod:`bakumine.core.io.surpac_dtm`), which CONFIRMS items 1 to 5 below (header
+``location, date, purpose, memo``; axis record; ``string, Y, X, Z, d1, ...``;
+null record; ``END`` record) and adds: string numbers 1 to 32000, up to 100
+description fields of 32 characters, 512 in total (not enforced here). Items 6
+to 8 remain assumptions, and no file exported by a current Surpac was read:
 
 1. Line 1 is a header of comma-separated fields ``location, date, purpose,
    memo``. Anything after the third comma is kept verbatim as the memo, so
@@ -257,6 +260,7 @@ def parse_surpac_str(text: str, *, strict: bool = False, source: str = "<string>
         descriptions.clear()
 
     ended = False
+    n_read = 0  # point records so far = row of the next point in all_points()
     while pos < len(lines):
         i, line = lines[pos]
         pos += 1
@@ -273,6 +277,7 @@ def parse_surpac_str(text: str, *, strict: bool = False, source: str = "<string>
             if strict:
                 raise SurpacFormatError(f"{source}: line {i}: {exc}: {line!r}") from None
             out.skipped.append((i, line))
+            out.record_rows.append(-1)
             continue
         if number == SEPARATOR_STRING_NUMBER:
             if _is_end_record(list(desc)):
@@ -281,6 +286,7 @@ def parse_surpac_str(text: str, *, strict: bool = False, source: str = "<string>
             if any(c != 0.0 for c in xyz):
                 note(f"line {i}: string number 0 with non-zero coordinates; taken as a separator")
             flush()
+            out.record_rows.append(-1)
             continue
         if current_number is not None and number != current_number:
             note(
@@ -291,6 +297,8 @@ def parse_surpac_str(text: str, *, strict: bool = False, source: str = "<string>
         current_number = number
         points.append(xyz)
         descriptions.append(desc)
+        out.record_rows.append(n_read)
+        n_read += 1
     flush()
 
     if not ended:

@@ -1,55 +1,74 @@
 """Surpac DTM / solid file ``.dtm`` (text): read and write, with its ``.str``.
 
-PROVISIONAL — not yet validated against a file exported by Surpac.
-==================================================================
+Written to the PUBLISHED layout; not yet checked against a current export.
+==========================================================================
 
 A ``.dtm`` holds only topology: triangles as index triples into the points of
 the paired ``.str`` file (same name, other extension). It is meaningless
 without that file, so reading takes both and writing produces both.
 
-This module is written clean-room from the layout in research.md section 5.6,
-a recollection of public descriptions. No Surpac-exported file and no Surpac
-manual were available. Every item below is an ASSUMPTION until a real pair has
-been inspected with :func:`describe_surpac_file`:
+Source of the layout: "Appendix D - File Formats" of the Surpac manual (1996,
+Surpac Software International), public at
+https://www.cse.unr.edu/~fredh/papers/working/vr-mining/string.html. It
+describes the text ``.str`` and ``.dtm`` files with a small example pair (a
+box). Clean room: only that published description is used; the example is not
+copied into this repository (the tests use hand-written pairs that follow the
+same rules). The document is from 1996; whether current Surpac versions write
+the same text is NOT verified (no Surpac export was available).
 
-1. Line 1 is a free-text header line. We write ``location, date, purpose,
-   memo`` like the ``.str`` header (location defaults to the name of the
-   paired ``.str`` file). Its content is not interpreted on reading.
-2. Real files MAY carry more lines before the first ``OBJECT`` record (for
-   example a ``0, 0.000, 0.000, 0.000, END`` line copied from the string
-   layout). The reader keeps any such lines in ``SurpacDtm.preamble`` and
-   carries on; the writer emits them only when :data:`WRITE_PREAMBLE_LINES` is
-   filled in.
-3. Blocks: ``OBJECT, <id>`` then one or more ``TRISOLATION, <id>,
-   neighbours=<yes|no>, validated=<true|false>, closed=<yes|no>``. Keyword
-   spelling is in :data:`KEYWORD_OBJECT`, :data:`KEYWORD_TRISOLATION`,
-   :data:`KEYWORD_END`; flag names in :data:`FLAG_NEIGHBOURS`,
-   :data:`FLAG_VALIDATED`, :data:`FLAG_CLOSED`. Which flags use yes/no and
-   which true/false is a guess (see :data:`FLAG_WORDS`); the reader accepts
-   either for all of them, any case, and the spelling ``neighbors``.
-4. Triangle record: ``triangle_id, v1, v2, v3, n1, n2, n3``
-   (:data:`TRIANGLE_COLUMNS`). Triangle ids are 1-based and restart in every
-   trisolation.
-5. Vertex indices ``v`` are 1-based (:data:`VERTEX_INDEX_BASE`) and count the
-   POINT RECORDS of the ``.str`` file in file order across all segments and
-   string numbers; the header, the axis record and the zero separator records
-   are not counted. (Alternative conventions — counting separators, or
-   counting per string — would need a change in :func:`_point_rows`.)
-6. Neighbours ``n`` are triangle ids of the same trisolation, 0 = no
-   neighbour. ``n1`` is the triangle across edge ``v1-v2``, ``n2`` across
-   ``v2-v3``, ``n3`` across ``v3-v1`` (:data:`NEIGHBOUR_EDGES`). The other
-   plausible convention (``n_k`` is opposite vertex ``v_k``) differs only in
-   this constant. An edge shared by more than two triangles gets 0.
-7. A record of zeros ends each trisolation; a line ``END`` ends the file.
+What the document states, and what this module does:
+
+1. Line 1: ``<string file name>,<checksum>`` where the checksum part
+   (``0680000000;algorithm=standard;fields=x,y`` in the example) is optional
+   and "should not be included" by converters. We write ``<name>.str,`` and
+   never a checksum (the algorithm is not published). The line is not
+   interpreted on reading.
+2. Line 2 of the example is ``0, 0.000, 0.000, 0.000, END``. We write it
+   (:data:`WRITE_PREAMBLE_LINES`); the reader keeps any lines before the first
+   ``OBJECT`` record in ``SurpacDtm.preamble``.
+3. ``OBJECT, <id>,`` then ``TRISOLATION, <id>, name=value,...``. Both must
+   exist. The example's values are ``neighbours=yes,closed=yes,
+   direction=solid``; the document calls them optional, assigned by
+   processing modules. We write ``neighbours`` and ``closed``, and
+   ``direction=solid`` for a closed mesh. ``validated=`` is NOT in the
+   document: it is written only when the caller gives it, and read when there.
+   The reader accepts yes/no/true/false for any flag, any case.
+4. Triangle record: ``triangle, v1, v2, v3, n1, n2, n3``; triangle numbers
+   start at one in each trisolation.
+5. Vertex numbers count the records of the ``.str`` file from the first
+   record after its two header lines, and "you MUST include the null points":
+   the zero separator records are counted (:func:`_point_rows`). In the
+   example the second ring starts at point 7 after a ring of 5 and its null
+   record.
+6. Neighbours are triangle numbers of the same trisolation, 0 = none.
+   ``n1`` is opposite vertex 3 (across edge ``v1-v2``), ``n2`` opposite vertex
+   1 (``v2-v3``), ``n3`` opposite vertex 2 (``v3-v1``):
+   :data:`NEIGHBOUR_EDGES`. They may all be zero in converted data.
+7. The example has no record between the last triangle and ``END``. We write
+   none. A block ends at the next ``TRISOLATION`` / ``OBJECT`` / ``END``.
+
+Still assumptions (the document is silent):
+
 8. The writer puts the vertices of every mesh into the ``.str`` as one
    segment per mesh, all with string number
-   :data:`DEFAULT_VERTEX_STRING_NUMBER`. Which string numbers Surpac itself
-   uses for solids is unknown.
-9. Triangle winding is written as stored (counter-clockwise seen from
-   outside). Whether Surpac expects the opposite is unknown; swapping the
-   ``.str`` columns does not mirror the geometry, so no flip is applied.
-10. A binary variant of ``.dtm`` / ``.str`` exists in Surpac. It is NOT
+   :data:`DEFAULT_VERTEX_STRING_NUMBER`.
+9. Winding. The document does not state it, but its example box, read with
+   the ``Y, X, Z`` columns as north, east, up, has every triangle CLOCKWISE
+   seen from outside (signed volume -100^3 in a right-handed east, north, up
+   frame). Our meshes are counter-clockwise seen from outside, so the reader
+   and the writer swap the second and third vertex of every triangle (and the
+   neighbour columns with them): :data:`FILE_WINDING_REVERSED`. Evidence: that
+   one example. Whether open surfaces (DTMs) follow the same rule is unknown;
+   the same swap is applied to them.
+10. A closed string repeats its first point at the end; a file may refer to
+    either copy. The reader does not weld points with equal coordinates.
+11. A binary variant of ``.dtm`` / ``.str`` exists in Surpac. It is NOT
     supported: binary content is rejected with :class:`BinaryFileError`.
+
+Files of the earlier, provisional writer of this module (before 2026-11-21)
+numbered vertices WITHOUT the null records and ended every trisolation with a
+record of zeros. The reader recognises them (zero records and no line 2) and
+reads them the old way, with a warning; ``indexing=`` forces either way.
 
 All layout knowledge sits in the constants and small record functions directly
 below. The reader is tolerant (see :func:`parse_dtm_topology`); the writer is
@@ -111,8 +130,12 @@ FLAG_WORDS = {
     FLAG_VALIDATED: ("true", "false"),
     FLAG_CLOSED: ("yes", "no"),
 }
-#: Order in which the writer emits the flags of a TRISOLATION record.
+#: Order in which the writer emits the flags of a TRISOLATION record (a flag
+#: that is not given is left out).
 FLAG_ORDER = (FLAG_NEIGHBOURS, FLAG_VALIDATED, FLAG_CLOSED)
+#: Written after the flags of a closed mesh, as in the published example.
+FLAG_DIRECTION = "direction"
+DIRECTION_SOLID = "solid"
 #: Separator between flags in a TRISOLATION record.
 WRITE_FLAG_SEPARATOR = ","
 _TRUE_WORDS = {"yes", "y", "true", "t", "1", "on"}
@@ -128,10 +151,19 @@ TRIANGLE_ID_BASE = 1
 NO_NEIGHBOUR = 0
 #: Edge (as corner slots of the triangle) that neighbour n1, n2, n3 lies across.
 NEIGHBOUR_EDGES = ((0, 1), (1, 2), (2, 0))
+#: Triangles in the file are clockwise seen from outside (east, north, up frame);
+#: ours are counter-clockwise: vertices 2 and 3 are swapped on reading and writing.
+FILE_WINDING_REVERSED = True
+#: Column order that swaps the winding of (v1, v2, v3) and of (n1, n2, n3).
+_SWAP_VERTICES = [0, 2, 1]
+_SWAP_NEIGHBOURS = [2, 1, 0]
 #: String number the writer gives to the vertex segments in the .str file.
 DEFAULT_VERTEX_STRING_NUMBER = 1
-#: Extra lines the writer puts between the header and the first OBJECT record.
-WRITE_PREAMBLE_LINES: tuple[str, ...] = ()
+#: Lines the writer puts between the header and the first OBJECT record.
+WRITE_PREAMBLE_LINES: tuple[str, ...] = ("0, 0.000, 0.000, 0.000, END",)
+#: Whether the writer ends a trisolation with a record of zeros (the published
+#: example has none; the provisional writer of this module wrote one).
+WRITE_ZERO_RECORD = False
 #: Whether records end with a trailing separator (``1, 2, 3, 4, 0, 0, 0,``).
 WRITE_TRAILING_SEPARATOR = True
 
@@ -146,7 +178,13 @@ def _format_object_record(object_id: int) -> str:
 
 
 def _format_trisolation_record(trisolation_id: int, flags: dict[str, bool]) -> str:
-    words = [f"{name}={FLAG_WORDS[name][0 if flags[name] else 1]}" for name in FLAG_ORDER]
+    words = [
+        f"{name}={FLAG_WORDS[name][0 if flags[name] else 1]}"
+        for name in FLAG_ORDER
+        if flags.get(name) is not None
+    ]
+    if flags.get(FLAG_CLOSED):
+        words.append(f"{FLAG_DIRECTION}={DIRECTION_SOLID}")
     return WRITE_SEPARATOR.join(
         [KEYWORD_TRISOLATION, str(trisolation_id), WRITE_FLAG_SEPARATOR.join(words)]
     )
@@ -156,7 +194,7 @@ def _format_triangle_records(faces: np.ndarray, neighbours: np.ndarray, offset: 
     """Triangle records of one trisolation.
 
     ``faces`` are 0-based rows of this mesh's vertices, ``offset`` the number
-    of .str point records before its first vertex, ``neighbours`` 0-based face
+    of .str records (points and null records) before its first vertex, ``neighbours`` 0-based face
     indices per edge slot (-1 = none).
     """
     ids = np.arange(len(faces)) + TRIANGLE_ID_BASE
@@ -170,9 +208,21 @@ def _format_zero_record() -> str:
     return _finish_record(["0"] * len(TRIANGLE_COLUMNS))
 
 
-def _point_rows(vertex_ids: np.ndarray) -> np.ndarray:
-    """Rows of ``StringFile.all_points()`` addressed by the v columns of a .dtm."""
-    return vertex_ids - VERTEX_INDEX_BASE
+def _point_rows(vertex_ids: np.ndarray, record_rows: np.ndarray | None = None) -> np.ndarray:
+    """Rows of ``StringFile.all_points()`` addressed by the v columns of a .dtm.
+
+    With ``record_rows`` (``StringFile.record_rows``) the numbers count every
+    record of the ``.str`` after its two header lines, null records included
+    (the published rule); a number that names a null record or no record gives
+    -1. Without it they count point records only (the old provisional rule).
+    """
+    index = vertex_ids - VERTEX_INDEX_BASE
+    if record_rows is None:
+        return index
+    inside = (index >= 0) & (index < len(record_rows))
+    rows = np.full(index.shape, -1, dtype=np.int64)
+    rows[inside] = record_rows[index[inside]]
+    return rows
 
 
 def mesh_neighbours(mesh: Mesh) -> np.ndarray:
@@ -278,6 +328,7 @@ class _RawDtm:
     warnings: list[str] = field(default_factory=list)
     skipped: list[tuple[int, str]] = field(default_factory=list)
     ended: bool = False
+    zero_records: int = 0
 
 
 # --------------------------------------------------------------------- read
@@ -331,7 +382,8 @@ def parse_dtm_topology(text: str, *, strict: bool = False, source: str = "<strin
       or with extra columns (ignored);
     * a ``TRISOLATION`` with no ``OBJECT`` before it, triangle records with no
       ``TRISOLATION`` before them, a missing id (warning; ids are made up);
-    * a missing zero record at the end of a trisolation, a missing ``END``
+    * a record of zeros at the end of a trisolation (counted in
+      ``zero_records``; the published layout has none), a missing ``END``
       (warning);
     * lines that cannot be parsed and anything after ``END``: skipped and
       listed in ``skipped`` (warning).
@@ -427,6 +479,7 @@ def parse_dtm_topology(text: str, *, strict: bool = False, source: str = "<strin
             continue
         if values[0] == 0 and not any(values[1:4]):
             block = None
+            raw.zero_records += 1
             continue
         if block is None:
             note(f"line {i}: triangle record outside a {KEYWORD_TRISOLATION}; one is assumed")
@@ -434,8 +487,6 @@ def parse_dtm_topology(text: str, *, strict: bool = False, source: str = "<strin
         row = values[:7] + [NO_NEIGHBOUR] * (7 - len(values[:7]))
         block.records.append(row)
 
-    if block is not None and raw.ended:
-        note(f"trisolation {block.trisolation_id} of object {block.object_id} has no zero record")
     if not raw.ended:
         note(f"no {KEYWORD_END} record at the end of the file")
     elif pos < len(lines):
@@ -474,7 +525,9 @@ def _paired_path(path: Path, suffix: str) -> Path:
     return path.with_suffix(suffix)
 
 
-def read_surpac_dtm(dtm_path, str_path=None, *, strict: bool = False) -> SurpacDtm:
+def read_surpac_dtm(
+    dtm_path, str_path=None, *, strict: bool = False, indexing: str = "auto"
+) -> SurpacDtm:
     """Read a Surpac text ``.dtm`` together with its ``.str``.
 
     Parameters
@@ -486,6 +539,13 @@ def read_surpac_dtm(dtm_path, str_path=None, *, strict: bool = False) -> SurpacD
     strict : bool
         Raise :class:`SurpacFormatError` on any deviation from the layout
         instead of recording a warning.
+    indexing : {"auto", "records", "points"}
+        How the vertex numbers count the ``.str``: ``"records"`` counts every
+        record after the two header lines, null records included (the
+        published rule); ``"points"`` counts point records only (files of this
+        module's provisional writer). ``"auto"`` takes ``"points"`` for a file
+        that looks like one of those (records of zeros, no line 2) and
+        ``"records"`` otherwise.
 
     Returns
     -------
@@ -495,10 +555,10 @@ def read_surpac_dtm(dtm_path, str_path=None, *, strict: bool = False) -> SurpacD
         and ``.ids`` are shortcuts.
 
     Every mesh is in internal coordinates (east, north, up) and holds only the
-    points its triangles use, in ``.str`` order; triangle order and winding
-    are as in the file. Vertex indices that fall outside the points of the
-    ``.str`` raise :class:`SurpacFormatError` — that is the symptom of a wrong
-    indexing assumption (see the module docstring, item 5).
+    points its triangles use, in ``.str`` order; triangle order is as in the file
+    (winding: see the module docstring, item 9). Vertex numbers that name a null
+    record or no record of the ``.str`` raise :class:`SurpacFormatError` — the symptom of files that
+    are not a pair, or of the other counting rule (``indexing``).
     Raises :class:`BinaryFileError` if either file is binary.
     """
     dtm_path = Path(dtm_path)
@@ -512,6 +572,19 @@ def read_surpac_dtm(dtm_path, str_path=None, *, strict: bool = False) -> SurpacD
         )
     strings = surpac_str.read_surpac_str(str_path, strict=strict)
     points = strings.all_points()
+    if indexing not in ("auto", "records", "points"):
+        raise ValueError(f"indexing must be 'auto', 'records' or 'points', got {indexing!r}")
+    if indexing == "auto":
+        legacy = raw.zero_records > 0 and not raw.preamble
+        indexing = "points" if legacy else "records"
+        if legacy and strings.n_segments > 1:
+            raw.warnings.append(
+                "the file ends its trisolations with records of zeros and has no second "
+                "header line: read as a file of the provisional BakuMine writer (vertex "
+                "numbers do not count the null records of the .str); pass "
+                "indexing='records' for the published rule"
+            )
+    record_rows = np.asarray(strings.record_rows, dtype=np.int64) if indexing == "records" else None
 
     out = SurpacDtm(
         header=raw.header,
@@ -523,15 +596,25 @@ def read_surpac_dtm(dtm_path, str_path=None, *, strict: bool = False) -> SurpacD
     for block in raw.trisolations:
         name = f"object {block.object_id} trisolation {block.trisolation_id}"
         triangle_ids, vertex_ids, neighbour_ids = block.arrays()
-        rows = _point_rows(vertex_ids)
+        rows = _point_rows(vertex_ids, record_rows)
         if rows.size and (rows.min() < 0 or rows.max() >= len(points)):
-            raise SurpacFormatError(
-                f"{source}: {name} uses point indices {int(vertex_ids.min())}.."
-                f"{int(vertex_ids.max())}, but {str_path.name} has {len(points)} point records "
-                f"(expected {VERTEX_INDEX_BASE}..{len(points) - 1 + VERTEX_INDEX_BASE}). "
-                "Either the files are not a pair or the point-counting convention of this "
-                "provisional reader is wrong; run describe_surpac_file() on both files."
+            bad = vertex_ids[(rows < 0) | (rows >= len(points))]
+            counted = (
+                f"{len(strings.record_rows)} records ({len(points)} points and the null records)"
+                if record_rows is not None
+                else f"{len(points)} point records"
             )
+            raise SurpacFormatError(
+                f"{source}: {name} uses point numbers {int(vertex_ids.min())}.."
+                f"{int(vertex_ids.max())}; {len(np.unique(bad))} of them "
+                f"(first: {int(bad.flat[0])}) name a null record or no record of "
+                f"{str_path.name}, which has {counted}. "
+                "Either the files are not a pair or the vertex numbers count the other way "
+                "(indexing='points' / 'records'); run describe_surpac_file() on both files."
+            )
+        if FILE_WINDING_REVERSED and record_rows is not None:  # not for the provisional files
+            rows = rows[:, _SWAP_VERTICES]
+            neighbour_ids = neighbour_ids[:, _SWAP_NEIGHBOURS]
         used = np.unique(rows)
         remap = np.full(len(points), -1, dtype=np.int64)
         remap[used] = np.arange(len(used))
@@ -593,10 +676,9 @@ def write_surpac_dtm(
         for plain meshes each mesh becomes its own object (1, 2, ...) holding
         trisolation 1. Meshes that share an object id must be adjacent.
     validated : bool or sequence of bool, optional
-        Value of the ``validated`` flag. Default: the ``validated`` attribute
-        of a :class:`SurpacTrisolation` item if set, otherwise the result of
-        ``mesh.validate().is_valid`` (a full check including
-        self-intersection; pass a bool to skip it for large meshes).
+        Value of a ``validated`` flag. The published layout has no such flag:
+        it is written only when given here or set on a
+        :class:`SurpacTrisolation` item, and left out otherwise.
     write_neighbours : bool
         Compute neighbours from the mesh edge map and write them with
         ``neighbours=yes`` (default). False writes zeros and ``neighbours=no``.
@@ -633,7 +715,7 @@ def write_surpac_dtm(
         validated = [validated] * n
     validated = per_item(validated, "validated")
 
-    blocks: list[tuple[int, int, Mesh, bool]] = []
+    blocks: list[tuple[int, int, Mesh, bool | None]] = []
     for k, item in enumerate(items):
         if isinstance(item, SurpacTrisolation):
             mesh = item.mesh
@@ -651,9 +733,7 @@ def write_surpac_dtm(
             raise SurpacFormatError(f"mesh {k} has no faces")
         if int(oid) < 1 or int(tid) < 1:
             raise SurpacFormatError(f"mesh {k}: object and trisolation ids must be >= 1")
-        if flag is None:
-            flag = bool(mesh.validate().is_valid)
-        blocks.append((int(oid), int(tid), mesh, bool(flag)))
+        blocks.append((int(oid), int(tid), mesh, None if flag is None else bool(flag)))
 
     keys = [(oid, tid) for oid, tid, _, _ in blocks]
     if len(set(keys)) != len(keys):
@@ -674,7 +754,8 @@ def write_surpac_dtm(
         str_path, StringFile(segments=segments, header=header), decimals=decimals, newline=newline
     )
 
-    lines = [surpac_str.format_surpac_str(StringFile(header=header)).splitlines()[0]]
+    surpac_str._check_text_field(str_path.name, "string file name")
+    lines = [str_path.name + FIELD_SEPARATOR]  # "<string file>,<checksum>" without a checksum
     lines.extend(WRITE_PREAMBLE_LINES)
     offset = 0
     previous_object = None
@@ -692,9 +773,13 @@ def write_surpac_dtm(
             neighbours = mesh_neighbours(mesh)
         else:
             neighbours = np.full((mesh.n_faces, 3), -1, dtype=np.int64)
-        lines.extend(_format_triangle_records(mesh.faces, neighbours, offset))
-        lines.append(_format_zero_record())
-        offset += mesh.n_vertices
+        faces = mesh.faces
+        if FILE_WINDING_REVERSED:
+            faces, neighbours = faces[:, _SWAP_VERTICES], neighbours[:, _SWAP_NEIGHBOURS]
+        lines.extend(_format_triangle_records(faces, neighbours, offset))
+        if WRITE_ZERO_RECORD:
+            lines.append(_format_zero_record())
+        offset += mesh.n_vertices + 1  # the points of the segment and its null record
     lines.append(KEYWORD_END)
     dtm_path.write_bytes((newline.join(lines) + newline).encode("utf-8"))
 
@@ -793,7 +878,7 @@ def _describe_str(text: str, out: list[str], limit: int) -> None:
 
 
 def _describe_dtm(path: Path, text: str, out: list[str], limit: int) -> None:
-    out.append("kind: Surpac DTM file (.dtm), text  [PROVISIONAL parser]")
+    out.append("kind: Surpac DTM file (.dtm), text  [layout of the 1996 format appendix]")
     raw = parse_dtm_topology(text)
     out.append(f"header: {raw.header!r}")
     out.append(f"lines between header and first block: {len(raw.preamble)}")
@@ -832,9 +917,21 @@ def _describe_dtm(path: Path, text: str, out: list[str], limit: int) -> None:
     except (ValueError, OSError) as exc:
         out.append(f"paired string file: {str_path.name} could not be read: {exc}")
         return
-    verdict = "consistent" if max_vertex <= sf.n_points - 1 + VERTEX_INDEX_BASE else "INCONSISTENT"
+    n_records = len(sf.record_rows)
     out.append(
         f"paired string file: {str_path.name}, {sf.n_points} point record(s) in "
-        f"{sf.n_segments} segment(s); largest vertex index in the .dtm is {max_vertex} "
-        f"-> {verdict} with {VERTEX_INDEX_BASE}-based counting of point records"
+        f"{sf.n_segments} segment(s), {n_records} record(s) with the null records; "
+        f"largest vertex number in the .dtm is {max_vertex}"
     )
+    record_rows = np.asarray(sf.record_rows, dtype=np.int64)
+    for t in raw.trisolations:
+        _, vertex_ids, _ = t.arrays()
+        if not len(vertex_ids):
+            continue
+        by_record = int((_point_rows(vertex_ids, record_rows) < 0).sum())
+        by_point = int((_point_rows(vertex_ids) >= sf.n_points).sum())
+        out.append(
+            f"  object {t.object_id} trisolation {t.trisolation_id}: counting all records "
+            f"(published rule) {by_record} vertex number(s) name no point; counting point "
+            f"records only {by_point}"
+        )

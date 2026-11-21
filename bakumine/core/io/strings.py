@@ -152,6 +152,10 @@ class StringFile:
     axis: AxisRecord | None = None
     warnings: list[str] = field(default_factory=list, compare=False)
     skipped: list[tuple[int, str]] = field(default_factory=list, compare=False)
+    #: filled by the Surpac reader: for every record after the header and the axis record,
+    #: in file order, the row of :meth:`all_points` it holds, or -1 for a null (separator)
+    #: record or an unreadable line. A ``.dtm`` numbers its vertices by these records.
+    record_rows: list[int] = field(default_factory=list, compare=False, repr=False)
 
     @classmethod
     def from_arrays(

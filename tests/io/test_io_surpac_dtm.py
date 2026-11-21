@@ -1,8 +1,12 @@
 """P2.T8 acceptance: Surpac .dtm + .str text read/write.
 
-The layout is PROVISIONAL (research.md section 5.6): these tests fix the
-behaviour of our reader and writer against the documented layout, not against
-a file exported by Surpac.
+The layout follows the published "Appendix D - File Formats" (Surpac, 1996; see
+the module docstring of ``bakumine.core.io.surpac_dtm``): vertex numbers count
+the null records of the ``.str``, triangles are clockwise seen from outside, no
+record of zeros ends a trisolation. The pairs below are hand-written to those
+rules (the appendix's own example is not copied here; it was read once with this
+reader: closed, 8 vertices, volume -> +100^3, neighbours as the edge map gives).
+Not checked against a file exported by a current Surpac.
 """
 
 import warnings
@@ -128,6 +132,7 @@ def test_round_trip(tmp_path, name):
         "neighbours": "yes",
         "validated": "true" if is_solid else "false",
         "closed": "yes" if is_solid else "no",
+        **({"direction": "solid"} if is_solid else {}),
     }
     # neighbours as written equal those of the mesh edge map
     np.testing.assert_array_equal(tri.neighbours, mesh_neighbours(original))
@@ -150,12 +155,25 @@ def test_volume_matches_analytic_after_round_trip(tmp_path):
     assert back.volume == pytest.approx(64_000.0, rel=1e-12)
 
 
-def test_default_validated_flag_is_computed(tmp_path):
+def test_validated_flag_is_written_only_when_given(tmp_path):
+    """The published layout has no ``validated`` value: none is made up."""
     solid = cube(10.0, center=UTM)
     open_mesh = solid.submesh(np.arange(solid.n_faces - 2))
     result = round_trip(tmp_path, [solid, open_mesh])
-    assert [t.validated for t in result] == [True, False]
+    assert [t.validated for t in result] == [None, None]
     assert [t.closed for t in result] == [True, False]
+    assert [t.flags for t in result] == [
+        {"neighbours": "yes", "closed": "yes", "direction": "solid"},
+        {"neighbours": "yes", "closed": "no"},
+    ]
+    lines = (tmp_path / "model.dtm").read_text().splitlines()
+    assert lines[:4] == [
+        "model.str,",
+        "0, 0.000, 0.000, 0.000, END",
+        "OBJECT, 1,",
+        "TRISOLATION, 1, neighbours=yes,closed=yes,direction=solid",
+    ]
+    assert lines[-1] == "END" and not lines[-2].startswith("0,")  # no record of zeros
 
 
 def test_multiple_objects_and_trisolations(tmp_path):
@@ -228,8 +246,9 @@ def test_without_neighbours(tmp_path):
 # ------------------------------------------------------------ hand-written
 
 # A tetrahedron. The points sit in TWO segments (and two string numbers) of the
-# .str so that the index convention is pinned down: v counts point records in
-# file order across segments, 1-based; separator and axis records do not count.
+# .str so that the numbering is pinned down: v counts the records after the two
+# header lines, 1-based, null records INCLUDED: P1 = 1, P2 = 2, (null = 3),
+# P3 = 4, P4 = 5. Triangles are clockwise seen from outside; n1 is across v1-v2.
 HAND_STR = """\
 tetra.str, 19-Nov-26, hand written, minimal pair
 0, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000
@@ -242,6 +261,31 @@ tetra.str, 19-Nov-26, hand written, minimal pair
 0, 0.000, 0.000, 0.000, END
 """
 HAND_DTM = """\
+tetra.str,
+0, 0.000, 0.000, 0.000, END
+OBJECT, 1,
+TRISOLATION, 1, neighbours=yes,closed=yes,direction=solid
+1, 1, 2, 4, 2, 4, 3,
+2, 1, 5, 2, 3, 4, 1,
+3, 1, 4, 5, 1, 4, 2,
+4, 2, 5, 4, 2, 3, 1,
+END
+"""
+# what the writer gives for the same mesh: all four points in ONE segment (1..4)
+WRITTEN_DTM = """\
+tetra.str,
+0, 0.000, 0.000, 0.000, END
+OBJECT, 1,
+TRISOLATION, 1, neighbours=yes,closed=yes,direction=solid
+1, 1, 2, 3, 2, 4, 3,
+2, 1, 4, 2, 3, 4, 1,
+3, 1, 3, 4, 1, 4, 2,
+4, 2, 4, 3, 2, 3, 1,
+END
+"""
+# the same tetrahedron as this module's provisional writer wrote it before 2026-11-21:
+# null records not counted, counter-clockwise, a record of zeros, no second line
+LEGACY_DTM = """\
 tetra.str, 19-Nov-26, hand written, minimal pair
 OBJECT, 1,
 TRISOLATION, 1, neighbours=yes,validated=true,closed=yes
@@ -282,7 +326,8 @@ def test_hand_written_minimal_pair(tmp_path):
     np.testing.assert_array_equal(tri.mesh.vertices, HAND_VERTICES)
     np.testing.assert_array_equal(tri.mesh.faces, HAND_FACES)
     np.testing.assert_array_equal(tri.neighbours, HAND_NEIGHBOURS)
-    assert (tri.has_neighbours, tri.validated, tri.closed) == (True, True, True)
+    assert (tri.has_neighbours, tri.validated, tri.closed) == (True, None, True)
+    assert tri.flags["direction"] == "solid"
     # geometry: right-angled tetrahedron with 10 m legs, outward winding
     assert tri.mesh.signed_volume == pytest.approx(1000.0 / 6.0, rel=1e-12)
     assert tri.mesh.validate().is_valid
@@ -296,11 +341,67 @@ def test_writer_reproduces_hand_written_dtm(tmp_path):
     """The writer's output for the same mesh is the hand-written topology file."""
     path = tmp_path / "tetra.dtm"
     write_surpac_dtm(path, Mesh(HAND_VERTICES, HAND_FACES))
-    assert path.read_text().splitlines()[1:] == HAND_DTM.splitlines()[1:]
+    assert path.read_text() == WRITTEN_DTM
     lines = (tmp_path / "tetra.str").read_text().splitlines()
     assert lines[2] == "1, 5300000.000, 500000.000, 100.000,"  # north first
     assert lines[3] == "1, 5300000.000, 500010.000, 100.000,"
     assert lines[-1] == "0, 0.000, 0.000, 0.000, END"
+
+
+def test_file_of_the_provisional_writer_is_still_read(tmp_path):
+    path = write_hand_pair(tmp_path, dtm_text=LEGACY_DTM)
+    with pytest.warns(FormatWarning, match="provisional BakuMine writer"):
+        result = read_surpac_dtm(path)
+    tri = result.trisolations[0]
+    np.testing.assert_array_equal(tri.mesh.vertices, HAND_VERTICES)
+    np.testing.assert_array_equal(tri.mesh.faces, HAND_FACES)
+    np.testing.assert_array_equal(tri.neighbours, HAND_NEIGHBOURS)
+    assert tri.mesh.signed_volume == pytest.approx(1000.0 / 6.0, rel=1e-12)
+    # said to follow the published rule, its number 3 is the null record
+    with pytest.raises(SurpacFormatError, match="null record"):
+        read_surpac_dtm(path, indexing="records")
+    with pytest.raises(ValueError, match="indexing"):
+        read_surpac_dtm(path, indexing="other")
+
+
+def test_rings_that_repeat_their_first_point(tmp_path):
+    """A triangular prism digitised as two closed rings, as a Surpac solid between two
+    sections is: each ring repeats its first point, a null record ends it, and the vertex
+    numbers count all of them (ring 2 starts at 6). Analytic volume 30 * 40 / 2 * 10."""
+    strings = """\
+prism.str, 21-Nov-26, hand written,
+0, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000
+1, 0.000, 0.000, 0.000,
+1, 0.000, 30.000, 0.000,
+1, 40.000, 0.000, 0.000,
+1, 0.000, 0.000, 0.000,
+0, 0.000, 0.000, 0.000,
+2, 0.000, 0.000, 10.000,
+2, 0.000, 30.000, 10.000,
+2, 40.000, 0.000, 10.000,
+2, 0.000, 0.000, 10.000,
+0, 0.000, 0.000, 0.000,
+0, 0.000, 0.000, 0.000, END
+"""
+    a, b, c, d, e, f = 1, 2, 3, 6, 7, 8  # record numbers of the six corners
+    outward = [(a, c, b), (d, e, f), (a, b, e), (a, e, d), (b, c, f), (b, f, e),
+               (c, a, d), (c, d, f)]  # counter-clockwise seen from outside  # fmt: skip
+    records = [f"{k}, {u}, {w}, {v}, 0, 0, 0," for k, (u, v, w) in enumerate(outward, 1)]
+    topology = "\n".join(
+        ["prism.str,", "0, 0.000, 0.000, 0.000, END", "OBJECT, 1,",
+         "TRISOLATION, 1, neighbours=no,closed=yes,direction=solid", *records, "END"]
+    )  # fmt: skip
+    path = write_hand_pair(tmp_path, dtm_text=topology + "\n", str_text=strings, stem="prism")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mesh = read_surpac_dtm(path, strict=True).meshes[0]
+    assert mesh.n_vertices == 6 and mesh.is_closed
+    assert mesh.signed_volume == pytest.approx(6000.0, rel=1e-12)
+    assert mesh.validate().is_valid
+    np.testing.assert_allclose(mesh.vertices.max(axis=0), [30.0, 40.0, 10.0])  # east, north, up
+    text = describe_surpac_file(path)
+    assert "10 record(s) with the null records" in text
+    assert "(published rule) 0 vertex number(s) name no point" in text
 
 
 def test_explicit_str_path_and_missing_str(tmp_path):
@@ -320,11 +421,11 @@ def test_tolerant_variants(tmp_path):
         "\r\n"
         "object,1\r\n"
         "Trisolation , 1 , Neighbors=NO , closed=TRUE, validated=Yes, colour=red\r\n"
-        "1,1,3,2\r\n"  # no neighbour columns
-        "  2 1 2 4 0 0 0\r\n"  # whitespace separated
-        "3, 1, 4, 3, 0, 0, 0,\r\n"
-        "4, 2, 3, 4, 0, 0, 0, 99, 98,\r\n"  # extra columns
-        "0, 0, 0, 0, 0, 0, 0,\r\n"
+        "1,1,2,4\r\n"  # no neighbour columns
+        "  2 1 5 2 0 0 0\r\n"  # whitespace separated
+        "3, 1, 4, 5, 0, 0, 0,\r\n"
+        "4, 2, 5, 4, 0, 0, 0, 99, 98,\r\n"  # extra columns
+        "0, 0, 0, 0, 0, 0, 0,\r\n"  # a record of zeros is tolerated
         "end\r\n"
     )
     path = write_hand_pair(tmp_path, dtm_text=variant.replace("\r\n", "\n"))
@@ -343,15 +444,15 @@ def test_tolerant_variants(tmp_path):
 
 
 def test_tolerant_structure_deviations(tmp_path):
-    # no OBJECT record, no flags, no zero record, no END, and a junk line
+    # no OBJECT record, no flags, no END, and a junk line
     text = (
         "header\n"
         "TRISOLATION, 4\n"
-        "1, 1, 3, 2, 3, 4, 2,\n"
-        "2, 1, 2, 4, 1, 4, 3,\n"
+        "1, 1, 2, 4, 2, 4, 3,\n"
+        "2, 1, 5, 2, 3, 4, 1,\n"
         "what is this\n"
-        "3, 1, 4, 3, 2, 4, 1,\n"
-        "4, 2, 3, 4, 1, 3, 77,\n"
+        "3, 1, 4, 5, 1, 4, 2,\n"
+        "4, 2, 5, 4, 77, 3, 1,\n"
     )
     path = write_hand_pair(tmp_path, dtm_text=text)
     with pytest.warns(FormatWarning):
@@ -372,11 +473,15 @@ def test_tolerant_structure_deviations(tmp_path):
 
 
 def test_vertex_index_out_of_range_is_an_error(tmp_path):
-    path = write_hand_pair(tmp_path, dtm_text=HAND_DTM.replace("4, 2, 3, 4,", "4, 2, 3, 5,"))
-    with pytest.raises(SurpacFormatError, match="point indices 1..5.*4 point records"):
+    path = write_hand_pair(tmp_path, dtm_text=HAND_DTM.replace("4, 2, 5, 4,", "4, 2, 5, 7,"))
+    with pytest.raises(SurpacFormatError, match=r"point numbers 1..7.*first: 7.*6 records"):
+        read_surpac_dtm(path)
+    # a number that names a null record (3) is not read as the next point
+    path = write_hand_pair(tmp_path, dtm_text=HAND_DTM.replace("1, 1, 2, 4,", "1, 1, 2, 3,"))
+    with pytest.raises(SurpacFormatError, match="first: 3.*null record"):
         read_surpac_dtm(path)
     # 0-based files are caught as well, instead of being read shifted by one
-    zero_based = HAND_DTM.replace("1, 1, 3, 2,", "1, 0, 2, 1,")
+    zero_based = HAND_DTM.replace("1, 1, 2, 4,", "1, 0, 1, 3,")
     path = write_hand_pair(tmp_path, dtm_text=zero_based)
     with pytest.raises(SurpacFormatError, match="describe_surpac_file"):
         read_surpac_dtm(path)
@@ -390,11 +495,11 @@ def test_unreferenced_points_are_dropped(tmp_path):
     )
 
     def shift(line: str) -> str:
-        """Add 1 to the three vertex indices of a triangle record."""
+        """Add 2 (the unused point and its null record) to the vertex numbers."""
         if not line[0].isdigit() or line.startswith("0"):
             return line
         t = [int(x) for x in line.rstrip(",").split(", ")]
-        return ", ".join(str(x) for x in [t[0], t[1] + 1, t[2] + 1, t[3] + 1, *t[4:]]) + ","
+        return ", ".join(str(x) for x in [t[0], t[1] + 2, t[2] + 2, t[3] + 2, *t[4:]]) + ","
 
     shifted = "\n".join(shift(ln) for ln in HAND_DTM.splitlines())
     path = write_hand_pair(tmp_path, dtm_text=shifted + "\n", str_text=extra)
@@ -425,14 +530,15 @@ def test_binary_files_are_rejected(tmp_path):
 def test_describe_surpac_file(tmp_path):
     path = write_hand_pair(tmp_path)
     text = describe_surpac_file(path)
-    assert "Surpac DTM file" in text and "PROVISIONAL" in text
+    assert "Surpac DTM file" in text and "1996 format appendix" in text
     assert "objects: 1 [1]; trisolations: 1" in text
     assert "4 triangle(s)" in text
     assert "'neighbours': 'yes'" in text
-    assert "vertex indices 1..4" in text
-    assert "[1, 1, 3, 2, 3, 4, 2]" in text  # first record as parsed
+    assert "vertex indices 1..5" in text  # the null record is number 3
+    assert "[1, 1, 2, 4, 2, 4, 3]" in text  # first record as parsed
     assert "END record found: True" in text
-    assert "4 point record(s)" in text and "consistent" in text and "INCONSISTENT" not in text
+    assert "4 point record(s)" in text and "6 record(s) with the null records" in text
+    assert "(published rule) 0 vertex number(s) name no point" in text
 
     text = describe_surpac_file(tmp_path / "tetra.str")
     assert "Surpac string file" in text
@@ -444,10 +550,10 @@ def test_describe_surpac_file(tmp_path):
 
 
 def test_describe_reports_problems_without_raising(tmp_path):
-    bad_dtm = HAND_DTM.replace("4, 2, 3, 4,", "4, 2, 3, 9,").replace("END\n", "junk line\n")
+    bad_dtm = HAND_DTM.replace("4, 2, 5, 4,", "4, 2, 5, 9,").removesuffix("END\n") + "junk line\n"
     path = write_hand_pair(tmp_path, dtm_text=bad_dtm)
     text = describe_surpac_file(path, max_records=2)
-    assert "INCONSISTENT" in text
+    assert "(published rule) 1 vertex number(s) name no point" in text
     assert "no END record" in text
     assert "skipped lines: 1" in text and "'junk line'" in text
 
