@@ -296,12 +296,18 @@ def write_collar_dms(
 
 def write_e2e_fixtures(folder: Path) -> None:
     """The files the browser test uploads: an assay workbook with one sheet per hole,
-    QC rows and depths in the sample numbers, a DMS collar workbook, and the truth."""
+    QC rows and depths in the sample numbers, a DMS collar workbook, the assays as a plain table
+    (``assay_plain.csv``) with one row written differently (``assay_near.csv``), and the truth."""
     tables = truth()
     folder.mkdir(parents=True, exist_ok=True)
     counts = write_sheet_per_hole(folder / "assays.xlsx", tables["assay"], depths="sample", qc=True)
     write_collar_dms(folder / "collars.xlsx", tables["collar"], tables["survey"])
     write_clean(folder / "clean", tables)
+    # the first sample again, from another file, ending 0.3 m later: one interval or an overlap
+    near = tables["assay"].iloc[[0]][["hole_id", "from", "to", "au"]].copy()
+    near["to"] = near["to"].astype(float) + 0.3
+    near.to_csv(folder / "assay_near.csv", index=False)
+    tables["assay"].to_csv(folder / "assay_plain.csv", index=False)  # from / to stated
     summary = {
         "holes": N_HOLES,
         "assay_rows": int(len(tables["assay"])),

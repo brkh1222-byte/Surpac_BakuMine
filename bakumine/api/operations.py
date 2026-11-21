@@ -442,6 +442,9 @@ def _import(
                 t: {**d, "examples": d["examples"][:5]}
                 for t, d in reports.get("duplicates", {}).items()
             },
+            "overlaps": {
+                t: {**o, "rows": o["rows"][:5]} for t, o in reports.get("overlaps", {}).items()
+            },
             "sources": reports.get("sources", {}),
             "units": reports.get("units", {}),
             "survey": reports.get("survey"),
@@ -463,7 +466,7 @@ def _import(
 _LONG = {
     "issues", "counts", "preview", "table", "notes", "columns", "steps", "rows",
     "recipe", "conflicts", "coordinates", "sample_depth", "survey", "dropped_rows", "units",
-    "hole_filter", "sources", "duplicates",
+    "hole_filter", "sources", "duplicates", "overlaps",
 }  # fmt: skip
 
 

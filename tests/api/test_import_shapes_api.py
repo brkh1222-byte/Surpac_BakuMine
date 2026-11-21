@@ -316,3 +316,49 @@ def test_import_of_two_collar_files_with_their_own_options(setup, tmp_path):
         f"{OPS}/import", json={"tables": {"collar": [{}, {"options": {"delimiter": ";"}}]}}
     )
     assert bad.status_code == 400 and "cannot set ['delimiter']" in bad.text
+
+
+def test_interval_tolerance_and_overlaps_of_two_assay_files(setup, tmp_path):
+    """One sample ends 0.3 m later in the second file: one interval within the tolerance
+    (default 0.5), an overlap that the import reports when the tolerance is 0."""
+    client, assay = setup["client"], setup["tables"]["assay"]
+    end = next(c for c in assay.columns if c.casefold() in ("to", "depth_to"))
+    for name in ("collar", "survey"):
+        pd.read_csv(setup["clean"][name], sep=";").to_csv(tmp_path / f"{name}.csv", index=False)
+        ok(upload(client, name, tmp_path / f"{name}.csv"))
+    hole = assay["hole_id"].iloc[0]
+    last = assay.index[assay["hole_id"] == hole][-1]  # the hole's last sample: nothing below
+    other = assay.loc[[last]].copy()
+    other[end] = other[end].astype(float) + 0.3
+    assay.to_csv(tmp_path / "first.csv", index=False)
+    other.to_csv(tmp_path / "second.csv", index=False)
+    ok(upload(client, "assay", tmp_path / "first.csv"))
+    ok(upload(client, "assay", tmp_path / "second.csv", add=True))
+    body = {"name": "near", "options": {"dip_convention": "auto", "derive_max_depth": False}}
+    result = ok(client.post(f"{OPS}/import", json=body))
+    merged = result["conflicts"]["assay"]
+    assert (merged["near_intervals"], merged["interval_tolerance"]) == (1, 0.5)
+    assert result["tables"]["assay"] == len(assay) and result["overlaps"] == {}
+    assert result["recipe"]["merge"]["interval_tolerance"] == 0.5
+    strict = ok(client.post(f"{OPS}/import", json={**body, "merge": {"interval_tolerance": 0}}))
+    assert strict["tables"]["assay"] == len(assay) + 1
+    assert strict["conflicts"]["assay"]["near_intervals"] == 0
+    report = strict["overlaps"]["assay"]
+    assert (report["count"], report["holes"], report["listing"]) == (1, 1, "overlaps_assay.csv")
+    assert report["rows"][0]["hole_id"] == hole
+    assert joblog.read(setup["folder"])[-1]["params"]["merge"] == {"interval_tolerance": 0}
+    bad = client.post(f"{OPS}/import", json={**body, "merge": {"interval_tolerance": -1}})
+    assert bad.status_code == 400 and "interval_tolerance" in bad.text
+
+
+def test_sample_depth_tolerance_of_one_file(setup):
+    """The slack below the hole bottom of the sample-number rule is said per file."""
+    client = setup["client"]
+    ok(upload(client, "collar", setup["files"] / "collars.xlsx"))
+    ok(upload(client, "assay", setup["files"] / "assays.xlsx"))
+    spec = {**ASSAY_SPEC, "sample_depth": {"length": 1.0, "depth_tolerance": 2.5}}
+    body = {"name": "tol", "tables": {"collar": [{}], "assay": [spec]}, "hole_id": HOLE_ID,
+            "options": {"dip_convention": "auto", "coordinate_order": "auto"}}  # fmt: skip
+    result = ok(client.post(f"{OPS}/import", json=body))
+    assert result["sample_depth"]["assay"][0]["depth_tolerance"] == 2.5
+    assert result["recipe"]["tables"]["assay"][0]["sample_depth"]["depth_tolerance"] == 2.5

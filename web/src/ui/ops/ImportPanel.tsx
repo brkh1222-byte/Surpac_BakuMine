@@ -8,12 +8,12 @@
  * Per file: the sheets to stack (one sheet per hole), a preview of each sheet, the header row
  * (one or two rows), the hole id from the sheet name, depths from the sample number, QC rows,
  * and what the file does differently from the others: length unit, dip sign, axis order, CRS.
- * Per table: several files are merged. For all: hole id spelling, which holes to import
+ * Per table: several files are merged (interval tolerance: when two intervals are one). For all: hole id spelling, which holes to import
  * (names or wildcard patterns to keep or to skip), CRS of longitude / latitude.
  */
 import { useState } from 'react'
 import { opsApi, useOps, type ImportResult, type UploadPreview } from '../../ops/api'
-import { beyondText, conflictsText, droppedText, duplicatesText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, holeList, matchSheets, sourceSpec, type SourceForm } from '../../ops/importSpec'
+import { beyondText, conflictsText, contradictedText, droppedText, duplicatesText, emptyForm, sourceText, holeFilter, holeFilterText, holeIdRule, matchSheets, mergeRule, nearText, nonNegative, overlapsText, sourceSpec, type SourceForm } from '../../ops/importSpec'
 import { Check, Error, Panel, Select, Text, message } from './common'
 
 const TABLES = [
@@ -121,12 +121,15 @@ function SourceCard({ table, index, source, onForm, onMap, onMapDone }: {
           <legend>Rows</legend>
           <label className="control-inline" style={ROW}>
             <input type="checkbox" data-testid={`import-sample-depth-${key}`} checked={form.sampleDepth} onChange={(e) => onForm({ sampleDepth: e.target.checked })} />
-            Depths from the sample number where from / to are empty (to = number after the hole id, from = to − length)
+            This file: depths from the sample number where from / to are empty (to = number after the hole id, from = to − length)
           </label>
           {form.sampleDepth && (
             <>
               <label className="control-inline" style={ROW}>Sample length
                 <input type="text" inputMode="decimal" size={4} data-testid={`import-sample-length-${key}`} value={form.sampleLength} onChange={(e) => onForm({ sampleLength: e.target.value })} />
+              </label>
+              <label className="control-inline" style={ROW} title="A hole whose sample numbers would end deeper than this below its bottom is not imported that way (reported)">Allowed below the hole bottom
+                <input type="text" inputMode="decimal" size={4} aria-label={`${key} sample depth tolerance`} data-testid={`import-sample-tolerance-${key}`} value={form.sampleTolerance} placeholder="5" onChange={(e) => onForm({ sampleTolerance: e.target.value })} />
               </label>
               <textarea rows={2} style={{ ...ROW, boxSizing: 'border-box' }} aria-label={`${key} sample number patterns`} data-testid={`import-sample-patterns-${key}`} value={form.samplePatterns} placeholder={'optional patterns, one per line, e.g. DH0*{holenum}-{holenum}(?P<to>\\d+)'} onChange={(e) => onForm({ samplePatterns: e.target.value })} />
             </>
@@ -239,6 +242,7 @@ export function ImportPanel() {
   const [precedence, setPrecedence] = useState('first')
   const [mergeIgnore, setMergeIgnore] = useState('sample_id')
   const [duplicates, setDuplicates] = useState('keep_first')
+  const [intervalTolerance, setIntervalTolerance] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -283,6 +287,7 @@ export function ImportPanel() {
 
   const run = async () => {
     if (!tables.collar?.length) return setError('Upload the collar table first')
+    if (intervalTolerance.trim() !== '' && nonNegative(intervalTolerance) === null) return setError('Interval tolerance: a length of 0 or more')
     setBusy(true)
     setError(null)
     setResult(null)
@@ -292,7 +297,7 @@ export function ImportPanel() {
         tables: Object.fromEntries(Object.entries(tables).map(([t, sources]) => [t, sources.map((s) => sourceSpec(s.form, s.preview.kind === 'interval'))])),
         options: { length_unit: lengthUnit, convert_to_metres: toMetres, dip_convention: dip, coordinate_order: order, crs: crs.trim() || null },
         hole_id: holeIdRule(holePattern, holeTemplate),
-        merge: { precedence, ignore_columns: holeList(mergeIgnore), duplicate_intervals: duplicates },
+        merge: mergeRule(precedence, mergeIgnore, duplicates, intervalTolerance),
         holes: holeFilter(includeHoles, excludeHoles),
       }
       setResult(await opsApi.importDb(body))
@@ -355,6 +360,7 @@ export function ImportPanel() {
       <Select label="Files disagree" id="import-precedence" value={precedence} onChange={setPrecedence} options={[{ value: 'first', label: 'first file wins' }, { value: 'last', label: 'last file wins' }]} />
       <Text label="Not conflicts" id="import-merge-ignore" value={mergeIgnore} onChange={setMergeIgnore} placeholder="columns whose differences are only counted" />
       <Select label="Interval twice" id="import-duplicates" value={duplicates} onChange={setDuplicates} options={[{ value: 'keep_first', label: 'keep the first row' }, { value: 'mean', label: 'mean of the rows' }, { value: 'error', label: 'stop the import' }]} />
+      <Text label="Interval tolerance" id="import-interval-tolerance" value={intervalTolerance} onChange={setIntervalTolerance} placeholder="0.5 (from / to this close = one interval; 0 = equal only)" />
       <div className="control">
         <button type="button" data-testid="import-run" disabled={busy} onClick={() => void run()}>{busy ? 'Importing…' : 'Import and validate'}</button>
       </div>
@@ -371,10 +377,13 @@ export function ImportPanel() {
             <p className="sidebar-note" key={t} data-testid={`import-qc-result-${t}`}>{t}: QC rows kept apart: {counts(c)}</p>
           ))}
           {Object.entries(result.sample_depth).map(([t, checks]) => checks.map((c, i) => (
-            <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}{beyondText(c)}</p>
+            <p className="sidebar-note" key={`${t}-${i}`} data-testid={`import-depth-result-${t}`}>{t}{c.file ? ` ${c.file}` : ''}: {c.rows} depths from sample numbers; not understood {c.unmatched}, duplicates {c.duplicates}, backwards {c.backwards}{beyondText(c)}{contradictedText(c)}</p>
           )))}
           {Object.entries(result.duplicates ?? {}).map(([t, d]) => (
             <p className="sidebar-note" key={t} data-testid={`import-duplicates-${t}`}>{duplicatesText(t, d)}</p>
+          ))}
+          {Object.entries(result.overlaps ?? {}).map(([t, o]) => (
+            <p className="sidebar-error" key={t} data-testid={`import-overlaps-${t}`}>{overlapsText(t, o)}</p>
           ))}
           {Object.entries(result.sources ?? {}).map(([t, entries]) => entries.filter((e) => Object.keys(e).length > 1).map((e) => (
             <p className="sidebar-note" key={`${t}-${e.file}`} data-testid={`import-source-result-${t}`}>{t} {sourceText(e)}</p>
@@ -392,7 +401,7 @@ export function ImportPanel() {
           )}
           {Object.entries(result.conflicts).map(([t, c]) => (
             <div key={t} data-testid={`import-conflicts-${t}`}>
-              <p className="sidebar-note">{t}: files merged ({c.precedence} file wins): {c.merged} rows joined, {c.filled} cells filled, {c.conflicts} conflicts{conflictsText(c)}</p>
+              <p className="sidebar-note">{t}: files merged ({c.precedence} file wins): {c.merged} rows joined, {c.filled} cells filled, {c.conflicts} conflicts{nearText(c)}{conflictsText(c)}</p>
               {c.rows.length > 0 && (
                 <div className="report-table-wrap">
                   <table className="report-table">

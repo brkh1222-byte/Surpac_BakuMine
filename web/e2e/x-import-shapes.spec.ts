@@ -122,4 +122,41 @@ test('a multi-sheet workbook and a DMS collar table import through the panel', a
   await expect(tid(page, 'import-tables')).toContainText('Dip positive down')
   await expect(tid(page, 'import-recipe')).toContainText('"dip_convention": "positive_down"')
   await expect(tid(page, 'import-recipe')).toContainText('"exclude"')
+
+  // a second assay file with from / to of its own (no sample-number rule for this file): its
+  // one sample ends 0.3 m later than the workbook's sample numbers say. The rule is not
+  // trusted against a stated interval, and the panel says which rows were left out and why
+  await tid(page, 'import-sample-tolerance-assay').fill('2')
+  await tid(page, 'import-add-assay').setInputFiles(path.join(files, 'assay_near.csv'))
+  await expect(tid(page, 'import-rows-assay-1')).toContainText('1 rows')
+  await expect(tid(page, 'import-sample-depth-assay-1')).not.toBeChecked()
+  await tid(page, 'import-name').fill('refused')
+  await tid(page, 'import-run').click()
+  await expect(tid(page, 'import-summary')).toContainText('“refused”: 2 holes', { timeout: 60_000 })
+  await expect(tid(page, 'import-depth-result-assay')).toContainText('NOT imported')
+  await expect(tid(page, 'import-depth-result-assay')).toContainText('overlap the intervals of another file in SYN-01')
+  await expect(tid(page, 'import-recipe')).toContainText('"depth_tolerance": 2')
+
+  // the same two files with from / to in both: within the interval tolerance they are one interval
+  await tid(page, 'import-file-assay').setInputFiles(path.join(files, 'assay_plain.csv'))
+  await expect(tid(page, 'import-rows-assay')).toContainText(`${expected.assay_rows} rows`)
+  await tid(page, 'import-add-assay').setInputFiles(path.join(files, 'assay_near.csv'))
+  await expect(tid(page, 'import-rows-assay-1')).toContainText('1 rows')
+  await tid(page, 'import-name').fill('near')
+  await tid(page, 'import-run').click()
+  await expect(tid(page, 'import-summary')).toContainText('“near”: 2 holes', { timeout: 60_000 })
+  await expect(tid(page, 'import-conflicts-assay')).toContainText('1 interval written differently in the other file (from / to within 0.5) taken as one')
+  await expect(tid(page, 'import-overlaps-assay')).toHaveCount(0)
+
+  // tolerance 0: the two rows are two intervals, and the import says that they overlap
+  await tid(page, 'import-interval-tolerance').fill('0')
+  await tid(page, 'import-name').fill('strict')
+  await tid(page, 'import-run').click()
+  await expect(tid(page, 'import-summary')).toContainText('“strict”: 2 holes', { timeout: 60_000 })
+  await expect(tid(page, 'import-overlaps-assay')).toContainText('still overlap in 1 hole')
+  await expect(tid(page, 'import-overlaps-assay')).toContainText('overlaps_assay.csv')
+  await expect(tid(page, 'import-recipe')).toContainText('"interval_tolerance": 0')
+  await tid(page, 'import-interval-tolerance').fill('-1')
+  await tid(page, 'import-run').click()
+  await expect(tid(page, 'import-error')).toContainText('Interval tolerance')
 })

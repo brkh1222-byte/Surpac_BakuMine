@@ -2,7 +2,7 @@
  * Pure helpers of the Import panel: which sheets a wildcard selects, and the request body
  * of a source (only what the user set; everything else is detected by the server).
  */
-import type { DroppedRows, DuplicateReport, HoleFilter, HoleFilterReport, HoleIdRule, MergeReport, SampleDepthCheck, SourceReport, SourceSpec } from './api'
+import type { DroppedRows, DuplicateReport, HoleFilter, HoleFilterReport, HoleIdRule, MergeReport, OverlapReport, SampleDepthCheck, SourceReport, SourceSpec } from './api'
 
 /** What the panel keeps per uploaded file. Empty strings mean "detect". */
 export interface SourceForm {
@@ -13,6 +13,8 @@ export interface SourceForm {
   sampleDepth: boolean
   sampleLength: string
   samplePatterns: string
+  /** how far below the hole bottom the derived depths may end ('' = 5) */
+  sampleTolerance: string
   qc: 'separate' | 'off'
   /** the column map once the user edited it; null = as suggested */
   map: Record<string, string> | null
@@ -32,6 +34,7 @@ export const emptyForm = (): SourceForm => ({
   sampleDepth: false,
   sampleLength: '1',
   samplePatterns: '',
+  sampleTolerance: '',
   qc: 'separate',
   map: null,
   previewSheet: null,
@@ -50,6 +53,32 @@ export function matchSheets(names: string[], pattern: string): string[] {
   return names.filter((n) => re.test(n))
 }
 
+/** A typed number that is 0 or more; null when the field is empty or not such a number. */
+export function nonNegative(text: string): number | null {
+  if (text.trim() === '') return null
+  const value = Number(text.trim().replace(',', '.'))
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
+/** The `merge` of an import request; the interval tolerance only when it was typed. */
+export function mergeRule(precedence: string, ignore: string, duplicates: string, intervalTolerance: string): Record<string, unknown> {
+  const near = nonNegative(intervalTolerance)
+  return { precedence, ignore_columns: holeList(ignore), duplicate_intervals: duplicates, ...(near !== null ? { interval_tolerance: near } : {}) }
+}
+
+/** "; 3 intervals written differently in the other file (from / to within 0.5) taken as one" */
+export function nearText(report: MergeReport): string {
+  if (!report.near_intervals) return ''
+  return `; ${report.near_intervals} interval${report.near_intervals > 1 ? 's' : ''} written differently in the other file (from / to within ${report.interval_tolerance ?? 0.5}) taken as one`
+}
+
+/** "assay: 2 intervals still overlap in 1 hole, e.g. SYN-01 10–11.3 (a.csv) with 10–11 (b.csv); ..." */
+export function overlapsText(table: string, report: OverlapReport): string {
+  const first = report.rows[0]
+  const example = first ? `, e.g. ${first.hole_id} ${first.depth_from}–${first.depth_to} (${first.source}) with ${first.overlaps_from}–${first.overlaps_to} (${first.overlaps_source})` : ''
+  return `${table}: ${report.count} pair${report.count > 1 ? 's' : ''} of intervals still overlap in ${report.holes} hole${report.holes > 1 ? 's' : ''}${example}; listed in ${report.listing}. Mineralised intervals refuse overlapping samples: raise the interval tolerance or fix the files`
+}
+
 /** The recipe source a form describes. `interval`: the table has from / to. */
 export function sourceSpec(form: SourceForm, interval: boolean, forPreview = false): SourceSpec {
   const spec: SourceSpec = {}
@@ -63,7 +92,8 @@ export function sourceSpec(form: SourceForm, interval: boolean, forPreview = fal
     if (form.sampleDepth) {
       const length = Number.parseFloat(form.sampleLength)
       const patterns = form.samplePatterns.split('\n').map((p) => p.trim()).filter(Boolean)
-      spec.sample_depth = { length: Number.isFinite(length) && length > 0 ? length : 1, ...(patterns.length ? { patterns } : {}) }
+      const slack = nonNegative(form.sampleTolerance)
+      spec.sample_depth = { length: Number.isFinite(length) && length > 0 ? length : 1, ...(patterns.length ? { patterns } : {}), ...(slack !== null ? { depth_tolerance: slack } : {}) }
     }
     if (form.qc === 'off') spec.qc = { mode: 'off' }
   }
@@ -102,6 +132,23 @@ export function beyondText(check: SampleDepthCheck): string {
   const beyond = check.beyond_hole ?? []
   if (!beyond.length) return ''
   return `; NOT imported, deeper than the hole: ${beyond.slice(0, 6).map((b) => `${b.hole_id} (to ${b.derived_to}, hole ${b.max_depth})`).join(', ')}${beyond.length > 6 ? ', …' : ''}`
+}
+
+/** What the sample-number rule was refused for: the file's own intervals, or another file's. */
+export function contradictedText(check: SampleDepthCheck): string {
+  const names = (holes: { hole_id: string }[]) => `${holes.slice(0, 6).map((h) => h.hole_id).join(', ')}${holes.length > 6 ? ', …' : ''}`
+  let text = ''
+  const own = check.contradicted ?? []
+  if (own.length) {
+    const e = own[0].example
+    text += `; NOT given depths (${check.contradicted_rows ?? 0} rows): the file's own from / to show that the sample numbers are not depths in ${names(own)} (sample ${e.sample_id} would end at ${e.derived_to}, the file says ${e.depth_to})`
+  }
+  const other = check.contradicts_sources ?? []
+  if (other.length) {
+    const e = other[0].example
+    text += `; NOT imported (${check.contradicts_sources_rows ?? 0} rows): the depths read from sample numbers overlap the intervals of another file in ${names(other)} (sample ${e.sample_id} read as ${e.depth_from}–${e.depth_to}, ${e.other_file} has ${e.other_from}–${e.other_to}); turn the rule off for this file or give a pattern`
+  }
+  return text
 }
 
 /** "assay: 12 intervals in 3 holes were there more than once (keep first): 12 rows removed ..." */

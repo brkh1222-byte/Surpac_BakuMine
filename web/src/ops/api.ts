@@ -39,7 +39,8 @@ export interface SourceSpec {
   header_rows?: number
   map?: Record<string, string>
   hole_id_from_sheet?: boolean
-  sample_depth?: { length: number; patterns?: string[] }
+  /** depth_tolerance: how far below the hole bottom derived depths may end (default 5) */
+  sample_depth?: { length: number; patterns?: string[]; depth_tolerance?: number }
   qc?: { mode: 'separate' | 'off' }
   /** what this file does differently: dip_convention, length_unit, coordinate_order, crs */
   options?: Record<string, string>
@@ -64,6 +65,14 @@ export interface SampleDepthCheck {
   repeated_hole_number?: string[]
   /** holes whose derived depths go beyond the collar depth: not imported */
   beyond_hole?: { hole_id: string; derived_to: number; max_depth: number; rows: number; example: string }[]
+  depth_tolerance?: number
+  file?: string
+  /** holes where the file's own from / to show that its sample numbers are not depths */
+  contradicted?: { hole_id: string; agreed: number; compared: number; example: { sample_id: string; derived_to: number; depth_to: number } }[]
+  contradicted_rows?: number
+  /** holes whose derived depths overlap the stated intervals of another file: not imported */
+  contradicts_sources?: { hole_id: string; overlapping: number; rows: number; example: { sample_id: string; depth_from: number; depth_to: number; other_from: number; other_to: number; other_file: string } }[]
+  contradicts_sources_rows?: number
 }
 
 export interface UploadPreview {
@@ -105,7 +114,19 @@ export interface MergeReport {
   informational?: Record<string, number>
   /** the file in the database folder with every difference */
   listing?: string
+  /** interval tables: how far from / to may differ and still be one interval */
+  interval_tolerance?: number
+  /** rows merged whose from or to was written differently in the other file */
+  near_intervals?: number
   rows: Record<string, string | number | null>[]
+}
+
+/** Intervals of one hole that still overlap after merging (reported, not repaired). */
+export interface OverlapReport {
+  count: number
+  holes: number
+  listing: string
+  rows: { hole_id: string; depth_from: number; depth_to: number; source: string; overlaps_from: number; overlaps_to: number; overlaps_source: string; overlap: number }[]
 }
 
 export interface CoordinateReport {
@@ -181,6 +202,8 @@ export interface ImportResult extends ValidationResult {
   dropped_rows: Record<string, DroppedRows>
   /** per interval table: intervals that were in it more than once */
   duplicates: Record<string, DuplicateReport>
+  /** per interval table: intervals that overlap in the saved database */
+  overlaps?: Record<string, OverlapReport>
   hole_filter: HoleFilterReport | null
   /** per table, per file: what was decided for it (when the files of a table differ) */
   sources: Record<string, SourceReport[]>

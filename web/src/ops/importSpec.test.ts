@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { beyondText, conflictsText, droppedText, duplicatesText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, sourceSpec, sourceText } from './importSpec'
+import { beyondText, conflictsText, contradictedText, droppedText, duplicatesText, emptyForm, holeFilter, holeFilterText, holeIdRule, matchSheets, mergeRule, nearText, nonNegative, overlapsText, sourceSpec, sourceText } from './importSpec'
 
 describe('import panel helpers', () => {
   it('selects sheets by wildcard, in workbook order', () => {
@@ -25,6 +25,38 @@ describe('import panel helpers', () => {
     // a collar table has no sample rule or QC; the preview may name the sheet to show
     expect(sourceSpec(form, false, true)).toEqual({ sheets: ['A', 'B'], header_row: 3, header_rows: 2, hole_id_from_sheet: true, preview_sheet: 'B' })
     expect(sourceSpec({ ...emptyForm(), headerRow: '0', sampleDepth: true, sampleLength: 'x' }, true)).toEqual({ header_row: 0, sample_depth: { length: 1 } })
+  })
+
+  it('sends the tolerances only when they were typed', () => {
+    expect(nonNegative('')).toBeNull()
+    expect(nonNegative(' 0 ')).toBe(0)
+    expect(nonNegative('0,3')).toBe(0.3)
+    expect(nonNegative('-1')).toBeNull()
+    expect(nonNegative('x')).toBeNull()
+    expect(mergeRule('first', 'sample_id, lab', 'keep_first', '')).toEqual({ precedence: 'first', ignore_columns: ['sample_id', 'lab'], duplicate_intervals: 'keep_first' })
+    expect(mergeRule('last', '', 'mean', '0')).toEqual({ precedence: 'last', ignore_columns: [], duplicate_intervals: 'mean', interval_tolerance: 0 })
+    expect(mergeRule('first', '', 'error', '1.5').interval_tolerance).toBe(1.5)
+    // the slack of the sample-number rule belongs to one file
+    expect(sourceSpec({ ...emptyForm(), sampleDepth: true, sampleTolerance: '2.5' }, true)).toEqual({ sample_depth: { length: 1, depth_tolerance: 2.5 } })
+    expect(sourceSpec({ ...emptyForm(), sampleDepth: false, sampleTolerance: '2.5' }, true)).toEqual({})
+  })
+
+  it('says which intervals were taken as one and which still overlap', () => {
+    const merged = { precedence: 'first', keys: [], merged: 4, filled: 0, conflicts: 0, rows: [] }
+    expect(nearText(merged)).toBe('')
+    expect(nearText({ ...merged, near_intervals: 2, interval_tolerance: 0.5 })).toBe('; 2 intervals written differently in the other file (from / to within 0.5) taken as one')
+    const row = { hole_id: 'SYN-01', depth_from: 10, depth_to: 11.3, source: 'a.csv', overlaps_from: 10, overlaps_to: 11, overlaps_source: 'b.csv', overlap: 1 }
+    expect(overlapsText('assay', { count: 1, holes: 1, listing: 'overlaps_assay.csv', rows: [row] }))
+      .toBe('assay: 1 pair of intervals still overlap in 1 hole, e.g. SYN-01 10–11.3 (a.csv) with 10–11 (b.csv); listed in overlaps_assay.csv. Mineralised intervals refuse overlapping samples: raise the interval tolerance or fix the files')
+  })
+
+  it('says why the sample-number rule was refused', () => {
+    const check = { rows: 10, duplicates: 0, backwards: 0, gaps: 0, overlaps: 0, unmatched: 0, unmatched_examples: [] }
+    expect(contradictedText(check)).toBe('')
+    expect(contradictedText({ ...check, contradicted: [{ hole_id: 'SYN-02', agreed: 1, compared: 9, example: { sample_id: '17026', derived_to: 26, depth_to: 24.6 } }], contradicted_rows: 4 }))
+      .toBe("; NOT given depths (4 rows): the file's own from / to show that the sample numbers are not depths in SYN-02 (sample 17026 would end at 26, the file says 24.6)")
+    expect(contradictedText({ ...check, contradicts_sources: [{ hole_id: 'SYN-01', overlapping: 2, rows: 27, example: { sample_id: 'SYN01-4', depth_from: 3, depth_to: 4, other_from: 3, other_to: 4.3, other_file: 'b.csv' } }], contradicts_sources_rows: 27 }))
+      .toBe('; NOT imported (27 rows): the depths read from sample numbers overlap the intervals of another file in SYN-01 (sample SYN01-4 read as 3–4, b.csv has 3–4.3); turn the rule off for this file or give a pattern')
   })
 
   it('says which rows were dropped', () => {
