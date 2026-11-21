@@ -72,15 +72,18 @@ end. Common practice is looser; two documented alternatives:
     the piece; gaps carry no grade and no weight). A sample is mineralised when that mean
     is ``>= cutoff``; a run is a maximal stretch of such samples (gaps between two of them
     are bridged). With 1 m samples and ``window = 3`` this is the three-sample moving
-    average. ``max_internal_waste`` and ``max_total_waste`` are **not used**: the window
-    decides how much waste is carried. A run may start or end on a waste sample next to
+    average. ``max_internal_waste`` and ``max_total_waste`` are **not used** for the runs:
+    the window decides how much waste is carried (they still apply to the "including"
+    sub-intercepts, which are built with the strict rule). A run may start
+    or end on a waste sample next to
     high grade, and its own grade is not guaranteed to reach the cut-off.
 
     Example (``cutoff 0.2, window 3``, 1 m samples from 0 m): ``0.05, 0.1, 0.9, 0.1,
     0.05, 0.05``. Means: ``0.075`` (window cut at 0 m), ``0.35, 0.3667, 0.35, 0.0667,
     0.05``. One run 1-4 m, 3 m at ``1.1 / 3 = 0.3667``; strict and average give 2-3 m.
 
-The thickness rules, "including" sub-intercepts and the outputs are the same in all modes.
+The thickness rules and the outputs are the same in all modes; "including"
+sub-intercepts are always built with the strict rule (see ``intercepts`` below).
 
 Thickness
 ---------
@@ -88,7 +91,11 @@ Thickness
 ``body_dip_azimuth`` (degrees; azimuth of the dip direction) it is the true thickness
 ``length * |d . n|``, where ``d`` is the unit direction of the desurveyed hole at the
 middle of the run and ``n = (sin dip sin az, sin dip cos az, cos dip)`` is the normal of
-the body (east, north, up). A run is accepted when
+the body (east, north, up). A run whose middle lies below the stated depth of its hole
+(samples deeper than the collar table's hole depth) takes the direction at the end of the
+trace, the straight continuation of the hole, with a warning naming the holes; a hole
+without a desurveyed trace has NaN true thickness (a warning too) and its runs are judged
+on the down-hole length. A run is accepted when
 
 * ``thickness >= min_thickness`` (rule ``"thickness"``), or
 * ``accumulation_rule`` is on and ``metal * thickness / length >= cutoff * min_thickness``
@@ -113,8 +120,12 @@ Outputs
     ``waste_length`` (waste samples inside), ``missing_length`` (bridged gaps),
     ``n_samples``, ``cutoff``, ``rule``, ``level`` and ``parent``.
     ``level`` is ``"intercept"``; rows with ``level == "including"`` are sub-intercepts
-    found by running the same rules, with a higher cut-off from ``including_cutoffs`` and
-    ``including_min_thickness``, on the samples of one intercept only. ``parent`` is the
+    found by running the **strict** rule (section "Runs", whatever ``mode`` built the
+    intercept), with a higher cut-off from ``including_cutoffs`` and
+    ``including_min_thickness``, on the samples of one intercept only, so that an
+    "including" interval starts and ends on a sample at or above its cut-off (a moving
+    average of the few samples of one intercept would flag the waste beside the high
+    grade instead of the high grade). ``parent`` is the
     row number of that intercept (-1 for an intercept). A sub-intercept equal to its
     whole parent is left out. The top cut is for reporting only: flagging uses the raw
     grades.
@@ -130,6 +141,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -305,6 +317,9 @@ class MineralisedResult:
     intercepts: pd.DataFrame
     params: InterceptParams
     grade: str
+    #: what the caller should be told (also issued as Python warnings): holes whose true
+    #: thickness used the continuation of the trace, holes without a trace
+    warnings: list[str] = dataclasses.field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         """Counts and totals for logs and dialogs (JSON-safe)."""
@@ -595,7 +610,8 @@ def _accept(
         a, b = run.start, run.end + 1
         span = float(to[b - 1] - frm[a])
         run.factor = float(factor_at(0.5 * (frm[a] + to[b - 1]))) if factor_at else float("nan")
-        scale = run.factor if factor_at else 1.0
+        # no direction (a hole without a trace): judged on the down-hole length
+        scale = run.factor if factor_at and math.isfinite(run.factor) else 1.0
         if span * scale >= min_thickness - _TOL:
             run.rule = "thickness"
         elif accumulation_rule:
@@ -651,16 +667,33 @@ def _row(
 # ----------------------------------------------------------------------------- the table
 
 
-def _thickness_factor(traces: Any, normal: np.ndarray, hole: object) -> Any:
+def _thickness_factor(
+    traces: Any, normal: np.ndarray, hole: object, past: set[str], untraced: set[str]
+) -> Any:
+    """``factor_at(depth)``: true thickness per metre down-hole at a depth of ``hole``.
+    Below the end of the trace: the direction at its end (the hole is added to ``past``).
+    No trace, or no direction for another reason: NaN (the hole is added to ``untraced``).
+    """
+    at = np.flatnonzero(np.asarray(traces.hole_ids, dtype=object) == hole)
+    end = float(traces.max_depth[at[0]]) if at.size else float("nan")
+
     def factor_at(depth: float) -> float:
         direction = traces.xyz_at(hole, depth)[1]
+        if not np.isfinite(direction).all() and depth > end:
+            direction = traces.xyz_at(hole, end)[1]
+            if np.isfinite(direction).all():
+                past.add(str(hole))
         if not np.isfinite(direction).all():
-            raise ValueError(
-                f"hole {hole!r}: no desurveyed direction at {depth:g} m for true thickness"
-            )
+            untraced.add(str(hole))
+            return float("nan")
         return abs(float(direction @ normal))
 
     return factor_at
+
+
+def _named(holes: set[str]) -> str:
+    listed = sorted(holes)
+    return f"{len(listed)} hole(s) ({', '.join(listed[:6])}{' ...' if len(listed) > 6 else ''})"
 
 
 def mineralised_intervals(
@@ -708,6 +741,8 @@ def mineralised_intervals(
 
     interval_rows: list[tuple[object, float, float, str]] = []
     rows: list[dict[str, Any]] = []
+    past: set[str] = set()  # holes with a run below the end of their trace
+    untraced: set[str] = set()  # holes without a direction for true thickness
     inner_min = (
         params.min_thickness
         if params.including_min_thickness is None
@@ -715,7 +750,9 @@ def mineralised_intervals(
     )
     for hole, group in table.groupby("hole_id", sort=True):
         frm_all, to_all, g_all = (group[c].to_numpy() for c in ("f", "t", "g"))
-        factor_at = None if normal is None else _thickness_factor(traces, normal, hole)
+        factor_at = (
+            None if normal is None else _thickness_factor(traces, normal, hole, past, untraced)
+        )
         for frm, to, g, assayed in _pieces(frm_all, to_all, g_all, params.gap_tolerance, hole):
             runs = _accept(
                 _runs_of(frm, to, g, assayed, params.cutoff, params),
@@ -737,7 +774,11 @@ def mineralised_intervals(
                 sl = slice(run.start, run.end + 1)
                 for higher in params.including_cutoffs:
                     inner = _accept(
-                        _runs_of(frm[sl], to[sl], g[sl], assayed[sl], higher, params),
+                        # always the strict rule: see "intercepts" in the module docstring
+                        _build_runs(
+                            to[sl] - frm[sl], g[sl], assayed[sl], higher,
+                            params.max_internal_waste, params.max_total_waste,
+                        ),
                         frm[sl], to[sl], g[sl], assayed[sl], higher, inner_min,
                         params.accumulation_rule, factor_at,
                     )  # fmt: skip
@@ -751,6 +792,21 @@ def mineralised_intervals(
             if cursor < len(frm):
                 interval_rows.append((hole, frm[cursor], to[-1], params.waste_code))
 
+    said: list[str] = []
+    if past:
+        said.append(
+            f"true thickness: intercepts of {_named(past)} lie below the stated hole "
+            "depth; the direction at the end of the hole trace was used (straight "
+            "continuation). Check the hole depth of the collar table"
+        )
+    if untraced:
+        said.append(
+            f"true thickness: {_named(untraced)} have no desurveyed direction (no collar "
+            "or survey?); their true thickness is NaN and their runs were judged on the "
+            "down-hole length"
+        )
+    for message in said:
+        warnings.warn(message, stacklevel=2)
     intervals = pd.DataFrame(
         interval_rows, columns=["hole_id", "depth_from", "depth_to", params.code_column]
     ).astype({"depth_from": np.float64, "depth_to": np.float64})
@@ -761,7 +817,7 @@ def mineralised_intervals(
         intercepts = intercepts.astype(
             {c: np.float64 for c in INTERCEPT_COLUMNS[1:11]} | {"n_samples": int, "parent": int}
         )
-    return MineralisedResult(intervals, intercepts, params, grade)
+    return MineralisedResult(intervals, intercepts, params, grade, said)
 
 
 def flag_database(

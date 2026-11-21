@@ -140,3 +140,115 @@ def test_sheet_names_are_not_total_labels(tmp_path):
     db = run_recipe(recipe, tmp_path)
     assert len(db.intervals["assay"]) == 3
     assert db.metadata.reports["dropped_rows"]["assay"] == {"total_rows": 1}
+
+
+# ------------------------------------------------------------------ hole id once per hole
+def write_merged_layout(folder):
+    """The hole id written once per hole (a merged cell), in the assay and survey files."""
+    (folder / "collar.csv").write_text(
+        "Hole,East,North,RL,Depth\nA,0,0,100,10\nB,50,0,100,10\n", encoding="utf-8"
+    )
+    (folder / "survey.csv").write_text(
+        "Hole,Depth,Dip,Azimuth\nA,0,-60,90\n,5,-61,91\nB,0,-90,0\n,,,\n,5,-89,0\n",
+        encoding="utf-8",
+    )
+    (folder / "assay.csv").write_text(
+        "Hole,From,To,Au\n"
+        "A,0,1,0.1\n,1,2,0.2\n,\"2,5\",3,0.3\n"
+        ",,,0.6\n"  # a sum under the hole: no depths, not a sample
+        "B,0,1,0.4\n,1,2,0.5\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_hole_id_written_once_per_hole_is_carried_down(tmp_path, capsys):
+    write_merged_layout(tmp_path)
+    tables = {
+        "collar": [{"file": "collar.csv"}],
+        "survey": [{"file": "survey.csv"}],
+        "assay": [{"file": "assay.csv", "qc": {"mode": "off"}}],
+    }
+    db = run_recipe(make_recipe(tables), tmp_path)
+    assay = db.intervals["assay"]
+    assert assay["hole_id"].tolist() == ["A", "A", "A", "B", "B"]
+    assert assay["depth_from"].tolist() == [0.0, 1.0, 2.5, 0.0, 1.0]
+    assert assay["au"].tolist() == [0.1, 0.2, 0.3, 0.4, 0.5]
+    assert db.survey["hole_id"].tolist() == ["A", "A", "B", "B"]
+    assert db.survey["depth"].tolist() == [0.0, 5.0, 0.0, 5.0]
+    notes = {(n["table"], n["kind"]): n["count"] for n in db.metadata.notes}
+    assert notes[("assay", "hole_id_carried_down")] == 3
+    assert notes[("survey", "hole_id_carried_down")] == 2
+    # the row without depths is still dropped and counted
+    assert db.metadata.reports["dropped_rows"]["assay"] == {"rows_without_hole_id": 1}
+    assert ("collar", "hole_id_carried_down") not in notes
+
+    code = main(["import", "--collar", str(tmp_path / "collar.csv"), "--survey",
+                 str(tmp_path / "survey.csv"), "--assay", str(tmp_path / "assay.csv"),
+                 "--auto", "--dry-run"])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "assay: 3 row(s) without a hole id took the id of the row above" in out
+    assert "survey: 2 row(s) without a hole id took the id of the row above" in out
+
+
+def test_carry_down_can_be_turned_off_and_is_not_for_collars(tmp_path, capsys):
+    write_merged_layout(tmp_path)
+    tables = {
+        "collar": [{"file": "collar.csv"}],
+        "survey": [{"file": "survey.csv", "carry_down": False}],
+        "assay": [{"file": "assay.csv", "qc": {"mode": "off"}, "carry_down": False}],
+    }
+    db = run_recipe(make_recipe(tables), tmp_path)
+    assert db.intervals["assay"]["hole_id"].tolist() == ["A", "B"]
+    assert db.survey["hole_id"].tolist() == ["A", "B"]
+    assert db.metadata.reports["dropped_rows"]["assay"] == {"rows_without_hole_id": 4}
+    assert not [n for n in db.metadata.notes if n["kind"] == "hole_id_carried_down"]
+    code = main(["import", "--collar", str(tmp_path / "collar.csv"), "--survey",
+                 str(tmp_path / "survey.csv"), "--assay", str(tmp_path / "assay.csv"),
+                 "--auto", "--dry-run", "--source-option", "assay.csv:carry-down=no"])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0 and "assay intervals 2" in out and "survey stations 4" in out
+
+    # a collar row without a hole id is nobody's collar, whatever the row above says
+    (tmp_path / "collar.csv").write_text(
+        "Hole,East,North,RL,Depth\nA,0,0,100,10\n,50,0,100,10\n", encoding="utf-8"
+    )
+    (tmp_path / "survey.csv").write_text("Hole,Depth,Dip,Azimuth\nA,0,-60,90\n")
+    db = run_recipe(
+        make_recipe({"collar": [{"file": "collar.csv"}], "survey": [{"file": "survey.csv"}]}),
+        tmp_path,
+    )
+    assert db.collar["hole_id"].tolist() == ["A"]
+    assert db.metadata.reports["dropped_rows"]["collar"] == {"rows_without_hole_id": 1}
+
+
+def test_carry_down_stays_on_its_sheet_and_skips_totals(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    first = book.active
+    first.title = "one"
+    for row in (["Hole", "From", "To", "Au"], ["A", 0, 1, 0.1], [None, 1, 2, 0.2],
+                ["Total", 0, 2, 0.3]):  # fmt: skip
+        first.append(row)
+    second = book.create_sheet("two")
+    for row in (["Hole", "From", "To", "Au"], [None, 0, 1, 0.9], ["B", 1, 2, 0.4],
+                [None, 2, 3, 0.5]):  # fmt: skip
+        second.append(row)
+    book.save(tmp_path / "assay.xlsx")
+    (tmp_path / "collar.csv").write_text(
+        "Hole,East,North,RL,Depth,Azimuth,Dip\nA,0,0,100,10,0,-90\nB,50,0,100,10,0,-90\n",
+        encoding="utf-8",
+    )
+    recipe = make_recipe(
+        {"collar": [{"file": "collar.csv"}],
+         "assay": [{"file": "assay.xlsx", "sheets": "*", "qc": {"mode": "off"}}]}  # fmt: skip
+    )
+    db = run_recipe(recipe, tmp_path)
+    assay = db.intervals["assay"]
+    # the first row of sheet "two" has no row above it on its sheet: dropped, not hole A
+    assert list(zip(assay["hole_id"], assay["depth_from"], strict=True)) == [
+        ("A", 0.0), ("A", 1.0), ("B", 1.0), ("B", 2.0),
+    ]  # fmt: skip
+    assert db.metadata.reports["dropped_rows"]["assay"] == {
+        "total_rows": 1, "rows_without_hole_id": 1,
+    }  # fmt: skip

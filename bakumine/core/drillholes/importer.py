@@ -143,6 +143,12 @@ _NUMBER = r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?"
 _BELOW_DETECTION = re.compile(rf"^<\s*=?\s*({_NUMBER})$")
 _ABOVE_DETECTION = re.compile(rf"^>\s*=?\s*({_NUMBER})$")
 _DECIMAL_COMMA = re.compile(r"^([<>]?\s*=?\s*[+-]?\d+),(\d+)$")
+#: ``1,250`` / ``12,345,678`` / ``1,250.5``: digits grouped in threes by commas
+_THOUSANDS_COMMA = re.compile(r"^[<>]?\s*=?\s*[+-]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$")
+#: a thousands form that cannot be a decimal comma: two groups or a decimal point
+_THOUSANDS_CERTAIN = re.compile(r",\d{3}[,.]")
+_PLAIN_DECIMAL = re.compile(r"^[<>]?\s*=?\s*[+-]?\d*\.\d+$")
+_PLAIN_INTEGER = re.compile(r"^\+?\d{3,}$")
 
 
 # --------------------------------------------------------------------------------------
@@ -168,6 +174,22 @@ class ImportOptions:
     ``below_detection``     rule for ``<limit`` cells: ``"nan"``, ``"half"`` or ``"limit"``.
     ``above_detection``     rule for ``>limit`` cells: ``"limit"`` or ``"nan"``.
     ``decimal_comma``       read ``0,25`` as 0.25.
+    ``thousands_comma``     ``1,250`` may be 1.25 or 1250. ``"auto"`` (default) decides per
+                            column, never per cell: the commas of a numeric column are
+                            thousands separators when (1) every cell with a comma is
+                            digits grouped in threes (``1,250``, ``12,345,678``,
+                            ``1,250.5``; not ``0,250``, ``1,25``, ``1,2500``) and (2) the
+                            column shows that it is not written with decimal commas: a
+                            cell with two groups or a decimal point (``1,250,000``,
+                            ``1,250.5``), or a cell without a comma that has a decimal
+                            point (``980.5``) or is an unsigned whole number of three or
+                            more digits (``980``; missing-value numbers excepted). They
+                            are then read as 1250 and reported loudly (note
+                            ``thousands_comma``). In every other column (also one that
+                            mixes ``1,25`` and ``1,250``, or holds nothing but
+                            ``1,250``-like cells) the comma stays a decimal comma.
+                            ``True`` reads every grouped-in-threes cell as thousands,
+                            ``False`` never does.
     ``crs``                 projected CRS for collars given as longitude / latitude
                             (``"EPSG:32647"``); ``None`` or ``"utm"`` = the UTM zone of the
                             data. ``geographic_crs`` is the CRS of the longitudes.
@@ -193,6 +215,7 @@ class ImportOptions:
     below_detection: BelowDetection = "half"
     above_detection: str = "limit"
     decimal_comma: bool = True
+    thousands_comma: bool | str = "auto"
     crs: str | None = None
     geographic_crs: str = "EPSG:4326"
     coordinate_tolerance: float = 30.0
@@ -231,6 +254,10 @@ class ImportOptions:
         both = set(self.text_columns) & set(self.numeric_columns)
         if both:
             raise ValueError(f"columns listed as both text and numeric: {sorted(both)}")
+        if not isinstance(self.thousands_comma, bool) and self.thousands_comma != "auto":
+            raise ValueError(
+                f"thousands_comma must be 'auto', True or False, got {self.thousands_comma!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -533,6 +560,34 @@ class _Parsed:
     decimal_commas: int = 0
     #: non-blank missing tokens met ("-", "n/a" ...), by value
     missing: dict[str, int] = field(default_factory=dict)
+    #: cells whose commas were read as thousands separators, and the first of them
+    thousands_commas: int = 0
+    thousands_examples: list[str] = field(default_factory=list)
+
+
+def _thousands_cells(
+    stripped: pd.Series, has: np.ndarray, rule: bool | str, sentinels: np.ndarray
+) -> np.ndarray:
+    """The cells of a column (``has``: those with a comma) whose commas are thousands
+    separators, by the rule of ``ImportOptions.thousands_comma``."""
+    none = np.zeros(len(stripped), dtype=bool)
+    if rule is False or not has.any():
+        return none
+    grouped = none.copy()
+    grouped[has] = stripped[has].str.match(_THOUSANDS_COMMA).to_numpy(dtype=bool)
+    if rule is True:
+        return grouped
+    if not grouped[has].all():  # a 1,25 or 0,250 among them: a decimal-comma column
+        return none
+    if stripped[has].str.contains(_THOUSANDS_CERTAIN).any():
+        return grouped
+    plain = stripped[~has]
+    if plain.str.match(_PLAIN_DECIMAL).any():
+        return grouped
+    whole = plain[plain.str.match(_PLAIN_INTEGER).to_numpy(dtype=bool)]
+    if len(whole) and not np.isin(whole.astype(np.float64), sentinels).all():
+        return grouped
+    return none
 
 
 def _parse_numeric(
@@ -542,13 +597,27 @@ def _parse_numeric(
     rule: str,
     above: str = "limit",
     decimal_comma: bool = True,
+    thousands_comma: bool | str = False,
+    not_evidence: np.ndarray | None = None,
 ) -> _Parsed:
     """Text cells -> float64. Missing -> NaN; ``<limit`` by ``rule``; ``>limit`` by ``above``;
-    ``0,25`` -> 0.25; anything else -> NaN + flag."""
+    ``0,25`` -> 0.25, or ``1,250`` -> 1250 where ``thousands_comma`` says so for the column
+    (see :class:`ImportOptions`; ``not_evidence``: whole numbers that mean "missing" and so
+    say nothing about the column, default ``sentinels``); anything else -> NaN + flag."""
     stripped = cells.str.strip()
-    commas = 0
+    commas = thousands = 0
+    examples: list[str] = []
+    has = stripped.str.contains(",", regex=False).to_numpy(dtype=bool)
+    grouped = _thousands_cells(
+        stripped, has, thousands_comma, sentinels if not_evidence is None else not_evidence
+    )
+    if grouped.any():
+        thousands = int(grouped.sum())
+        examples = list(dict.fromkeys(stripped[grouped].tolist()))[:5]
+        stripped = stripped.copy()
+        stripped[grouped] = stripped[grouped].str.replace(",", "", regex=False)
+        has = has & ~grouped
     if decimal_comma:
-        has = stripped.str.contains(",", regex=False).to_numpy(dtype=bool)
         if has.any():
             fixed = stripped[has].str.replace(_DECIMAL_COMMA, r"\1.\2", regex=True)
             commas = int((fixed != stripped[has]).sum())
@@ -580,7 +649,10 @@ def _parse_numeric(
             unparseable[i] = True
     hit = np.isin(values, sentinels) if sentinels.size else np.zeros(len(cells), dtype=bool)
     values[hit] = np.nan
-    return _Parsed(values, unparseable, below, int(hit.sum()), over, commas, dict(tokens))
+    return _Parsed(
+        values, unparseable, below, int(hit.sum()), over, commas, dict(tokens),
+        thousands, examples,
+    )  # fmt: skip
 
 
 def _parse_text(cells: pd.Series, text_tokens: set[str]) -> pd.Series:
@@ -689,6 +761,12 @@ def import_table(
         if count:
             notes.append({"table": name, "column": column, "kind": what, "count": count, **extra})
 
+    def thousands(column: str, parsed: _Parsed) -> None:
+        note(column, "thousands_comma", parsed.thousands_commas,
+             examples=parsed.thousands_examples,
+             hint="commas read as thousands separators (1,250 = 1250); "
+                  "set the import option thousands_comma to false if not")  # fmt: skip
+
     out: dict[str, Any] = {}
     for target in order:
         cells = raw[by_target[target]]
@@ -698,8 +776,9 @@ def import_table(
         if target in canonical or (kind == "collar" and target in _COLLAR_NUMBERS):
             # coordinates, depths, angles: numeric, no sentinels
             parsed = _parse_numeric(
-                cells, text_tokens, no_sentinels, "nan", "nan", options.decimal_comma
-            )
+                cells, text_tokens, no_sentinels, "nan", "nan", options.decimal_comma,
+                options.thousands_comma, sentinels,
+            )  # fmt: skip
             if kind == "collar" and target in ("lon", "lat") and parsed.unparseable.any():
                 out[target] = _parse_text(cells, text_tokens)  # "98 47 11.0", parsed later
                 continue
@@ -715,6 +794,7 @@ def import_table(
                 parsed.below_detection + parsed.above_detection,
             )
             note(target, "decimal_comma", parsed.decimal_commas)
+            thousands(target, parsed)
             out[target] = parsed.values
             continue
         if target in options.text_columns or (
@@ -729,6 +809,7 @@ def import_table(
             options.below_detection,
             options.above_detection,
             options.decimal_comma,
+            options.thousands_comma,
         )
         n_bad = int(parsed.unparseable.sum())
         n_numbers = (
@@ -754,6 +835,7 @@ def import_table(
         note(target, "below_detection", parsed.below_detection, rule=options.below_detection)
         note(target, "above_detection", parsed.above_detection, rule=options.above_detection)
         note(target, "decimal_comma", parsed.decimal_commas)
+        thousands(target, parsed)
         note(target, "sentinel_set_to_nan", parsed.sentinels)
         note(
             target,

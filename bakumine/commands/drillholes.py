@@ -369,6 +369,7 @@ _SOURCE_LAYOUT_KEYS = {
     "header-row": "header_row",
     "header-rows": "header_rows",
     "hole-from-sheet": "hole_id_from_sheet",
+    "carry-down": "carry_down",
     "map": "map",
 }
 #: --source-option keys that are import options of one file -> the ImportOptions field
@@ -383,7 +384,9 @@ _SOURCE_VALUE_KEYS: dict[str, str] = {
 _SOURCE_SAMPLE_KEYS = ("sample-depth", "sample-length", "sample-pattern", "sample-depth-tolerance")
 SOURCE_OPTION_HELP = (
     "sheet (names, indexes or wildcards, comma separated), exclude-sheets, header-row, "
-    "header-rows, hole-from-sheet (yes / no), map (a JSON or TOML file: {source column: "
+    "header-rows, hole-from-sheet (yes / no), carry-down (yes / no; default yes: in a "
+    "survey or interval file that writes the hole id once per hole, the rows below it "
+    "take that id), map (a JSON or TOML file: {source column: "
     "canonical name}); and, as the options of the same name but for this file only, "
     "dip-convention, length-unit, coordinate-order, crs (the CRS of this file's "
     "coordinates; files in another CRS than --crs are reprojected), geographic-crs. "
@@ -490,7 +493,7 @@ def _source_options(
                 if not value.isdigit():
                     raise CommandError(f"--source-option {name}:{key} expects a number")
                 source[field] = int(value)
-            elif field == "hole_id_from_sheet":
+            elif field in ("hole_id_from_sheet", "carry_down"):
                 source[field] = _truth(value, f"--source-option {name}:{key}")
             else:  # map: a file with one table's column map
                 document = _read_map_file(Path(value), flat=True)
@@ -743,6 +746,8 @@ def _print_import_reports(db) -> None:
             f"than once, {repeats['rows_removed']} row(s) removed; listed in {repeats['listing']}"
             + (f" ({repeats['near']} of them with from/to within {repeats['tolerance']:g}, "
                "not equal)" if repeats.get("near") else "")  # fmt: skip
+            + (f"; {repeats['cells_filled']} missing cell(s) of the kept rows filled from "
+               "the removed rows" if repeats.get("cells_filled") else "")  # fmt: skip
         )
     for name, found in reports.get("overlaps", {}).items():
         print(
@@ -892,6 +897,20 @@ def run_import(args: argparse.Namespace) -> int:
         )
         print(f"  {name} attributes: {columns or '(none)'}")
     _print_import_reports(db)
+    for note in db.metadata.notes:
+        if note["kind"] == "thousands_comma":
+            print(
+                f"  WARNING: {note['table']}.{note['column']}: the commas of {note['count']} "
+                f"value(s) were read as thousands separators (e.g. "
+                f"{', '.join(repr(v) for v in note.get('examples', [])[:3])}: 1,250 = 1250). "
+                "If they are decimal commas, import with a recipe whose options have "
+                '"thousands_comma": false'
+            )
+        elif note["kind"] == "hole_id_carried_down":
+            print(
+                f"  {note['table']}: {note['count']} row(s) without a hole id took the id of "
+                "the row above (hole id written once per hole)"
+            )
     for note in db.metadata.notes[:10]:
         values = note.get("values")
         detail = (

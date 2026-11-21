@@ -33,6 +33,14 @@ the project's job log, so the same import can be run again on updated files with
                         ``sample_type``, ``sample_length`` (interval tables) and ``lon``,
                         ``lat`` or ``lon_deg`` ... ``lat_sec``, ``azimuth``, ``dip`` (collar).
 ``hole_id_from_sheet``  true: the sheet name is the hole id.
+``carry_down``          survey and interval tables, default true: a row with a blank hole
+                        id that has valid depths (``from`` and ``to``, or ``depth``) takes
+                        the hole id of the nearest row above it on the same sheet that
+                        has one (a hole id written once per hole, a merged cell). A
+                        total / summary row closes the hole: rows below it take no id.
+                        Counted in the note ``hole_id_carried_down``. Rows with a blank
+                        hole id and no depths are dropped either way; ``false`` drops
+                        every row without a hole id. Never applied to the collar table.
 ``hole_id``             ``{"pattern", "template"}`` for this source (else the recipe's).
 ``sample_depth``        interval tables: read depths from the sample number where the
                         ``from`` / ``to`` cells are empty. ``true`` or ``{"column":
@@ -87,8 +95,10 @@ equal ones: the winning source's from / to stay, the pair is counted
 
 An interval that is still there twice (an unmarked laboratory repeat, or near-duplicates
 within one source) would overlap itself. ``duplicate_intervals`` says what becomes of it:
-``"keep_first"`` (default: the first row stays), ``"mean"`` (the numeric attributes become
-the mean of the rows, text and depths are the first row's) or ``"error"`` (the import
+``"keep_first"`` (default: the first row stays, and the cells it lacks are filled from the
+later rows in order, as the merge of sources does: ``cells_filled`` in the report),
+``"mean"`` (the numeric attributes become the mean of the rows, text and depths are the
+first row's) or ``"error"`` (the import
 stops). The count is in ``reports["duplicates"][table]``, every row of every such interval
 in ``duplicates_<table>.csv`` with its source file.
 
@@ -170,11 +180,10 @@ __all__ = [
 RECIPE_FORMAT = "bakumine-import-recipe"
 RECIPE_VERSION = 1
 RECIPE_FILE = "import_recipe.json"
-_SOURCE = "__source__"
 _SOURCE_KEYS = frozenset(
     {
         "file", "sheets", "exclude_sheets", "header_row", "header_rows", "map",
-        "hole_id_from_sheet", "hole_id", "sample_depth", "qc", "options",
+        "hole_id_from_sheet", "hole_id", "sample_depth", "qc", "options", "carry_down",
     }
 )  # fmt: skip
 #: import options a source may set for itself
@@ -689,7 +698,10 @@ def resolve_duplicate_intervals(
     close (:func:`near_intervals`). Returns ``(table, report, listing)``; the listing holds
     every row of every such interval with ``kept`` (false for the rows removed), ``rule``
     and, when the table has the ``__file__`` column, its ``source``. ``near`` in the report
-    counts the intervals whose rows do not have the very same from and to."""
+    counts the intervals whose rows do not have the very same from and to. With
+    ``"keep_first"`` a missing cell of the kept row takes the first value the later rows
+    of its interval have for it (``cells_filled`` in the report counts them); the depths
+    and the ``__`` columns stay the first row's."""
     keys = ["hole_id", "depth_from", "depth_to"]
     key_frame = table[keys].copy()
     for column in keys[1:]:
@@ -705,7 +717,7 @@ def resolve_duplicate_intervals(
         "rule": rule, "intervals": int((repeated & ~later).sum()),
         "rows_removed": int(later.sum()),
         "holes": int(table["hole_id"][repeated].nunique()), "examples": [],
-        "tolerance": tolerance, "near": 0,
+        "tolerance": tolerance, "near": 0, "cells_filled": 0,
     }  # fmt: skip
     if not repeated.any():
         return table, report, table.iloc[0:0]
@@ -750,6 +762,18 @@ def resolve_duplicate_intervals(
                 group[repeated], sort=False
             ).transform("mean")  # NaN only where every row lacks the value
             table.loc[repeated, numbers] = means
+    else:  # keep_first: what the first row lacks, the later rows may have
+        columns = [c for c in table.columns if c not in keys and not c.startswith("__")]
+        kept = repeated & ~later
+        if columns:
+            found = table.loc[repeated, columns].groupby(group[repeated], sort=False).first()
+            found = found.loc[group[kept].to_numpy()].set_axis(table.index[kept])
+            for column in columns:
+                lacking = table.loc[kept, column].isna() & found[column].notna()
+                if lacking.any():
+                    rows = lacking.index[lacking.to_numpy()]
+                    table.loc[rows, column] = found.loc[rows, column]
+                    report["cells_filled"] += int(lacking.sum())
     return table.loc[~later].reset_index(drop=True), report, listing
 
 
@@ -1182,11 +1206,19 @@ def run_recipe(recipe: Mapping[str, Any], base: str | Path | None = None) -> Dri
         for i, part in enumerate(prepared):
             resolved["tables"][name][i]["map"] = part.mapping
             metadata.notes.extend(part.notes)
-        stacked = _stack([p.table.assign(**{_SOURCE: str(i)}) for i, p in enumerate(prepared)])
+        stacked = _stack([p.table for p in prepared])
+        # the source index of every row never goes through the cleaning of the values
+        # (a missing token 0 would take source 0 for "no data"): kept apart, by position
+        source = np.repeat(np.arange(len(prepared)), [len(p.table) for p in prepared])
+        blank = np.ones(len(stacked), dtype=bool)  # rows import_table drops: no cell filled
+        for column in stacked.columns:
+            blank &= stacked[column].astype(str).str.strip().to_numpy(dtype=object) == ""
+        source = source[~blank].astype(np.int64)
         identity = {c: c for c in stacked.columns}
         table, notes = import_table(stacked, kind, identity, options, name=name)  # type: ignore[arg-type]
         metadata.notes.extend(notes)
-        source = table.pop(_SOURCE).to_numpy(dtype=np.int64)
+        if len(table) != len(source):
+            raise RuntimeError(f"{name}: {len(table)} rows imported, {len(source)} expected")
         table, source = holes.apply(table, name, source)
         table = per_source.apply(name, kind, table, source, labels, metadata)
         if kind == "interval":

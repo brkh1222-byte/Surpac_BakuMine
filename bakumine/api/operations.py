@@ -67,7 +67,7 @@ MAX_SHEETS_LISTED = 400
 _SPEC_KEYS = frozenset(
     {
         "sheets", "exclude_sheets", "header_row", "header_rows", "map", "hole_id_from_sheet",
-        "hole_id", "sample_depth", "qc", "options",
+        "carry_down", "hole_id", "sample_depth", "qc", "options",
     }
 )  # fmt: skip
 

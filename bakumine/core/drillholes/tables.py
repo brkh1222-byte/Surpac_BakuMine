@@ -707,7 +707,9 @@ class Prepared:
     ``info``    what was read and decided: sheets (name, header row, rows), columns,
                 missing canonical columns, units of element columns, rows dropped (total
                 rows, rows without a hole id), QC and sample-number summaries.
-    ``notes``   importer notes (table, column, kind, count ...).
+    ``notes``   importer notes (table, column, kind, count ...), among them
+                ``hole_id_carried_down``: rows of a survey or interval source that had no
+                hole id and took the one above (source key ``carry_down``, default on).
     """
 
     table: pd.DataFrame
@@ -847,6 +849,11 @@ def prepare_source(
         total = np.array([is_total_label(label) for label in labels], dtype=bool)
         if "hole_id" in targets and not from_sheet:
             total |= np.array([is_total_label(v) for v in renamed["hole_id"]], dtype=bool)
+        # a hole id written once per hole: the rows below it (with depths) are that
+        # hole's, down to the hole's total row
+        carry = spec.get("carry_down")
+        if kind != "collar" and not from_sheet and (carry is None or carry):
+            note("hole_id", "hole_id_carried_down", _carry_hole_id_down(renamed, kind, total))
         if total.any():
             dropped["total_rows"] = int(total.sum())
             note("*", "total_rows_dropped", int(total.sum()),
@@ -882,6 +889,38 @@ def prepare_source(
         notes=notes,
         derived=derived,
     )
+
+
+def _carry_hole_id_down(table: pd.DataFrame, kind: str, total: np.ndarray) -> int:
+    """A hole id written once per hole (a merged cell): in a survey or interval table a row
+    with a blank hole id and valid depths (``depth``; ``depth_from`` and ``depth_to``:
+    numbers, decimal comma allowed) takes the hole id of the nearest row above it on the
+    same sheet that has one. A total / summary row (``total``) takes no id and closes the
+    hole above it: a row below a subtotal belongs to no hole until the next hole id. Rows
+    without depths (blank lines, sums) keep their blank id; the caller drops them.
+    Changes ``table`` in place; returns the number of rows filled.
+    """
+    depth_columns = ("depth",) if kind == "survey" else ("depth_from", "depth_to")
+    if len(table) == 0 or not {"hole_id", *depth_columns} <= set(table.columns):
+        return 0
+    ids = table["hole_id"].astype(str).str.strip()
+    blank = (ids == "").to_numpy(dtype=bool) & ~total
+    if not blank.any():
+        return 0
+    valid = np.ones(len(table), dtype=bool)
+    for column in depth_columns:
+        valid &= np.isfinite(
+            pd.to_numeric(
+                table[column].astype(str).str.strip().str.replace(",", "."), errors="coerce"
+            ).to_numpy(dtype=np.float64)
+        )
+    above = ids.where(~blank).mask(total, "").groupby(
+        table[SHEET_COLUMN].to_numpy(), sort=False
+    ).ffill()  # "" below a total row: no hole to take
+    take = blank & valid & above.fillna("").ne("").to_numpy(dtype=bool)
+    if take.any():
+        table.loc[take, "hole_id"] = above[take]
+    return int(take.sum())
 
 
 def _interval_rules(

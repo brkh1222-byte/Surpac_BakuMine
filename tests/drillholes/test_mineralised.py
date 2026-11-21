@@ -208,8 +208,72 @@ def test_true_thickness_against_analytic_directions():
     np.testing.assert_allclose(body_normal(90, 90), [1, 0, 0], atol=1e-15)
     with pytest.raises(ValueError, match="traces"):
         mineralised_intervals(table, "au", params)
-    with pytest.raises(ValueError, match="no desurveyed direction"):
-        mineralised_intervals(hole([1.0], hole_id="X"), "au", params, traces=traces)
+
+
+def test_true_thickness_past_the_end_of_a_trace_and_without_one():
+    collar = pd.DataFrame(
+        {"hole_id": ["I", "C"], "x": 0.0, "y": 0.0, "z": 100.0, "max_depth": [8.0, 20.0]}
+    )
+    # I: straight, 60 degrees down to the east. C: turns from vertical at 0 m to 60
+    # degrees down to the east at its end (20 m).
+    survey = pd.DataFrame(
+        {"hole_id": ["I", "C", "C"], "depth": [0.0, 0.0, 20.0], "dip": [-60.0, -90.0, -60.0],
+         "azimuth": 90.0}  # fmt: skip
+    )
+    traces = desurvey(collar, survey)
+    # body dipping 30 degrees to the west: the direction (east, 60 down) is its normal
+    params = InterceptParams(0.2, min_thickness=1.0, body_dip=30, body_dip_azimuth=270)
+    table = pd.concat(
+        [
+            hole([1.0] * 4, start=7.0, hole_id="I"),  # 7-11 m: middle 9 m, the hole ends at 8
+            hole([1.0] * 4, start=22.0, hole_id="C"),  # 22-26 m, below the end at 20 m
+            hole([1.0] * 4, hole_id="X"),  # no collar, no survey: judged down-hole
+        ]
+    )
+    with pytest.warns(UserWarning) as caught:
+        r = mineralised_intervals(table, "au", params, traces=traces)
+    messages = [str(w.message) for w in caught]
+    below = [m for m in messages if "below the stated hole depth" in m]
+    none = [m for m in messages if "no desurveyed direction" in m]
+    assert len(below) == 1 and "2 hole(s) (C, I)" in below[0]
+    assert len(none) == 1 and "1 hole(s) (X)" in none[0]
+    thickness = dict(zip(r.intercepts["hole_id"], r.intercepts["true_thickness"], strict=True))
+    assert list(thickness) == ["C", "I", "X"]
+    assert thickness["I"] == pytest.approx(4.0)  # the straight hole goes on as it went
+    # the curved hole continues on its direction at the end (perpendicular to the body),
+    # not on the direction somewhere up the hole
+    assert thickness["C"] == pytest.approx(4.0)
+    assert math.isnan(thickness["X"])
+    rules = dict(zip(r.intercepts["hole_id"], r.intercepts["rule"], strict=True))
+    assert rules == {"C": "thickness", "I": "thickness", "X": "thickness"}
+    # an intercept inside the trace gives no warning
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        inside_trace = mineralised_intervals(
+            hole([1.0] * 4, hole_id="I"), "au", params, traces=traces
+        )
+    assert inside_trace.intercepts["true_thickness"].iloc[0] == pytest.approx(4.0)
+    assert inside_trace.warnings == [] and r.warnings == messages
+
+
+def test_cli_says_which_holes_have_intercepts_below_their_depth(tmp_path, capsys):
+    from bakumine.cli import main
+    from bakumine.core.drillholes.importer import DrillholeDatabase
+
+    collar = pd.DataFrame({"hole_id": ["I"], "x": 0.0, "y": 0.0, "z": 100.0, "max_depth": 8.0})
+    survey = pd.DataFrame({"hole_id": ["I"], "depth": 0.0, "dip": -60.0, "azimuth": 90.0})
+    assays = hole([1.0] * 4, start=7.0, hole_id="I")
+    folder = tmp_path / "db"
+    DrillholeDatabase(collar, survey, {"assay": assays}).save(folder)
+    code = main(["intercepts", str(folder), "--grade", "au", "--cutoff", "0.2",
+                 "--body-dip", "30", "--body-dip-azimuth", "270"])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "WARNING: true thickness: intercepts of 1 hole(s) (I) lie below the stated" in out
+    table = pd.read_csv(folder / "intercepts_assay.csv")
+    assert table["true_thickness"].tolist() == pytest.approx([4.0])
 
 
 def test_input_errors():

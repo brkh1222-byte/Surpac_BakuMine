@@ -116,15 +116,31 @@ def parse_pages(text: str | None, n_pages: int) -> list[int]:
     return pages
 
 
+def _lines(text: str | None) -> list[str]:
+    return [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+
+def _multi_value(text: str | None) -> bool:
+    """Does a cell hold several numbers, one per line (``"151\\n152"``: two rows drawn as
+    one cell)? They are several values, not one number broken over lines."""
+    lines = _lines(text)
+    return len(lines) > 1 and all(_is_number(line) for line in lines)
+
+
 def _clean(text: str | None, header: bool = False) -> str:
     """Cell text on one line. A data value broken over lines (no spaces in any piece) is
-    joined without a space; anything else with one."""
-    if not text:
-        return ""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    joined without a space; anything else with one. Lines that are each a number are
+    never joined into one number: they stay apart, separated by a space (``"151 152"``), so
+    that the cell does not read as a number and the row shows up when it is imported."""
+    lines = _lines(text)
     if not lines:
         return ""
-    if not header and len(lines) > 1 and not any(" " in line for line in lines):
+    if (
+        not header
+        and len(lines) > 1
+        and not any(" " in line for line in lines)
+        and not _multi_value(text)
+    ):
         return "".join(lines)
     return " ".join(lines)
 
@@ -352,6 +368,7 @@ class _Builder:
             "title_rows": 0,
             "titles": [],
             "cells_joined": 0,
+            "multi_value_cells": 0,
             "open_rows_closed": 0,
             "pages": [],
         }
@@ -453,6 +470,8 @@ class _Builder:
             text = _clean(cell.text)
             if not text:
                 continue
+            if _multi_value(cell.text):
+                self.notes["multi_value_cells"] += 1
             j = self._column(cell)
             if j in out:
                 out[j] = f"{out[j]} {text}"
@@ -666,6 +685,12 @@ def page_warnings(table: ExtractedTable) -> list[str]:
                 f"page {entry['page']}: {entry['text_lines_outside']} text line(s) between "
                 "the column rulings lie outside the ruled rows and were NOT extracted"
             )
+    if table.notes.get("multi_value_cells"):
+        warnings.append(
+            f"{table.notes['multi_value_cells']} cell(s) hold several numbers on separate "
+            "lines (rows drawn as one cell?): written with a space between them "
+            "('151 152'), not as one number; check those rows"
+        )
     gaps = _numbering_gaps(table)
     if gaps and gaps["n_missing"]:
         listed = ", ".join(str(n) for n in gaps["missing"][:12])

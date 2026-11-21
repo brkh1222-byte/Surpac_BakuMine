@@ -76,6 +76,7 @@ def _run(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict[st
         "interval_table": save_as,
         "file": path.relative_to(folder).as_posix(),
         "n_intervals": int(len(result.intervals)),
+        "warnings": list(result.warnings),
         "truncated": bool(len(result.intercepts) > MAX_ROWS),
         "table": rows,
     }

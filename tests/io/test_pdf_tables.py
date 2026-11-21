@@ -375,3 +375,39 @@ def test_cli_writes_one_file_per_consecutive_table(three_tables, tmp_path, capsy
     # --one-table still joins them when the user says the range is one table
     joined = extract_tables(path, one_table=True)
     assert len(joined) == 1 and len(joined[0].rows) >= sum(len(r) for r in drawn.values())
+
+
+def test_numbers_on_separate_lines_of_a_cell_are_not_joined_into_one_number():
+    from bakumine.core.io.pdf_tables import _clean, _multi_value
+
+    assert _clean("151\n152") == "151 152"
+    assert _clean("0.5\n0.7") == "0.5 0.7"
+    assert _clean(" 12,5 \n\n13,5\n-2") == "12,5 13,5 -2"
+    assert _multi_value("151\n152") and not _multi_value("151") and not _multi_value(None)
+    # text broken over lines is joined as before; so is a header
+    assert _clean("SYN25_0\n3") == "SYN25_03" and not _multi_value("SYN25_0\n3")
+    assert _clean("DH-\n01") == "DH-01"
+    assert _clean("Sample\nNo") == "SampleNo" and _clean("Sample\nNo", True) == "Sample No"
+    assert _clean("Length,\nm", True) == "Length, m"
+    assert _clean("two words\nmore") == "two words more"
+
+
+def test_cells_with_several_numbers_are_counted_and_reported(tmp_path, capsys):
+    rows = appendix_rows(n_holes=1, seed=7)[:30]
+    drawn = [list(r) for r in rows]
+    drawn[4][4] = "151\n152"  # two rows drawn as one cell: two "from" values
+    drawn[9][7] = "0.5\n0.7"
+    path = tmp_path / "cells.pdf"
+    write_appendix(path, drawn)
+    table = extract_tables(path, "2-")[0]
+    assert len(table.rows) == 30
+    assert table.rows[4][4] == "151 152" and table.rows[9][7] == "0.5 0.7"
+    assert table.rows[3] == rows[3]
+    assert table.notes["multi_value_cells"] == 2
+    report = table_report(table)
+    assert report["multi_value_cells"] == 2
+    assert report["rows_without_depths"] == 1  # "151 152" is not a depth
+    assert any("2 cell(s) hold several numbers" in w for w in report["warnings"])
+    assert main(["extract-tables", str(path), "--pages", "2-", "--out", str(tmp_path / "o")]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING: 2 cell(s) hold several numbers on separate lines" in out

@@ -320,8 +320,48 @@ def hole_piece(hole_rows: pd.DataFrame, row, gap_tolerance: float) -> pd.DataFra
 def test_a_tiny_window_is_the_plain_cutoff(table, params):
     """Moving average over less than a sample = strict without internal waste."""
     plain = dataclasses.replace(params, max_internal_waste=0.0, max_total_waste=None)
-    tiny = dataclasses.replace(params, mode="moving-average", window=0.01)
+    # the waste limits are set on both sides: the moving average does not use them for
+    # the intercepts, but the "including" intervals are built with the strict rule
+    tiny = dataclasses.replace(plain, mode="moving-average", window=0.01)
     a = mineralised_intervals(table, "au", plain)
     b = mineralised_intervals(table, "au", tiny)
     pd.testing.assert_frame_equal(a.intervals, b.intervals)
     pd.testing.assert_frame_equal(a.intercepts, b.intercepts)
+
+
+# ------------------------------------------------------------------ "including" in every mode
+@pytest.mark.parametrize("mode", MODES)
+def test_including_intervals_are_the_high_grade_in_every_mode(mode):
+    # 0.05, 0.1, 0.9, 0.1, 0.05, 0.05 (cut-off 0.2). Moving average, window 3: the run is
+    # 1-4 m (module docstring); strict and average: 2-3 m. "Including" at 0.5 is found
+    # with the strict rule on the samples of the intercept: the 0.9 sample at 2-3 m, never
+    # the 0.1 samples beside it.
+    window = {"window": 3} if mode == "moving-average" else {}
+    r = run(hole([0.05, 0.1, 0.9, 0.1, 0.05, 0.05]), mode=mode, including_cutoffs=(0.5,),
+            min_thickness=0.0, **window)  # fmt: skip
+    if mode == "moving-average":
+        assert spans(r) == [(1, 4)]
+        assert spans(r, "including") == [(2, 3)]
+        sub = r.intercepts[r.intercepts["level"] == "including"].iloc[0]
+        assert sub["grade"] == pytest.approx(0.9) and sub["parent"] == 0
+        assert sub["n_samples"] == 1 and sub["cutoff"] == 0.5
+    else:
+        assert spans(r) == [(2, 3)]
+        assert spans(r, "including") == []  # it would be the whole intercept: left out
+
+
+def test_including_intervals_start_and_end_at_their_cutoff():
+    # two high-grade stretches inside one moving-average run; every "including" interval
+    # starts and ends on a sample >= its cut-off and makes that cut-off
+    grades = [0.05, 0.3, 1.2, 0.1, 0.1, 0.8, 0.9, 0.3, 0.05, 0.05]
+    table = hole(grades)
+    for mode, extra in (("strict", {}), ("average", {}), ("moving-average", {"window": 3})):
+        r = run(table, mode=mode, including_cutoffs=(0.5,), min_thickness=0.0,
+                max_internal_waste=2.0, **extra)  # fmt: skip
+        inner = r.intercepts[r.intercepts["level"] == "including"]
+        assert [(s.depth_from, s.depth_to) for s in inner.itertuples()] == [(2, 3), (5, 7)], mode
+        for sub in inner.itertuples():
+            assert grades[int(sub.depth_from)] >= 0.5 and grades[int(sub.depth_to) - 1] >= 0.5
+            assert sub.grade >= 0.5
+            parent = r.intercepts.iloc[sub.parent]
+            assert parent["depth_from"] <= sub.depth_from and sub.depth_to <= parent["depth_to"]

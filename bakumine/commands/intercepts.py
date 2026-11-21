@@ -146,15 +146,21 @@ def run(args: argparse.Namespace) -> int:
     if not (folder / "database.json").is_file():
         raise CommandError(f"{folder} is not a drillhole database folder (no database.json)")
     params = params_from_args(args)
-    result, path = flag_database_folder(
-        folder,
-        args.table,
-        args.grade,
-        params,
-        save_as=args.save_as,
-        overwrite=args.overwrite,
-        out=args.out,
-    )
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # printed below from the result
+        result, path = flag_database_folder(
+            folder,
+            args.table,
+            args.grade,
+            params,
+            save_as=args.save_as,
+            overwrite=args.overwrite,
+            out=args.out,
+        )
+    for message in result.warnings:
+        print(f"WARNING: {message}")
     _wrote(path, f"{len(result.intercepts)} intercept rows")
     if args.save_as:
         _wrote(folder / f"interval_{args.save_as}.parquet", f"{len(result.intervals)} intervals")

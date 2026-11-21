@@ -161,3 +161,49 @@ def test_ends_within_the_tolerance_are_one_interval_when_files_merge(files):
                          "depth_to": [1.0, 1.009, 1.02], "au": [1.0, np.nan, 3.0]})  # fmt: skip
     out, report = merge_sources(pair, np.array([0, 1, 1]), keys, tolerance=0.01)
     assert out["depth_to"].tolist() == [1.0, 1.02] and report["merged"] == 1
+
+
+def test_keep_first_fills_the_cells_the_first_row_lacks(tmp_path, capsys):
+    (tmp_path / "collar.csv").write_text(
+        "Hole,East,North,RL,Depth,Azimuth,Dip\nA,0,0,100,10,0,-90\n", encoding="utf-8"
+    )
+    (tmp_path / "assay.csv").write_text(
+        "Hole,From,To,Au,Ag,Lith\n"
+        "A,0,1,0.5,1,ox\n"
+        "A,1,2,,7,\n"  # no gold, no lithology
+        "A,1,2,,,\n"
+        "A,1,2,4,8,sul\n"  # the gold and the lithology are here; its silver differs
+        "A,1,2,5,9,fresh\n"
+        "A,2,3,,2,ox\n",  # missing and not a duplicate: stays missing
+        encoding="utf-8",
+    )
+    recipe = make_recipe({"collar": [{"file": "collar.csv"}], "assay": [{"file": "assay.csv"}]})
+    db = run_recipe(recipe, tmp_path)
+    table = db.intervals["assay"]
+    assert table["depth_from"].tolist() == [0.0, 1.0, 2.0]
+    assert table["au"].tolist()[:2] == [0.5, 4.0] and np.isnan(table["au"].iloc[2])
+    assert table["ag"].tolist() == [1.0, 7.0, 2.0]  # the first row's own value stays
+    assert table["lith"].tolist() == ["ox", "sul", "ox"]
+    report = db.metadata.reports["duplicates"]["assay"]
+    assert report["rows_removed"] == 3 and report["cells_filled"] == 2
+    listing = db.listings["duplicates_assay"]  # the rows as they were in the file
+    assert listing["kept"].tolist() == [True, False, False, False]
+    assert np.isnan(listing["au"].iloc[0])
+
+    # the function alone, and "mean" is as before
+    frame = pd.DataFrame(
+        {"hole_id": "A", "depth_from": [1.0, 1.0], "depth_to": [2.0, 2.0],
+         "au": [np.nan, 4.0], "ag": [np.nan, np.nan]}  # fmt: skip
+    )
+    kept, report, _ = resolve_duplicate_intervals(frame, "keep_first")
+    assert kept["au"].tolist() == [4.0] and np.isnan(kept["ag"].iloc[0])
+    assert report["cells_filled"] == 1
+    assert np.isnan(frame["au"].iloc[0])  # the input is not changed
+    kept, report, _ = resolve_duplicate_intervals(frame, "mean")
+    assert kept["au"].tolist() == [4.0] and report["cells_filled"] == 0
+
+    code = main(["import", "--collar", str(tmp_path / "collar.csv"), "--assay",
+                 str(tmp_path / "assay.csv"), "--auto", "--dry-run"])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2 missing cell(s) of the kept rows filled from the removed rows" in out

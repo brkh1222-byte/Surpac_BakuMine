@@ -369,3 +369,42 @@ def test_axis_order_per_file_when_only_one_file_has_longitude_and_latitude(tmp_p
     assert orders == ["yxz", "xyz", "xyz"]
     assert db.metadata.crs == "EPSG:32633"
     assert db.metadata.reports["conflicts"]["collar"]["conflicts"] == 0
+
+
+def test_the_source_index_is_not_a_value_to_clean(tmp_path):
+    """Missing tokens 0 and 1 are for the values of the files, not for the importer's own
+    count of the sources (two sources: indexes 0 and 1)."""
+    import warnings
+
+    (tmp_path / "collar.csv").write_text(
+        "Hole,East,North,RL,Depth,Azimuth,Dip\nA,0,0,100,10,0,-90\nB,50,0,100,10,0,-90\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "first.csv").write_text(
+        "Hole,From,To,Au,Ag\nA,0,1,0,\nA,1,2,2,\nB,0,1,1,\n", encoding="utf-8"
+    )
+    (tmp_path / "second.csv").write_text(
+        "Hole,From,To,Au,Ag\nA,0,1,7,5\nA,1,2,9,6\nB,2,3,3,1\n", encoding="utf-8"
+    )
+    recipe = make_recipe(
+        {"collar": [{"file": "collar.csv"}],
+         "assay": [{"file": "first.csv"}, {"file": "second.csv"}]},  # fmt: skip
+        {"missing_tokens": ["", 0, 1]},
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # "invalid value encountered in cast"
+        db = run_recipe(recipe, tmp_path)
+    table = db.intervals["assay"].sort_values(["hole_id", "depth_from"]).reset_index(drop=True)
+    assert list(zip(table["hole_id"], table["depth_from"], strict=True)) == [
+        ("A", 0.0), ("A", 1.0), ("B", 0.0), ("B", 2.0),
+    ]  # fmt: skip
+    # the first file wins; its 0 and 1 are "no data" and are filled from the second file
+    np.testing.assert_array_equal(table["au"].to_numpy(), [7.0, 2.0, np.nan, 3.0])
+    np.testing.assert_array_equal(table["ag"].to_numpy(), [5.0, 6.0, np.nan, np.nan])
+    merged = db.metadata.reports["conflicts"]["assay"]
+    assert merged["merged"] == 2 and merged["filled"] == 3
+    assert merged["by_column"] == {"au": 1}
+    assert merged["rows"][0]["kept_source"] == "first.csv"
+    assert merged["rows"][0]["dropped_source"] == "second.csv"
+    sources = db.metadata.reports["tables"]["assay"]["sources"]
+    assert [(s["file"], s["rows"]) for s in sources] == [("first.csv", 3), ("second.csv", 3)]

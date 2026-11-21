@@ -645,3 +645,82 @@ def test_synthetic_default_dataset_imports():
         assert set(table["hole_id"]) <= set(db.collar["hole_id"])
         assert (table["depth_to"] > table["depth_from"]).all()
     assert len(db.desurvey()) == len(db.collar)
+
+
+# ------------------------------------------------------------------ thousands commas
+def _comma_column(values, **options):
+    from bakumine.core.drillholes.importer import ImportOptions, import_table
+
+    frame = pd.DataFrame(
+        {"hole": "A", "from": np.arange(len(values), dtype=float),
+         "to": np.arange(len(values), dtype=float) + 1, "cu": values}  # fmt: skip
+    ).astype(str)
+    table, notes = import_table(
+        frame, "interval", {"hole": "hole_id", "from": "depth_from", "to": "depth_to"},
+        ImportOptions(**options),
+    )  # fmt: skip
+    return table["cu"].tolist(), {n["kind"]: n for n in notes if n["column"] == "cu"}
+
+
+def test_thousands_commas_are_decided_per_column_and_reported():
+    # every comma value is digits grouped in threes and a plain whole number of three
+    # digits stands beside them: 1,250 is 1250, not 1.25
+    values, notes = _comma_column(["1,250", "2,500", "980"])
+    assert values == [1250.0, 2500.0, 980.0]
+    assert notes["thousands_comma"]["count"] == 2
+    assert notes["thousands_comma"]["examples"] == ["1,250", "2,500"]
+    assert "decimal_comma" not in notes
+    # other evidence: a decimal point beside the commas, or two groups
+    assert _comma_column(["1,250", "980.5"])[0] == [1250.0, 980.5]
+    assert _comma_column(["1,250.5", "2,500"])[0] == [1250.5, 2500.0]
+    assert _comma_column(["1,250,000", "2,500", "<1,000"])[0] == [1250000.0, 2500.0, 500.0]
+
+
+def test_decimal_commas_stay_decimal():
+    # the column mixes 1,25 and 1,250: decimal commas
+    values, notes = _comma_column(["1,25", "1,250", "980"])
+    assert values == [1.25, 1.25, 980.0]
+    assert notes["decimal_comma"]["count"] == 2 and "thousands_comma" not in notes
+    # three decimals with a value below 1 (0,875 is no thousands form)
+    assert _comma_column(["1,250", "0,875", "125"])[0] == [1.25, 0.875, 125.0]
+    # nothing but 1,250-like cells, or only small plain numbers: no evidence, decimal
+    assert _comma_column(["1,250", "2,500"])[0] == [1.25, 2.5]
+    assert _comma_column(["1,250", "2,500", "98", "7"])[0] == [1.25, 2.5, 98.0, 7.0]
+    # a missing-value number (-999, or 999 named as one) is no evidence
+    assert _comma_column(["1,250", "2,500", "-999"])[0][:2] == [1.25, 2.5]
+    values, _ = _comma_column(["1,250", "2,500", "999"], missing_tokens=("", 999))
+    assert values[:2] == [1.25, 2.5] and np.isnan(values[2])
+
+
+def test_thousands_comma_option_overrides_the_column_rule(tmp_path, capsys):
+    from bakumine.cli import main
+    from bakumine.core.drillholes.importer import ImportOptions
+    from bakumine.core.drillholes.recipe import make_recipe, run_recipe
+
+    assert _comma_column(["1,250", "2,500", "980"], thousands_comma=False)[0][:2] == [1.25, 2.5]
+    values, notes = _comma_column(["1,250", "2,500", "1,5"], thousands_comma=True)
+    assert values == [1250.0, 2500.0, 1.5]
+    assert notes["thousands_comma"]["count"] == 2 and notes["decimal_comma"]["count"] == 1
+    with pytest.raises(ValueError, match="thousands_comma"):
+        ImportOptions(thousands_comma="yes")
+
+    # through a recipe (quoted CSV cells), and said loudly by the CLI
+    (tmp_path / "collar.csv").write_text(
+        "hole,x,y,z,depth,azimuth,dip\nA,0,0,0,10,0,-90\n", encoding="utf-8"
+    )
+    (tmp_path / "assay.csv").write_text(
+        'hole,from,to,Cu ppm\nA,0,1,"1,250"\nA,1,2,"2,500"\nA,2,3,980\n', encoding="utf-8"
+    )
+    tables = {"collar": {"file": "collar.csv"}, "assay": {"file": "assay.csv"}}
+    db = run_recipe(make_recipe(tables), tmp_path)
+    column = db.attribute_columns("assay")[0]
+    assert db.intervals["assay"][column].tolist() == [1250.0, 2500.0, 980.0]
+    assert db.metadata.recipe["options"]["thousands_comma"] == "auto"
+    db = run_recipe(make_recipe(tables, {"thousands_comma": False}), tmp_path)
+    assert db.intervals["assay"][column].tolist() == [1.25, 2.5, 980.0]
+    code = main(["import", "--collar", str(tmp_path / "collar.csv"), "--assay",
+                 str(tmp_path / "assay.csv"), "--auto", "--dry-run"])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"WARNING: assay.{column}: the commas of 2 value(s) were read as thousands" in out
+    assert "'1,250'" in out
