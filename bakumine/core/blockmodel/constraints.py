@@ -244,7 +244,8 @@ def _resolve(ref: Any, kind: str, resolver: Any) -> Any:
         return ref
     if resolver is None:
         raise ConstraintError(
-            f"the constraint refers to the {kind} {ref!r} by name; pass a resolver to look it up"
+            f"the constraint refers to the {kind} {ref!r} by name; pass a resolver to look it up "
+            "(command line: --geometry-dir with <name>_vertices.npy / <name>_faces.npy)"
         )
     try:
         return getattr(resolver, kind)(ref)

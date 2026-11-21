@@ -58,6 +58,9 @@ export interface MeshImportResult {
   valid?: boolean
   volume?: number | null
   issues?: string[]
+  /** what the file itself limits (a binary STL in large coordinates) */
+  warnings?: string[]
+  scale?: number
 }
 
 async function errorText(response: Response): Promise<string> {

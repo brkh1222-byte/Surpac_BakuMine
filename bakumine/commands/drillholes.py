@@ -1105,7 +1105,8 @@ def configure_composite(parser: argparse.ArgumentParser) -> None:
         "--min-coverage",
         type=float,
         default=0.0,
-        help="attribute is NaN when its sampled fraction of the composite is below this",
+        help="attribute is NaN when its sampled fraction (0..1) of the composite is below "
+        "this. (The <attribute>_coverage columns written are sampled LENGTHS, not fractions)",
     )
     parser.add_argument(
         "--keep-empty", action="store_true", help="keep composites without any sampled length"

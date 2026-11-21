@@ -119,6 +119,25 @@ def parse_stl(
     return Mesh(vertices, rank[np.asarray(inverse).reshape(-1)].reshape(-1, 3))
 
 
+def single_precision_step(data: bytes) -> float | None:
+    """Coordinate resolution of a BINARY STL: the largest gap between neighbouring
+    single-precision numbers at the file's coordinates (0.5 at 5 300 000, 0.03 at 480 000),
+    in file units. None for an ASCII file, whose numbers are as precise as they are written.
+
+    A binary STL stores float32. In mine-grid or UTM coordinates that rounds every vertex,
+    which can make a solid that was valid where it was written fail validation here
+    (degenerate and crossing triangles); a local origin or an ASCII / OBJ / DXF export
+    avoids it."""
+    count = _binary_count(data)
+    if not count:
+        return None
+    records = np.frombuffer(data, dtype=_RECORD, count=count, offset=_HEADER)
+    largest = np.float32(np.abs(records["corners"]).max())
+    if not np.isfinite(largest):
+        return None
+    return float(np.spacing(largest))
+
+
 def read_stl(path, *, scale: float = 1.0, swap_xy: bool = False) -> Mesh:
     """Read an ASCII or binary STL file as a mesh with shared vertices."""
     return parse_stl(

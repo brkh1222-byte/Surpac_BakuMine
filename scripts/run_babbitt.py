@@ -356,7 +356,8 @@ def run(out: Path, cross_validation: bool = True) -> dict:
     plan_ok, plan_nn, ellipsoids = write_plans(out, models, caps)
     write_coding(out / "coding.json")
 
-    cli("blockmodel", "create", model_dir, "--size", ",".join(map(str, BLOCK)),
+    cli("blockmodel", "create", "--overwrite", model_dir,
+        "--size", ",".join(map(str, BLOCK)),
         "--extent-from", f"drillholes:{db}", "--padding", "50,50,0", "--max-depth", 0)  # fmt: skip
     cli("blockmodel", "code", model_dir, "--steps", out / "coding.json",
         "--geometry-dir", geometry)  # fmt: skip

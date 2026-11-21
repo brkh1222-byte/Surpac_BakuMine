@@ -10,6 +10,7 @@ Geometry named in the plan's block constraints (solids, DTMs) is resolved from
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import time
 from collections.abc import Callable
@@ -27,6 +28,10 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--plan", required=True, help="estimation parameter JSON")
     parser.add_argument("--geometry-dir", metavar="DIR",
                         help="solids / DTMs the plan names")  # fmt: skip
+    parser.add_argument("--overwrite", action="store_true",
+                        help="estimate every block of the plan's constraints again; without it "
+                        "(and without \"overwrite\": true in the plan) blocks that already "
+                        "have a value are kept, so a second run changes nothing")  # fmt: skip
     parser.add_argument("--out", help="model folder to write (default: update MODEL in place)")
     parser.add_argument("--summary", metavar="JSON", help="also write the summary as JSON")
     parser.add_argument("--chunk-size", type=int, help="blocks per chunk (memory control)")
@@ -85,11 +90,19 @@ def run(args: argparse.Namespace) -> int:
     model = load_model(args.model)
     table = _read_table(args.composites)
     plan = EstimationPlan.load(args.plan)
+    if args.overwrite and not plan.overwrite:
+        plan = dataclasses.replace(plan, overwrite=True)
     resolver = FileResolver(args.geometry_dir) if args.geometry_dir else None
     t1 = time.perf_counter()
     summary = plan.run(model, table, resolver=resolver, chunk_size=args.chunk_size)
     t2 = time.perf_counter()
     print(_format(summary))
+    if summary.n_targeted == 0 and not plan.overwrite and plan.attribute in model:
+        print(
+            f"note: no block was estimated. {plan.attribute} is already in the model, and "
+            "blocks that have a value are kept: run again with --overwrite to estimate them "
+            "anew (or the plan's constraints select no block)"
+        )
     header = save_model(model, args.out or args.model)
     t3 = time.perf_counter()
     print(format_times(t1 - t0, t2 - t1, t3 - t2, sum(p.seconds for d in summary.domains

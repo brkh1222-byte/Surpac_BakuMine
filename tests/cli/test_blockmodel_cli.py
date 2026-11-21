@@ -52,7 +52,7 @@ def test_info(saved, capsys):
     path, model = saved
     code, out, err = run(capsys, "blockmodel", "info", path)
     assert code == 0, err
-    assert "origin (x, y, z):      500400, 5.30025e+06, 825" in out
+    assert "origin (x, y, z):      500400, 5300250, 825" in out
     assert "blocks (nx, ny, nz):   39, 52, 84" in out
     assert "blocks:                170352" in out
     assert "rotation:              none" in out
@@ -242,3 +242,28 @@ def test_fraction_of_blocks_inside_a_solid(tmp_path, capsys):
     code, _, err = run(capsys, "blockmodel", "fraction", model_dir, "--solid",
                        tmp_path / "open.obj", "--attribute", "x")  # fmt: skip
     assert code == 2 and "not a closed solid" in err
+
+
+def test_create_does_not_replace_a_model_silently(tmp_path, capsys):
+    model_dir = tmp_path / "m"
+    create = ("blockmodel", "create", model_dir, "--origin", "0,0,0", "--size", "10,10,10")
+    assert run(capsys, *create, "--shape", "2,2,2")[0] == 0
+    code, _, err = run(capsys, *create, "--shape", "3,3,3")
+    assert code == 2 and "already holds a block model" in err and "--overwrite" in err
+    assert load_model(model_dir).n_blocks == 8
+    assert run(capsys, *create, "--shape", "3,3,3", "--overwrite")[0] == 0
+    assert load_model(model_dir).n_blocks == 27
+    code, out, _ = run(capsys, "blockmodel", "info", model_dir)
+    assert code == 0
+    # the help of the coding command shows a complete file
+    with pytest.raises(SystemExit):
+        main(["blockmodel", "code", "-h"])
+    text = capsys.readouterr().out
+    assert '"type": "dtm"' in text and '"type": "solid"' in text and "--geometry-dir" in text
+
+
+def test_info_prints_utm_coordinates_in_full(tmp_path, capsys):
+    save_model(BlockModel(BlockModelDefinition((482256.0, 4860552.5, 704.0), (8.0, 8.0, 8.0),
+                                               (2, 2, 2))), tmp_path / "m")  # fmt: skip
+    code, out, _ = run(capsys, "blockmodel", "info", tmp_path / "m")
+    assert code == 0 and "482256, 4860552.5, 704" in out

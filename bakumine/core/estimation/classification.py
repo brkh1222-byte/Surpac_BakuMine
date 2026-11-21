@@ -170,7 +170,9 @@ def _only(data: dict[str, Any], known: tuple[str, ...], what: str) -> None:
         raise ValueError(f"{what} must be an object")
     unknown = sorted(set(data) - set(known))
     if unknown:
-        raise ValueError(f"{what}: unknown key(s) {', '.join(unknown)}")
+        raise ValueError(
+            f"{what}: unknown key(s) {', '.join(unknown)}; allowed: {', '.join(known)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -323,7 +325,7 @@ class ClassificationParams:
 
     def __post_init__(self) -> None:
         if not isinstance(self.attribute, str) or not self.attribute:
-            raise ValueError("give the estimated grade attribute")
+            raise ValueError('give the estimated grade attribute: "attribute": "au"')
         if not isinstance(self.output, str) or not self.output:
             raise ValueError("give the name of the class attribute")
         rules = tuple(self.categories)
@@ -415,7 +417,10 @@ class ClassificationParams:
             )
         categories = data.get("categories")
         if not isinstance(categories, list):
-            raise ValueError("categories must be a list of classes")
+            raise ValueError(
+                'categories must be a list of classes: [{"label": "Measured", "criteria": '
+                '{"max_pass": 1, "min_samples": 8}}, ..., {"label": "Inferred"}]'
+            )
         inputs = data.get("inputs") or {}
         if not isinstance(inputs, dict):
             raise ValueError("inputs must be an object")

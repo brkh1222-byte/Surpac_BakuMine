@@ -197,6 +197,7 @@ function ImportFile() {
       const r = await geometryApi.importMesh({ upload: upload.token, file: mesh.file, kind, name: name.trim() || undefined, ...(factor !== undefined && factor !== 1 ? { scale: factor } : {}) })
       let text = `Saved “${r.name}” as a ${r.kind === 'dtm' ? 'surface (DTM)' : 'solid'}: ${fmt(r.n_faces, 0)} triangles.`
       if (r.kind === 'solid') text += r.valid ? ` Valid solid${r.volume != null ? `, volume ${fmt(r.volume, 0)} m³` : ''}.` : ` Not a valid solid: ${(r.issues ?? []).join('; ') || 'see validation'}.`
+      if (r.warnings?.length) text += ` Warning: ${r.warnings.join(' ')}`
       setResult(text)
       setUpload(null)
       await useOps.getState().changed()

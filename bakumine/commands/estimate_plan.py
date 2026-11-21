@@ -230,7 +230,8 @@ def build_plan(spec: Mapping[str, Any], composites: Any = None) -> tuple[Any, di
         if fractions == absolute:
             raise ValueError(
                 "give the nugget and the sill(s) either as values (nugget, sill) or as "
-                "fractions of the composite variance (nugget_fraction, sill_fraction)"
+                "fractions of the composite variance (nugget_fraction, sill_fraction; on the "
+                "command line --nugget / --sill or --nugget-fraction / --sill-fraction)"
             )
         key = "sill_fraction" if fractions else "sill"
         if spec.get(key) is None:

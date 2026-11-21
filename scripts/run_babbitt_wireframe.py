@@ -286,7 +286,8 @@ def run(out: Path) -> dict:
     decl_mean = float(np.average(cu, weights=weights))
     decl_var = float(np.average((cu - decl_mean) ** 2, weights=weights))
 
-    cli("blockmodel", "create", model_dir, "--size", ",".join(map(str, metres(BLOCK_FT))),
+    cli("blockmodel", "create", "--overwrite", model_dir,
+        "--size", ",".join(map(str, metres(BLOCK_FT))),
         "--origin", ",".join(map(str, metres(ORIGIN_FT))),
         "--shape", ",".join(map(str, SHAPE)), "--max-depth", 0)  # fmt: skip
     coding = {"attributes": [{"name": "zone", "kind": "int", "background": 0,
@@ -333,7 +334,8 @@ def run(out: Path) -> dict:
 
     # the wireframe reaches 54 ft south of the model: measure that part on one more row
     strip_dir = out / "model_south_strip"
-    cli("blockmodel", "create", strip_dir, "--size", ",".join(map(str, metres(BLOCK_FT))),
+    cli("blockmodel", "create", "--overwrite", strip_dir,
+        "--size", ",".join(map(str, metres(BLOCK_FT))),
         "--origin", ",".join(map(str, metres((ORIGIN_FT[0], ORIGIN_FT[1] - BLOCK_FT[1],
                                               ORIGIN_FT[2])))),
         "--shape", f"{SHAPE[0]},1,{SHAPE[2]}", "--max-depth", 0)  # fmt: skip

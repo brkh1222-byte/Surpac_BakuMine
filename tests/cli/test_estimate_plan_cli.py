@@ -265,6 +265,17 @@ def test_the_written_plan_runs_and_estimate_reports_the_whole_run_time(
     assert 0.0 <= passes <= estimation + 0.005 and total > 0.0
     assert "loading" in line and "estimation" in line and "saving" in line
 
+    # a second run keeps the values there are and says so; --overwrite estimates anew
+    assert main(["estimate", str(folder), "--composites", str(path), "--plan", str(plan)]) == 0
+    out = capsys.readouterr().out
+    assert "0 of 0 blocks estimated" in out and "run again with --overwrite" in out
+    assert main(["estimate", str(folder), "--composites", str(path), "--plan", str(plan),
+                 "--overwrite"]) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert f"{int(ore.sum())} of {int(ore.sum())} blocks estimated" in out
+    assert "--overwrite" not in out
+    np.testing.assert_array_equal(load_model(folder)["au"], estimated["au"])
+
 
 def _is_number(text: str) -> bool:
     try:

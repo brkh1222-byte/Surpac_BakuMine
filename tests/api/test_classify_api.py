@@ -108,6 +108,21 @@ def test_endpoint_equals_cli(run, tmp_path, capsys):
     assert read_header(copy).checksum == before == read_header(other).checksum
     assert main(["classify", str(copy), "--params", str(tmp_path / "nope.json")]) == 2
     assert main(["classify", str(tmp_path), "--params", str(params)]) == 2
+    # the help carries a complete parameter file, and a wrong key names the allowed ones
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        main(["classify", "-h"])
+    text = capsys.readouterr().out
+    start = text.index("{", text.index("a complete example"))
+    example = json.loads(text[start : text.index("\n\nattribute ")])
+    assert example["categories"][-1] == {"label": "Inferred"}
+    assert ClassificationParams.from_dict(example).attribute == "au"
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"attribute": "au", "categories": [{"name": "Measured"}]}))
+    assert main(["classify", str(copy), "--params", str(wrong)]) == 2
+    assert "unknown key(s) name; allowed: label, criteria, where, hole_support" in (
+        capsys.readouterr().err
+    )
 
 
 def test_result_is_a_sensible_classification(run):

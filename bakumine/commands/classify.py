@@ -20,9 +20,45 @@ from bakumine.commands.blockmodel import CommandError, _guarded, _wrote
 HELP = "Classify the estimated blocks of a block model (Measured / Indicated / ..., B / C / P)"
 
 
+EXAMPLE = """\
+parameter file (JSON), a complete example:
+
+  {
+    "attribute": "au",
+    "output": "res_class",
+    "hole_support": {"radius": 50, "sample_filter": {"column": "domain", "equals": "ORE"}},
+    "categories": [
+      {"label": "Measured",  "criteria": {"max_pass": 1, "min_samples": 8, "min_holes": 3}},
+      {"label": "Indicated", "criteria": {"max_pass": 2, "max_hole_distance": 75},
+                             "hole_support": {"radius": 75, "nth": 2}},
+      {"label": "Inferred"}
+    ],
+    "smoothing": null
+  }
+
+attribute   the estimated grade; its diagnostics (<attribute>_pass, _ns, _dist, _ndist, _kv,
+            _slope, _ke) were written by `bakumine estimate`
+categories  in order; a block gets the label of the FIRST class whose criteria it meets all
+            of; a class without criteria takes every estimated block that is left
+criteria    max_pass, min_samples, max_mean_distance, max_nearest_distance,
+            max_kriging_variance, min_slope, min_efficiency, min_holes, max_hole_distance
+            (the last two need hole_support and --composites)
+a class     may also have "where" (a block expression such as rock == "ORE") and its own
+            "hole_support" (radius: holes are counted within it; nth: max_hole_distance is
+            the distance to the nth nearest hole, default 3)
+smoothing   null, or {"iterations": 1, "min_agree": 4, "max_same": 0}
+output      the category attribute written (default res_class); report by class with
+            `bakumine blockmodel report MODEL --group-by res_class`
+"""
+
+
 def configure(parser: argparse.ArgumentParser) -> None:
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter
+    parser.epilog = EXAMPLE
     parser.add_argument("model", help="block model folder")
-    parser.add_argument("--params", required=True, help="classification parameter JSON")
+    parser.add_argument(
+        "--params", required=True, help="classification parameter JSON (example below)"
+    )
     parser.add_argument(
         "--composites", help="composites table (CSV or Parquet) for the drillhole support"
     )

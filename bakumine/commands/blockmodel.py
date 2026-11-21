@@ -80,7 +80,7 @@ def run_info(args: argparse.Namespace) -> int:
     header = read_header(args.model)
     d = header.definition
     print(f"block model {header.path} (format version {header.version})")
-    print(f"origin (x, y, z):      {d.origin[0]:g}, {d.origin[1]:g}, {d.origin[2]:g}")
+    print(f"origin (x, y, z):      {d.origin[0]:.10g}, {d.origin[1]:.10g}, {d.origin[2]:.10g}")
     print(f"block size (x, y, z):  {d.block_size[0]:g}, {d.block_size[1]:g}, {d.block_size[2]:g}")
     print(f"blocks (nx, ny, nz):   {d.nx}, {d.ny}, {d.nz}")
     print(f"extent (x, y, z):      {d.extent[0]:g}, {d.extent[1]:g}, {d.extent[2]:g}")
@@ -243,6 +243,8 @@ def configure_create(parser: argparse.ArgumentParser) -> None:
                         help="sub-blocking depth (smallest block = size / 2**depth)")  # fmt: skip
     parser.add_argument("--angles", metavar="BEARING,PLUNGE,DIP",
                         help="model rotation in degrees (default none)")  # fmt: skip
+    parser.add_argument("--overwrite", action="store_true",
+                        help="replace a block model that is already in OUT")  # fmt: skip
     parser.set_defaults(func=_guarded(run_create))
 
 
@@ -272,7 +274,7 @@ def _extent_points(items: list[str], geometry_dir: str | None):
 def run_create(args: argparse.Namespace) -> int:
     from bakumine.core.blockmodel.blocks import BlockModel
     from bakumine.core.blockmodel.definition import BlockModelDefinition
-    from bakumine.core.blockmodel.storage import save_model
+    from bakumine.core.blockmodel.storage import is_model_folder, save_model
 
     size = _triple(args.size, "--size")
     options: dict = {"max_depth": args.max_depth}
@@ -297,6 +299,10 @@ def run_create(args: argparse.Namespace) -> int:
             definition = BlockModelDefinition.from_extent(
                 origin, _triple(args.extent, "--extent"), size, **options
             )
+    if is_model_folder(args.out) and not args.overwrite:
+        raise CommandError(
+            f"{args.out} already holds a block model; --overwrite replaces it with the empty one"
+        )
     header = save_model(BlockModel(definition), args.out)
     d = definition
     print(f"origin {d.origin}, size {d.block_size}, blocks {d.nx} x {d.ny} x {d.nz}")
@@ -307,12 +313,43 @@ def run_create(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------------ code
 
 
+CODE_EXAMPLE = """\
+coding file (JSON), a complete example: air above the topography, ore inside the solid,
+density everywhere below the topography
+
+  {
+    "attributes": [
+      {"name": "rock", "kind": "category", "background": "WASTE"},
+      {"name": "density", "kind": "float", "unit": "t/m3"}
+    ],
+    "steps": [
+      {"attribute": "rock", "value": "AIR", "subblock": true,
+       "constraint": {"type": "dtm", "surface": "topo", "side": "above"}},
+      {"attribute": "rock", "value": "ORE", "subblock": true,
+       "constraint": {"type": "solid", "solid": "ore", "side": "inside"}},
+      {"attribute": "density", "value": "2.7",
+       "constraint": {"type": "attribute", "expression": "rock != \\"AIR\\""}}
+    ]
+  }
+
+Steps run in order; a later step overwrites an earlier one. "topo" and "ore" are names
+looked up in --geometry-dir (topo_vertices.npy + topo_faces.npy, written by `bakumine
+surface ... --geometry-dir` and `bakumine solid ... --geometry-dir`). Constraint types:
+dtm (surface, side above / below), solid (solid, side inside / outside), attribute
+(expression), plane, polygon, range, block_ids, and the combinations and / or
+({"type": "and", "children": [...]}) and not ({"type": "not", "child": {...}}). The fields
+of each type are in the docstrings of bakumine/core/blockmodel/constraints.py.
+"""
+
+
 def configure_code(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("model", help="block model folder")
     parser.add_argument("--steps", required=True, metavar="JSON",
                         help='coding file: {"attributes": [{"name", "kind", "background", ...}], '
                              '"steps": [{"attribute", "value", "constraint": {...}, '
                              '"subblock": bool, "max_level": int}]}')  # fmt: skip
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter
+    parser.epilog = CODE_EXAMPLE
     parser.add_argument("--geometry-dir", metavar="DIR",
                         help="folder with the solids / DTMs the constraints name")  # fmt: skip
     parser.add_argument("--subblock", action="store_true",

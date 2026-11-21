@@ -146,3 +146,34 @@ def test_babbitt_wireframe_against_trimesh():
     assert mesh.signed_volume == pytest.approx(oracle.volume, rel=1e-5)
     metres = read_stl(MPZ, scale=0.3048)
     np.testing.assert_allclose(metres.vertices, mesh.vertices * 0.3048, rtol=1e-15)
+
+
+def test_binary_stl_in_large_coordinates_is_reported(tmp_path, capsys):
+    """float32 at UTM northings rounds to 0.5 m: the import says so; ASCII and small
+    coordinates do not."""
+    import struct
+
+    from bakumine.cli import main
+    from bakumine.core.geometry.mesh_import import import_mesh
+    from bakumine.core.geometry.primitives import cube
+    from bakumine.core.io.stl import single_precision_step
+
+    def binary(mesh) -> bytes:
+        out = bytearray(b"\0" * 80) + struct.pack("<I", mesh.n_faces)
+        for tri in mesh.triangles:
+            out += struct.pack("<12fH", 0.0, 0.0, 0.0, *tri.astype("<f4").ravel(), 0)
+        return bytes(out)
+
+    far = cube(40.0, center=(482_000.0, 5_300_000.0, 900.0))
+    data = binary(far)
+    assert single_precision_step(data) == 0.5  # gap between float32 numbers at 5.3e6
+    assert single_precision_step(binary(cube(40.0))) < 1e-5
+    assert single_precision_step(b"solid t\nendsolid t\n") is None
+    (tmp_path / "far.stl").write_bytes(data)
+    _, info = import_mesh(tmp_path / "far.stl")
+    assert "rounded to about 0.5 m" in info["warnings"][0]
+    assert main(["surface", "import", str(tmp_path / "far.stl"), "--out",
+                 str(tmp_path / "far.obj")]) == 0  # fmt: skip
+    assert "warning: binary STL stores single-precision numbers" in capsys.readouterr().out
+    (tmp_path / "near.stl").write_bytes(binary(cube(40.0)))
+    assert "warnings" not in import_mesh(tmp_path / "near.stl")[1]

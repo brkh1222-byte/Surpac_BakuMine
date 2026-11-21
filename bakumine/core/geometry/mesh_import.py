@@ -23,6 +23,8 @@ from bakumine.core.geometry.mesh import Mesh
 __all__ = ["KINDS", "import_mesh"]
 
 KINDS = ("auto", "dtm", "solid")
+#: coordinate rounding (m) of a binary STL above which the import says so
+PRECISION_WARNING = 1e-3
 
 
 def import_mesh(
@@ -31,7 +33,9 @@ def import_mesh(
     """The mesh of ``path`` ready to be stored, and a summary of it.
 
     The summary has ``kind`` (``dtm`` or ``solid``), ``n_vertices``, ``n_faces``,
-    ``closed``, ``bounds`` and for a solid ``valid``, ``outward``, ``volume``, ``issues``.
+    ``closed``, ``bounds`` and for a solid ``valid``, ``outward``, ``volume``, ``issues``;
+    ``warnings`` (a list of sentences) when the file itself limits the result (a binary STL
+    in large coordinates).
 
     ``scale`` multiplies every coordinate before anything is checked or measured: 0.3048
     for a file in feet (the project is in metres). It is in the summary when it is not 1.
@@ -93,4 +97,15 @@ def import_mesh(
     )
     if scale != 1.0:
         info["scale"] = scale
+    if path.suffix.lower() == ".stl":
+        from bakumine.core.io.stl import single_precision_step
+
+        step = single_precision_step(path.read_bytes())
+        if step is not None and step * scale > PRECISION_WARNING:
+            info["warnings"] = [
+                f"binary STL stores single-precision numbers: at these coordinates every "
+                f"vertex is rounded to about {step * scale:.2g} m, which can turn a valid "
+                "solid into one with degenerate or crossing triangles. Export it as ASCII "
+                "STL, OBJ or DXF, or with a local origin"
+            ]
     return mesh, info

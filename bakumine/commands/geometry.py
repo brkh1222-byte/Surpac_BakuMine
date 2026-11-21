@@ -254,6 +254,8 @@ def run_import(args: argparse.Namespace) -> int:
     print(line)
     for issue in info.get("issues") or []:
         print(f"  issue: {issue}")
+    for text in info.get("warnings") or []:
+        print(f"warning: {text}")
     _emit(mesh, info["kind"], args.name or Path(args.file).stem, args, info)
     return 0
 

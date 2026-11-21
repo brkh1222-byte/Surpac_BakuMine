@@ -55,7 +55,14 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--window", type=float, metavar="M", help="window of --mode moving-average, metres"
     )
-    parser.add_argument("--min-thickness", type=float, help="minimum thickness (default: 0)")
+    parser.add_argument(
+        "--min-thickness",
+        type=float,
+        help="minimum thickness (default: 0). Down-hole length, unless --body-dip and "
+        "--body-dip-azimuth are given: then it is the TRUE thickness across the body, so a "
+        "hole that runs along the body needs a longer run to qualify (the waste limits "
+        "stay down-hole lengths)",
+    )
     parser.add_argument(
         "--max-internal-waste", type=float, help="longest internal waste stretch (default: 0)"
     )
@@ -76,7 +83,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--including-min-thickness", type=float, help="minimum thickness of sub-intercepts"
     )
-    parser.add_argument("--body-dip", type=float, help="dip of the body, for true thickness")
+    parser.add_argument(
+        "--body-dip",
+        type=float,
+        help="dip of the body: with --body-dip-azimuth, the minimum thicknesses are "
+        "measured as true thickness, and true_thickness is written per intercept",
+    )
     parser.add_argument("--body-dip-azimuth", type=float, help="azimuth of its dip direction")
     parser.add_argument("--ore-code", help="code of mineralised intervals (default: MIN)")
     parser.add_argument("--waste-code", help="code of the other intervals (default: WASTE)")

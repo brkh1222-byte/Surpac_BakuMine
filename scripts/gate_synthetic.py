@@ -110,7 +110,8 @@ def run(out: Path, depth: int = 1) -> dict:
     cli("desurvey", db)
     cli("composite", db, "--table", "assay", "--mode", "domain", "--length", 2,
         "--domain-table", "geology", "--domain-column", "rock")  # fmt: skip
-    cli("blockmodel", "create", model, "--origin", ",".join(map(str, info["origin"])),
+    cli("blockmodel", "create", "--overwrite", model,
+        "--origin", ",".join(map(str, info["origin"])),
         "--size", ",".join(map(str, info["size"])), "--shape", ",".join(map(str, info["shape"])),
         "--max-depth", depth)  # fmt: skip
     cli("blockmodel", "code", model, "--steps", coding, "--geometry-dir", SYNTH, "--merge")
