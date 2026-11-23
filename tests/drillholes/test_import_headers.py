@@ -204,3 +204,42 @@ def test_coordinate_order_stays_as_mapped_when_asked_or_undecidable(report_table
                     folder)  # fmt: skip
     assert db.metadata.coordinate_order == "xyz"
     np.testing.assert_allclose(db.collar["x"], east - 512000)
+
+
+def test_element_named_like_a_derived_column_gets_another_name():
+    """Yttrium (``Y_ppm``) as ``y`` would clash with the y that desurvey and compositing add."""
+    headers = ["HoleID", "From", "To", "Au_ppm", "Y_ppm", "Y", "Zr_ppm"]
+    found = suggest_column_map(headers, "interval")
+    assert found.mapping["Y_ppm"] == "y_ppm"
+    assert found.mapping["Y"] == "y_2"
+    assert found.mapping["Au_ppm"] == "au" and found.mapping["Zr_ppm"] == "zr"
+    assert found.units["y_ppm"] == "ppm"
+    names = set(found.mapping.values())
+    assert not names & {"length", "depth_mid", "x", "y", "z", "dx", "dy", "dz", "domain"}
+
+
+def test_multi_element_assays_with_yttrium_composite_with_every_attribute(tmp_path, capsys):
+    """A multi-element sheet (Au ... Y ... Zr) imports, desurveys and composites without
+    naming the attributes; the yttrium values stay with their samples."""
+    collar = pd.DataFrame({"HoleID": ["DH-01", "DH-02"], "X": [1000.0, 1050.0],
+                           "Y": [2000.0, 2000.0], "Elev": [500.0, 502.0], "Depth": [10.0, 10.0],
+                           "Azimuth": [0.0, 0.0], "Dip": [-90.0, -90.0]})  # fmt: skip
+    rows = [(h, f, f + 2.0) for h in ("DH-01", "DH-02") for f in np.arange(0.0, 10.0, 2.0)]
+    assay = pd.DataFrame(rows, columns=["HoleID", "From", "To"])
+    assay["Au_ppm"] = np.linspace(0.1, 1.0, len(assay))
+    assay["Y_ppm"] = np.arange(len(assay), dtype=float) + 10.0
+    assay["Zr_ppm"] = 100.0
+    collar.to_csv(tmp_path / "collar.csv", index=False)
+    assay.to_csv(tmp_path / "assay.csv", index=False)
+    db = tmp_path / "db"
+    argv = ["import", "--collar", str(tmp_path / "collar.csv"),
+            "--assay", str(tmp_path / "assay.csv"), "--auto", "--out", str(db)]  # fmt: skip
+    assert main(argv) == 0
+    assert main(["desurvey", str(db)]) == 0
+    assert main(["composite", str(db), "--length", "2"]) == 0
+    capsys.readouterr()
+    comps = pd.read_parquet(db / "composites_assay.parquet")
+    # the composite y is the northing of the collar, the yttrium is y_ppm
+    np.testing.assert_allclose(comps["y"], 2000.0)
+    np.testing.assert_allclose(comps["y_ppm"], assay["Y_ppm"])
+    np.testing.assert_allclose(comps["au"], assay["Au_ppm"])

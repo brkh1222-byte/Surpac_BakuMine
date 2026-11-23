@@ -86,6 +86,11 @@ BelowDetection = Literal["nan", "half", "limit"]
 COLLAR_COLUMNS: tuple[str, ...] = ("hole_id", "x", "y", "z", "max_depth")
 SURVEY_COLUMNS: tuple[str, ...] = ("hole_id", "depth", "dip", "azimuth")
 INTERVAL_COLUMNS: tuple[str, ...] = ("hole_id", "depth_from", "depth_to")
+#: Columns that desurvey (midpoints) and compositing add next to the attributes of an interval
+#: table. An attribute of the same name (``Y_ppm``, yttrium, as ``y``) would clash with them.
+DERIVED_INTERVAL_COLUMNS: tuple[str, ...] = (
+    "length", "depth_mid", "x", "y", "z", "dx", "dy", "dz", "domain",
+)  # fmt: skip
 
 _CANONICAL: dict[str, tuple[str, ...]] = {
     "collar": COLLAR_COLUMNS,
@@ -1272,7 +1277,9 @@ def suggest_column_map(
     attributes under a lower-case name; a header that names a chemical element
     (``Au (г/т)``, ``Au, g/t``, ``FAA303 Au г/т``, ``Element, mg/kg Pb``; see
     :func:`element_attribute`) becomes the element (``au``, ``pb``) and its unit goes to
-    ``.units``. In a collar table ``Солбицол X`` / ``Координаты Y`` (a flattened two-row
+    ``.units``. A name that desurvey or compositing add (:data:`DERIVED_INTERVAL_COLUMNS`)
+    is not proposed for an attribute: ``Y_ppm`` (yttrium) becomes ``y_ppm``, ``Y`` ``y_2``.
+    In a collar table ``Солбицол X`` / ``Координаты Y`` (a flattened two-row
     header) are the axes, and ``B`` / ``L`` together are latitude / longitude. Which of
     ``X`` / ``Y`` is the easting is not decided here but from the values
     (``coordinate_order="auto"``). The result is a proposal: check it, edit
@@ -1327,13 +1334,18 @@ def suggest_column_map(
     mapping: dict[str, str] = {}
     unmatched: list[str] = []
     units: dict[str, str] = {}
-    taken = set(_CANONICAL[table]) | set(_SYNONYMS[table])
+    taken = set(_CANONICAL[table]) | set(_SYNONYMS[table]) | set(DERIVED_INTERVAL_COLUMNS)
     for header in headers:
         if header in by_header:
             mapping[header] = by_header[header]
         elif table == "interval" and header not in mapping:
             element = element_attribute(header)
             base = element[0] if element else _attribute_name(header)
+            if base in DERIVED_INTERVAL_COLUMNS:
+                # Y_ppm (yttrium) as y would clash with the y of desurvey and composites
+                whole = _attribute_name(header)
+                if whole not in taken:
+                    base = whole
             name, n = base, 2
             while name in taken:
                 name, n = f"{base}_{n}", n + 1

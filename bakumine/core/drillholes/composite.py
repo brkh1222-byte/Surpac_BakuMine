@@ -61,7 +61,7 @@ import numpy as np
 import pandas as pd
 
 from .desurvey import HoleTraces
-from .importer import INTERVAL_COLUMNS
+from .importer import DERIVED_INTERVAL_COLUMNS, INTERVAL_COLUMNS
 from .intervals import merge_intervals
 
 __all__ = [
@@ -545,10 +545,13 @@ def composite(
             raise ValueError(f"column {column!r} is not in the interval table")
         if not pd.api.types.is_numeric_dtype(intervals[column]):
             raise ValueError(f"column {column!r} is not numeric and cannot be composited")
-    reserved = {*INTERVAL_COLUMNS, "length", "x", "y", "z", "dx", "dy", "dz", "domain"}
+    reserved = {*INTERVAL_COLUMNS, *DERIVED_INTERVAL_COLUMNS}
     clash = [a for a in attributes if a in reserved or coverage_column(a) in attributes]
     if clash:
-        raise ValueError(f"attribute names clash with composite columns: {clash}")
+        raise ValueError(
+            f"attribute names clash with composite columns: {clash}; composite named "
+            "attributes only (--attributes) or rename the column at import"
+        )
     fill = _fill_values(fill_missing, attributes, density)
 
     # ------------------------------------------------------------------ usable, sorted segments
