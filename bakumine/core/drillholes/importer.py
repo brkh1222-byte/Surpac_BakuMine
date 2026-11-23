@@ -1082,7 +1082,9 @@ _SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "max_depth": (
             "maxdepth", "depth", "totaldepth", "eoh", "enddepth", "finaldepth", "holedepth",
             "endofhole", "td", "length", "holelength", "totallength",
-            "глубина", "глубинаскважины", "гүн", "цооногийнгүн",
+            "drilleddepth", "drilldepth", "depthdrilled", "actualdepth",
+            "глубина", "глубинаскважины", "глубинабурения", "фактическаяглубина",
+            "гүн", "цооногийнгүн", "өрөмдсөнгүн", "өрөмдлөгийнгүн",
         ),
         # B / L: geodetic latitude / longitude of CIS tables (taken only as a pair)
         "lon": ("lon", "long", "longitude", "lng", "долгота", "уртраг", "l"),

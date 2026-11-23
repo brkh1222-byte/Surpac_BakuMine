@@ -243,3 +243,18 @@ def test_multi_element_assays_with_yttrium_composite_with_every_attribute(tmp_pa
     np.testing.assert_allclose(comps["y"], 2000.0)
     np.testing.assert_allclose(comps["y_ppm"], assay["Y_ppm"])
     np.testing.assert_allclose(comps["au"], assay["Au_ppm"])
+
+
+def test_drilled_depth_is_the_hole_depth_not_the_end_of_another_table():
+    """A collar sheet that also lists the end depth of the logging, the survey and the
+    assays: the drilled depth is the hole depth, not the fuzzy match 'Lith EndDepth'."""
+    headers = ["Hole ID", "Easting", "Northing", "Elevation", "OLD_Elevation", "Drilled depth",
+               "Azimute", "Dip", "SurvDepth", "Lith EndDepth", "AssayDepth", "Year"]  # fmt: skip
+    found = suggest_column_map(headers, "collar")
+    assert found.missing == []
+    by_name = {v: k for k, v in found.mapping.items()}
+    assert by_name["max_depth"] == "Drilled depth"
+    assert (by_name["x"], by_name["y"], by_name["z"]) == ("Easting", "Northing", "Elevation")
+    for header in ("Өрөмдсөн гүн", "Глубина бурения", "Drill depth (m)"):
+        found = suggest_column_map(["Hole", "X", "Y", "Z", header], "collar")
+        assert found.mapping[header] == "max_depth"
