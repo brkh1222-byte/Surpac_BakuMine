@@ -133,6 +133,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import reprlib
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -454,6 +455,12 @@ class ColumnFilter:
         values = tuple(v.item() if isinstance(v, np.generic) else v for v in values)
         if not values:
             raise ValueError("a sample filter needs at least one value")
+        nested = [v for v in values if isinstance(v, (list, tuple, set, dict))]
+        if nested:  # one cell never equals a list: the filter would keep nothing
+            raise ValueError(
+                f"a sample filter value is one value, not {reprlib.repr(nested[0])}; "
+                "several values are given as {'in': [...]}"
+            )
         object.__setattr__(self, "values", values)
 
     def mask(self, table: pd.DataFrame) -> np.ndarray:
@@ -472,7 +479,14 @@ class ColumnFilter:
             raise ValueError("a sample filter is {'column': name, 'equals': value | 'in': [...]}")
         if set(data) - {"column", "equals", "in"}:
             raise ValueError(f"unknown sample-filter field(s) in {dict(data)}")
-        values = (data["equals"],) if "equals" in data else tuple(data["in"])
+        if "equals" in data:
+            values: tuple[Any, ...] = (data["equals"],)
+        else:
+            within = data["in"]
+            if isinstance(within, (str, bytes, Mapping)) or not isinstance(within, Iterable):
+                # "in": "MIN" would be the letters M, I, N
+                raise ValueError(f"sample filter 'in' takes a list of values, got {within!r}")
+            values = tuple(within)
         return cls(data["column"], values)
 
 

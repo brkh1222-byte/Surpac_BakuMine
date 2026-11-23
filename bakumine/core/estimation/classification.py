@@ -568,7 +568,15 @@ def hole_support(
             raise ValueError(f"the composite table has no column {value_column!r}")
         keep &= composites[value_column].notna()
     if sample_filter is not None:
-        keep &= sample_filter.mask(composites)
+        chosen = sample_filter.mask(composites)
+        if keep.any() and not (keep & chosen).any():
+            found = pd.unique(composites.loc[keep, sample_filter.column].dropna())
+            shown = ", ".join(repr(v) for v in found[:10]) + (" ..." if len(found) > 10 else "")
+            raise ValueError(
+                f"the sample filter {sample_filter.column} in {list(sample_filter.values)} keeps "
+                f"no composite; the column holds {shown or 'no values'}"
+            )
+        keep &= chosen
     xyz = composites.loc[keep, ["x", "y", "z"]].to_numpy(dtype=np.float64)
     holes = pd.factorize(composites.loc[keep, hole_column])[0].astype(np.int64)
     count = np.zeros(len(points), dtype=np.int32)

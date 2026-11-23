@@ -564,3 +564,30 @@ def test_report_by_class_sums_to_the_total_without_classes():
     assert by_class.loc["(none)", "blocks"] == n - summary.n_classified
     # the summed columns include tonnes and the metal of au
     assert "tonnes" in numeric and any(c.startswith("au_") for c in numeric), numeric
+
+
+def test_a_sample_filter_that_can_keep_nothing_is_an_error():
+    """A list under 'equals' (several codes) or a string under 'in' used to be accepted and
+    to keep no composite, so every block fell into the last class without a word."""
+    from bakumine.core.estimation.block_estimation import ColumnFilter
+
+    with pytest.raises(ValueError, match="'in'"):
+        ColumnFilter.from_dict({"column": "domain", "equals": ["MIN", "OX"]})
+    with pytest.raises(ValueError, match="list of values"):
+        ColumnFilter.from_dict({"column": "domain", "in": "MIN"})
+    with pytest.raises(ValueError, match="list of values"):
+        HoleSupport.from_dict(
+            {"radius": 50.0, "sample_filter": {"column": "domain", "in": "MIN"}}
+        )
+    two = ColumnFilter.from_dict({"column": "domain", "in": ["MIN", "OX"]})
+    assert two.values == ("MIN", "OX")
+    assert ColumnFilter.from_dict({"column": "domain", "equals": "MIN"}).values == ("MIN",)
+
+    composites = pd.DataFrame(
+        {"hole_id": ["A", "B"], "x": [0.0, 30.0], "y": 0.0, "z": 0.0, "domain": ["MIN", "OX"]}
+    )
+    # right type, wrong code: said, with the codes the column holds
+    with pytest.raises(ValueError, match=r"keeps no composite.*'MIN', 'OX'"):
+        hole_support(
+            [[0.0, 0.0, 0.0]], composites, radius=25.0, sample_filter=ColumnFilter("domain", "ORE")
+        )
