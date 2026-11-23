@@ -51,5 +51,7 @@ describe('implicit solid request', () => {
     expect(describeAnisotropy({ source: 'none', method: 'given' })).toBe('Anisotropy: none (isotropic).')
     expect(describeAnisotropy({ source: 'none (auto failed)', method: 'none', confidence: 0.021, candidate: { dip: 28, dip_azimuth: 212 } }))
       .toBe('Anisotropy: none (auto failed) (isotropic). Confidence 0.02.')
+    expect(describeAnisotropy({ source: 'none (auto failed)', method: 'none', confidence: 0.23, stability: 0.7, determined: false }))
+      .toBe('Anisotropy: none (auto failed) (isotropic). Confidence 0.23, stable in 70 % of hole resamplings.')
   })
 })

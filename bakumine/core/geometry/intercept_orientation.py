@@ -39,9 +39,16 @@ Confidence
 ----------
 ``correlation`` is the best score; ``runner_up`` the best score among the poles more than
 :data:`EXCLUSION_DEG` from the best one; ``confidence = 1 - runner_up / correlation``
-(0 when the correlation is not positive). The orientation is **determined** when
-``correlation >= MIN_CORRELATION`` and ``confidence >= MIN_CONFIDENCE`` and enough pairs
-were compared. A single fence of holes, holes drilled along the bodies, or intercepts
+(0 when the correlation is not positive). ``stability`` is the share of
+:data:`STABILITY_RESAMPLES` bootstrap resamplings of the holes (hole A of every group drawn
+with replacement, fixed seed) whose best plane among the poles tried is within
+:data:`EXCLUSION_DEG` of the chosen one. The confidence compares two maxima of a noisy
+score: with thin, short lenses against the hole spacing, a spike of the score can stand
+well above the next plane (one synthetic case: correlation 0.48, confidence 0.23, the plane
+45 degrees off); the stability shows it, as that plane does not come back when the holes
+are resampled. The orientation is **determined** when ``correlation >= MIN_CORRELATION``,
+``confidence >= MIN_CONFIDENCE``, ``stability >= MIN_STABILITY`` and enough pairs were
+compared. A single fence of holes, holes drilled along the bodies, or intercepts
 without continuity between holes give a flat score: several very different planes explain
 the logging equally well, the confidence is low, and no plane is chosen.
 
@@ -64,6 +71,7 @@ __all__ = [
     "MIN_CONFIDENCE",
     "MIN_CORRELATION",
     "MIN_CROSSING",
+    "MIN_STABILITY",
     "PlaneEstimate",
     "estimate_plane_from_holes",
     "pole_of_plane",
@@ -76,6 +84,10 @@ EXCLUSION_DEG = 25.0
 #: smallest best correlation and smallest confidence of a determined orientation
 MIN_CORRELATION = 0.25
 MIN_CONFIDENCE = 0.15
+#: hole resamplings of the stability check, and the smallest share of them whose best plane
+#: must be within EXCLUSION_DEG of the chosen one
+STABILITY_RESAMPLES = 100
+MIN_STABILITY = 0.8
 #: smallest ``|hole direction . pole|`` of a usable pair (holes at < 11.5 degrees to the plane)
 MIN_CROSSING = 0.2
 #: fewest compared pairs (sample point, neighbouring hole) of a usable pole
@@ -124,6 +136,8 @@ class PlaneEstimate:
     thickness: float = float("nan")
     #: angle between the pole and the mean hole direction, degrees
     hole_angle_deg: float = float("nan")
+    #: share of the hole resamplings whose best plane is within EXCLUSION_DEG of this one
+    stability: float = float("nan")
     reason: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -136,6 +150,7 @@ class PlaneEstimate:
             "runner_up": self.runner_up,
             "confidence": self.confidence,
             "determined": self.determined,
+            "stability": self.stability,
             "n_pairs": self.n_pairs,
             "n_holes": self.n_holes,
             "search_distance": self.search_distance,
@@ -253,52 +268,81 @@ class _Pairs:
         key = (hole[a] * (hole.max() + 1 if n else 1) + hole[b]) * N_SECTORS + self.sector
         _, first, self.group = np.unique(key, return_index=True, return_inverse=True)
         self.group_sector = self.sector[first]
+        #: hole A of every group (the unit resampled by the stability check)
+        self.group_hole = hole[a][first] if self.n else np.empty(0, dtype=np.int64)
 
     def score(self, poles: np.ndarray, chunk: int = 48) -> tuple[np.ndarray, np.ndarray]:
         """(score, number of pairs compared) for each pole; see the module docstring."""
-        from scipy.sparse import csr_matrix
-
         rho = np.full(len(poles), np.nan)
         count = np.zeros(len(poles), dtype=np.int64)
         if self.n == 0 or len(self.sectors) == 0:
             return rho, count
-        ia = self.a_value[:, None]
-        n_groups = len(self.group_sector)
-        to_group = csr_matrix(
-            (np.ones(self.n), (self.group, np.arange(self.n))), shape=(n_groups, self.n)
-        )
-        to_sector = (self.group_sector[None, :] == self.sectors[:, None]).astype(np.float64)
-        need = np.maximum(MIN_SECTOR_PAIRS, 0.15 * self.sector_size[self.sectors])[:, None]
+        ones = np.ones((1, len(self.group_sector)))
         for c0 in range(0, len(poles), chunk):
-            p = poles[c0 : c0 + chunk]
-            dn = self.b_dir @ p.T
-            ok = (np.abs(dn) > MIN_CROSSING) & (np.abs(self.a_dir @ p.T) > MIN_CROSSING)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                t = np.where(ok, (self.v @ p.T) / dn, 0.0)
-            index = self.b_index[:, None] + np.rint(t / self.step).astype(np.int64)
-            ok &= (index >= self.b_lo[:, None]) & (index < self.b_hi[:, None])
-            index = np.where(ok, index, 0)
-            ok &= self.state[index] >= 0
-            ib = self.value[index]
-            r2 = self.vv[:, None] - 2.0 * t * self.vd[:, None] + t * t
-            ok &= r2 <= self.max_distance**2
-            w = np.where(ok, 1.0 / (1.0 + np.maximum(r2, 0.0) / self.spacing**2), 0.0)
-            # weighted sums of each group, centred on the means of the group
-            sw = to_group @ w
-            n_ok = to_group @ ok.astype(np.float64)
-            sa, sb = to_group @ (w * ia), to_group @ (w * ib)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                cab = to_group @ (w * ia * ib) - sa * sb / sw
-                va = to_group @ (w * ia * ia) - sa * sa / sw
-                vb = to_group @ (w * ib * ib) - sb * sb / sw
-            use = (n_ok >= MIN_GROUP_PAIRS) & (sw > 0)
-            cab, va, vb = (np.where(use, x, 0.0) for x in (cab, va, vb))
-            with np.errstate(divide="ignore", invalid="ignore"):
-                value = (to_sector @ cab) / np.sqrt((to_sector @ va) * (to_sector @ vb))
-            value[~np.isfinite(value) | (to_sector @ np.where(use, n_ok, 0.0) < need)] = 0.0
-            rho[c0 : c0 + chunk] = value.mean(axis=0)
-            count[c0 : c0 + chunk] = ok.sum(axis=0)
+            sums = self._group_sums(poles[c0 : c0 + chunk])
+            rho[c0 : c0 + chunk] = self._combine(sums, ones)[0]
+            count[c0 : c0 + chunk] = sums[4]
         return rho, count
+
+    def resampled_scores(
+        self, poles: np.ndarray, group_weights: np.ndarray, chunk: int = 48
+    ) -> np.ndarray:
+        """Score of each pole (columns) for each weighting of the groups (rows): the
+        stability check weights every group by how often its hole A was drawn."""
+        out = np.full((len(group_weights), len(poles)), np.nan)
+        if self.n == 0 or len(self.sectors) == 0:
+            return out
+        for c0 in range(0, len(poles), chunk):
+            out[:, c0 : c0 + chunk] = self._combine(
+                self._group_sums(poles[c0 : c0 + chunk]), group_weights
+            )
+        return out
+
+    def _group_sums(self, p: np.ndarray) -> tuple[np.ndarray, ...]:
+        """Per group and pole: centred co-variance, the two variances and the pairs compared
+        (0 for groups with too few pairs), and per pole the number of pairs compared."""
+        from scipy.sparse import csr_matrix
+
+        ia = self.a_value[:, None]
+        to_group = csr_matrix(
+            (np.ones(self.n), (self.group, np.arange(self.n))),
+            shape=(len(self.group_sector), self.n),
+        )
+        dn = self.b_dir @ p.T
+        ok = (np.abs(dn) > MIN_CROSSING) & (np.abs(self.a_dir @ p.T) > MIN_CROSSING)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.where(ok, (self.v @ p.T) / dn, 0.0)
+        index = self.b_index[:, None] + np.rint(t / self.step).astype(np.int64)
+        ok &= (index >= self.b_lo[:, None]) & (index < self.b_hi[:, None])
+        index = np.where(ok, index, 0)
+        ok &= self.state[index] >= 0
+        ib = self.value[index]
+        r2 = self.vv[:, None] - 2.0 * t * self.vd[:, None] + t * t
+        ok &= r2 <= self.max_distance**2
+        w = np.where(ok, 1.0 / (1.0 + np.maximum(r2, 0.0) / self.spacing**2), 0.0)
+        # weighted sums of each group, centred on the means of the group
+        sw = to_group @ w
+        n_ok = to_group @ ok.astype(np.float64)
+        sa, sb = to_group @ (w * ia), to_group @ (w * ib)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cab = to_group @ (w * ia * ib) - sa * sb / sw
+            va = to_group @ (w * ia * ia) - sa * sa / sw
+            vb = to_group @ (w * ib * ib) - sb * sb / sw
+        use = (n_ok >= MIN_GROUP_PAIRS) & (sw > 0)
+        cab, va, vb, n_used = (np.where(use, x, 0.0) for x in (cab, va, vb, n_ok))
+        return cab, va, vb, n_used, ok.sum(axis=0)
+
+    def _combine(self, sums: tuple[np.ndarray, ...], group_weights: np.ndarray) -> np.ndarray:
+        """Mean over the used sectors of the pooled correlation, for each row of weights."""
+        cab, va, vb, n_used, _ = sums
+        r, s = len(group_weights), len(self.sectors)
+        in_sector = (self.group_sector[None, :] == self.sectors[:, None]).astype(np.float64)
+        m = (group_weights[:, None, :] * in_sector[None, :, :]).reshape(r * s, -1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            value = (m @ cab) / np.sqrt((m @ va) * (m @ vb))
+        need = np.maximum(MIN_SECTOR_PAIRS, 0.15 * self.sector_size[self.sectors])
+        value[~np.isfinite(value) | (m @ n_used < np.tile(need, r)[:, None])] = 0.0
+        return value.reshape(r, s, -1).mean(axis=1)
 
     def in_plane_distance(self, pole: np.ndarray) -> float:
         dn = self.b_dir @ pole
@@ -444,6 +488,8 @@ def estimate_plane_from_holes(
     if correlation > 0:
         confidence = float(np.clip(1.0 - max(runner_up, 0.0) / correlation, 0.0, 1.0))
     dip, dip_azimuth = _plane_of_pole(pole)
+    candidates = np.vstack([coarse[usable], fine[np.isfinite(rho_fine)]])
+    stability = _stability(pairs, candidates, pole, n_holes)
 
     in_dirs = direction[state > 0]
     mean_dir = np.linalg.eigh(in_dirs.T @ in_dirs)[1][:, 2]
@@ -465,6 +511,14 @@ def estimate_plane_from_holes(
             f"(confidence {confidence:.2f}, needed {MIN_CONFIDENCE:.2f}; best plane dips "
             f"{dip:.0f} towards {dip_azimuth:03.0f})"
         )
+    elif stability < MIN_STABILITY:
+        reason = (
+            f"the best plane (dips {dip:.0f} towards {dip_azimuth:03.0f}) is not stable: "
+            f"with the holes resampled it stays within {EXCLUSION_DEG:.0f} degrees in only "
+            f"{100 * stability:.0f} % of {STABILITY_RESAMPLES} draws (needed "
+            f"{100 * MIN_STABILITY:.0f} %); the intercepts do not line up clearly enough "
+            "between holes"
+        )
     if reason and hole_angle < 15.0:
         reason += (
             "; that plane is perpendicular to the holes, which is what equal depths in "
@@ -485,9 +539,25 @@ def estimate_plane_from_holes(
         pair_distance=pairs.in_plane_distance(pole),
         thickness=thickness,
         hole_angle_deg=hole_angle,
+        stability=stability,
         reason=reason,
         warnings=[reason] if reason else [],
     )
+
+
+def _stability(pairs: _Pairs, candidates: np.ndarray, pole: np.ndarray, n_holes: int) -> float:
+    """Share of bootstrap resamplings of the holes whose best candidate pole is within
+    EXCLUSION_DEG of ``pole``. A hole is drawn with replacement; each draw counts its
+    groups (the hole and one neighbour, in one sector) once more. Fixed seed: the result
+    is repeatable."""
+    if len(candidates) == 0 or len(pairs.group_hole) == 0:
+        return 0.0
+    rng = np.random.default_rng(0)
+    drawn = rng.integers(0, n_holes, size=(STABILITY_RESAMPLES, n_holes))
+    per_hole = np.stack([np.bincount(d, minlength=n_holes) for d in drawn]).astype(np.float64)
+    scores = pairs.resampled_scores(candidates, per_hole[:, pairs.group_hole])
+    best = candidates[np.argmax(np.where(np.isfinite(scores), scores, -np.inf), axis=1)]
+    return float(np.mean(_angle(best, pole) <= EXCLUSION_DEG))
 
 
 def _smooth(state: np.ndarray, hole: np.ndarray, n_holes: int, width: int) -> np.ndarray:

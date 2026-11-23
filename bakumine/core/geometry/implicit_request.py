@@ -90,7 +90,7 @@ def implicit_summary(result: ImplicitResult, messages: list[str]) -> dict[str, A
         anisotropy.update(described)
     if d.get("anisotropy_hole_angle_deg") is not None:
         anisotropy["hole_angle_deg"] = d["anisotropy_hole_angle_deg"]
-    for key in ("confidence", "correlation", "candidate"):
+    for key in ("confidence", "correlation", "stability", "determined", "candidate"):
         if d.get(f"anisotropy_{key}") is not None:
             anisotropy[key] = d[f"anisotropy_{key}"]
     return {

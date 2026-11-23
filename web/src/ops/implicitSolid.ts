@@ -98,6 +98,10 @@ export interface AnisotropyUsed {
   /** stacked bodies: 1 - runner-up / best indicator correlation between holes (0..1) */
   confidence?: number
   correlation?: number
+  /** stacked bodies: share of resamplings of the holes whose best plane is the same (0..1) */
+  stability?: number
+  /** stacked bodies: false when no plane was clearly best (the solid is isotropic) */
+  determined?: boolean
   /** the best plane when the automatic orientation was not determined (not used) */
   candidate?: { dip: number | null; dip_azimuth: number | null }
 }
@@ -129,7 +133,8 @@ const pad = (value: number, digits: number) => String(Math.round(value)).padStar
 
 /** "Anisotropy (user): plane dips 56 towards 310; major 028/18, semi-major 276/50, minor 130/34; extent 1 : 0.56 : 0.06." */
 export function describeAnisotropy(a: AnisotropyUsed): string {
-  const confidence = a.confidence == null ? '' : ` Confidence ${a.confidence.toFixed(2)}.`
+  const stable = a.stability == null ? '' : `, stable in ${Math.round(100 * a.stability)} % of hole resamplings`
+  const confidence = a.confidence == null ? '' : ` Confidence ${a.confidence.toFixed(2)}${stable}.`
   if (!a.major || !a.semi_major || !a.minor || !a.plane || !a.ratios) return `Anisotropy: ${a.source} (isotropic).${confidence}`
   const axis = (label: string, d: AxisDirection) => `${label} ${pad(d.azimuth, 3)}/${pad(d.plunge, 2)}`
   return (

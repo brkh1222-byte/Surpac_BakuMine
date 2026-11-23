@@ -1276,6 +1276,8 @@ def implicit_solid(
         "anisotropy_hole_angle_deg": anisotropy_info.get("hole_angle_deg"),
         "anisotropy_confidence": anisotropy_info.get("confidence"),
         "anisotropy_correlation": anisotropy_info.get("correlation"),
+        "anisotropy_stability": anisotropy_info.get("stability"),
+        "anisotropy_determined": anisotropy_info.get("determined"),
         "anisotropy_candidate": (
             None
             if anisotropy_info.get("determined") is not False

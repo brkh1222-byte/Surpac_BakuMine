@@ -13,7 +13,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-from stacked_lenses import DIP, POLE, stacked_lenses
+from stacked_lenses import DIP, POLE, fanned_lenses, stacked_lenses
 from test_implicit_anisotropy import NORMAL, tabular_drilling
 
 from bakumine.core.drillholes.desurvey import desurvey
@@ -28,6 +28,7 @@ from bakumine.core.geometry.implicit_request import run_implicit
 from bakumine.core.geometry.intercept_orientation import (
     MIN_CONFIDENCE,
     MIN_CORRELATION,
+    MIN_STABILITY,
     estimate_plane_from_holes,
     pole_of_plane,
 )
@@ -137,6 +138,7 @@ def test_implicit_solid_auto_on_stacked_lenses():
     assert d["anisotropy_method"] == "indicator correlation between holes"
     assert angle(result.anisotropy.minor_axis, POLE) < 15.0
     assert d["anisotropy_confidence"] >= MIN_CONFIDENCE and d["anisotropy_candidate"] is None
+    assert d["anisotropy_determined"] is True and d["anisotropy_stability"] >= MIN_STABILITY
     # in-plane continuity is not estimated: major axis along strike, equal extent down dip
     assert abs(result.anisotropy.major_axis[2]) < 1e-9
     assert result.anisotropy.semi_major_ratio == 1.0 and result.anisotropy.minor_ratio > 2.0
@@ -158,4 +160,37 @@ def test_implicit_solid_auto_refuses_an_undetermined_orientation():
     assert result.anisotropy is None
     assert summary["anisotropy"]["source"] == "none (auto failed)"
     assert "plane" not in summary["anisotropy"]  # nothing was chosen
+    assert summary["anisotropy"]["determined"] is False
     assert any("give the orientation" in w for w in summary["warnings"])
+
+
+def test_steep_lenses_drilled_from_both_sides_of_the_sections():
+    """Holes towards 170 and 350 on north-south sections through lenses dipping 77 -> 340:
+    the plane is found and stays the same when the holes are resampled."""
+    tables, truth = fanned_lenses(n_lenses=6, extent=(120.0, 90.0), missing=0.0, seed=0)
+    result, _, _ = estimate(tables)
+    print(f"\nfanned: {result.dip:.1f} -> {result.dip_azimuth:.1f}, "
+          f"{angle(result.pole, truth):.1f} deg off, stability {result.stability:.2f}")  # fmt: skip
+    assert angle(result.pole, truth) < 5.0
+    assert result.determined and result.stability >= MIN_STABILITY
+    assert result.to_dict()["stability"] == result.stability
+
+
+def test_a_noise_maximum_is_not_taken_for_the_plane():
+    """Short lenses (35 x 25 m) against 45 m between sections: the ore of neighbouring holes
+    hardly lines up. A plane 45 degrees off the truth (82 -> 026) scored best, with
+    correlation 0.48 and confidence 0.23, both above their limits, and was used. It is not
+    stable when the holes are resampled, so no plane is chosen now."""
+    tables, truth = fanned_lenses()
+    result, constraints, traces = estimate(tables)
+    error = angle(result.pole, truth)
+    print(f"\nshort lenses: {result.dip:.1f} -> {result.dip_azimuth:.1f}, {error:.1f} deg off, "
+          f"correlation {result.correlation:.2f}, confidence {result.confidence:.2f}, "
+          f"stability {result.stability:.2f}")  # fmt: skip
+    assert not (result.determined and error > 15.0)
+    assert result.correlation >= MIN_CORRELATION and result.confidence >= MIN_CONFIDENCE
+    assert not result.determined and result.stability < MIN_STABILITY
+    assert "not stable" in result.reason and result.warnings == [result.reason]
+    with pytest.raises(UndeterminedOrientation, match="not stable") as caught:
+        estimate_stacked_anisotropy(constraints.intercepts, traces)
+    assert caught.value.info["stability"] == result.stability

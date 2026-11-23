@@ -47,7 +47,8 @@ def configure_implicit(parser: argparse.ArgumentParser) -> None:
         "project's rotation convention with --ratios. 'auto' estimates the plane: for one "
         "body from one point per intercept; for stacked lenses (holes that cut the domain "
         "several times) as the plane along which the ore of neighbouring holes lines up "
-        "best, with a confidence. When that is not well determined no plane is chosen: "
+        "best, with a confidence and a stability (share of resamplings of the holes that "
+        "give the same plane). When that is not well determined no plane is chosen: "
         "the solid is isotropic and a warning asks for the orientation.",
     )
     ani.add_argument("--dip", type=float, help="dip of the body, degrees from horizontal")
@@ -113,8 +114,11 @@ def format_axes(anisotropy: dict[str, Any]) -> str:
     if anisotropy.get("confidence") is not None:
         confidence = (
             f"; confidence {anisotropy['confidence']:.2f} (indicator correlation between "
-            f"holes {anisotropy.get('correlation', float('nan')):.2f})"
+            f"holes {anisotropy.get('correlation', float('nan')):.2f}"
         )
+        if anisotropy.get("stability") is not None:
+            confidence += f", stable in {100 * anisotropy['stability']:.0f} % of hole resamplings"
+        confidence += ")"
     if "major" not in anisotropy:
         candidate = anisotropy.get("candidate") or {}
         if candidate.get("dip") is not None:
