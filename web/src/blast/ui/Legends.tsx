@@ -34,7 +34,7 @@ export function Legends({ bundle }: { bundle: BlastBundle }) {
             <div key={name} className="blast-legend-row">
               <i style={{ background: DAMAGE_COLORS[Math.min(i + 1, DAMAGE_COLORS.length - 1)] }} />
               {name}
-              {thresholds[i] !== undefined && <span>≥ {thresholds[i]} mm/s</span>}
+              {thresholds[i] !== undefined && <span>≥ {Math.round(thresholds[i]).toLocaleString("en-US")} mm/s</span>}
             </div>
           ))}
         </div>

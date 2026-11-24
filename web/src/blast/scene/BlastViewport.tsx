@@ -9,7 +9,7 @@ import { PerspectiveCamera, Vector3 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { SCENE_COLORS } from '../../scene/theme'
 import { useViewer } from '../../state/store'
-import { advance, autoSpeed } from '../math'
+import { advance, autoSpeed, fitFrame } from '../math'
 import { useBlast } from '../state'
 import type { BlastBundle } from '../types'
 import { Legends } from '../ui/Legends'
@@ -24,29 +24,26 @@ import { Waves } from './Waves'
 
 const FOV = 35
 
-/** Sphere around the holes and the muckpile grid, scene coordinates. */
-function blastSphere(bundle: BlastBundle, origin: readonly number[]): { centre: Vector3; radius: number } {
-  const min = [Infinity, Infinity, Infinity]
-  const max = [-Infinity, -Infinity, -Infinity]
-  const add = (p: readonly number[]) => {
-    for (let k = 0; k < 3; k++) {
-      if (p[k] < min[k]) min[k] = p[k]
-      if (p[k] > max[k]) max[k] = p[k]
-    }
+/** What "fit to blast" frames, scene coordinates: the pattern and the muckpile area in front of it. */
+function blastFrame(bundle: BlastBundle, origin: readonly number[]): { centre: Vector3; radius: number; direction: Vector3 } {
+  const holes = bundle.timeline.holes
+  const polygon = Array.isArray(bundle.design.polygon) && bundle.design.polygon.length >= 3 ? bundle.design.polygon : null
+  const outline: (readonly number[])[] = polygon ?? holes.map((h) => h.collar)
+  const points = outline.length > 0 ? outline : [bundle.muckpile.origin]
+  const azimuth = typeof bundle.design.face_azimuth === 'number' ? bundle.design.face_azimuth : 180
+  const frame = fitFrame(points, azimuth)
+  // Look at mid-bench height.
+  let z = 0
+  for (const h of holes) z += (h.collar[2] + h.toe[2]) / 2
+  z = holes.length > 0 ? z / holes.length : origin[2]
+  return {
+    centre: new Vector3(frame.centre[0] - origin[0], frame.centre[1] - origin[1], z - origin[2]),
+    radius: frame.radius,
+    direction: new Vector3(...frame.direction),
   }
-  for (const h of bundle.timeline.holes) {
-    add(h.collar)
-    add(h.toe)
-  }
-  const m = bundle.muckpile
-  const z = Number.isFinite(min[2]) ? (min[2] + max[2]) / 2 : 0
-  add([m.origin[0], m.origin[1], z])
-  add([m.origin[0] + (m.shape[0] - 1) * m.spacing, m.origin[1] + (m.shape[1] - 1) * m.spacing, z])
-  const centre = new Vector3((min[0] + max[0]) / 2 - origin[0], (min[1] + max[1]) / 2 - origin[1], (min[2] + max[2]) / 2 - origin[2])
-  return { centre, radius: Math.max(5, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2) }
 }
 
-/** Orbit controls (z up) and "fit to blast": in front of the face, off to one side, looking down. */
+/** Orbit controls (z up) and "fit to blast": from in front of the face, looking back at it, 35 degrees down. */
 function Camera({ bundle, origin }: LayerProps) {
   const camera = useThree((s) => s.camera) as PerspectiveCamera
   const gl = useThree((s) => s.gl)
@@ -62,18 +59,15 @@ function Camera({ bundle, origin }: LayerProps) {
     controls.maxDistance = 2e5
     controls.addEventListener('change', () => invalidate())
     const fit = () => {
-      const { centre, radius } = blastSphere(bundle, origin)
-      const az = (((bundle.design.face_azimuth as number | undefined) ?? 180) * Math.PI) / 180
-      const f = new Vector3(Math.sin(az), Math.cos(az), 0)
-      const u = new Vector3(Math.cos(az), -Math.sin(az), 0)
-      const dir = f.multiplyScalar(1).addScaledVector(u, 0.9).add(new Vector3(0, 0, 0.75)).normalize()
-      const distance = (radius / Math.sin((FOV * Math.PI) / 360)) * 1.05
-      camera.position.copy(centre).addScaledVector(dir, distance)
+      const { centre, radius, direction } = blastFrame(bundle, origin)
+      const distance = radius / Math.sin((FOV * Math.PI) / 360)
+      camera.position.copy(centre).addScaledVector(direction, distance)
       camera.near = Math.max(0.2, distance / 2000)
       camera.far = Math.max(5e4, distance * 200)
       camera.updateProjectionMatrix()
       controls.target.copy(centre)
       controls.update()
+      blastView.fitDistance = distance
       invalidate()
     }
     blastView.fit = fit
@@ -136,11 +130,12 @@ export function BlastViewport() {
   const source = useBlast((s) => s.source)
   const reason = useBlast((s) => s.reason)
   const status = useBlast((s) => s.status)
+  const error = useBlast((s) => s.error)
   const origin = useMemo(() => (bundle ? bundleOrigin(bundle) : null), [bundle])
 
   return (
     <div className="blast-viewport" data-testid="blast-viewport">
-      <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true }} camera={{ fov: FOV, near: 0.5, far: 1e5, up: [0, 0, 1], position: [80, -120, 80] }}>
+      <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true, localClippingEnabled: true }} camera={{ fov: FOV, near: 0.5, far: 1e5, up: [0, 0, 1], position: [80, -120, 80] }}>
         <color attach="background" args={[SCENE_COLORS[theme].background]} />
         <ambientLight intensity={1.0} />
         <directionalLight position={[-1, -0.15, 0.75]} intensity={2.3} />
@@ -164,7 +159,13 @@ export function BlastViewport() {
         <button type="button" data-testid="blast-fit" title="Frame the blast" onClick={() => blastView.fit?.()}>
           Fit to blast
         </button>
-        {status === 'loading' && <span className="blast-badge">Loading…</span>}
+        {status === 'loading' && (
+          <span className="blast-badge" data-testid="blast-loading">
+            <i className="blast-spinner" aria-hidden="true" />
+            Simulating…
+          </span>
+        )}
+        {error && <span className="blast-badge blast-badge-error" title={error}>Simulation failed · see Design</span>}
         {status === 'ready' && source === 'demo' && (
           <span className="blast-badge blast-badge-demo" data-testid="blast-demo-badge" title={reason ?? undefined}>
             Demo data · not a simulation result

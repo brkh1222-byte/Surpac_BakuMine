@@ -22,6 +22,7 @@ Python is pinned to 3.12 through `uv`. Do not use the system Python (3.14).
 - `bakumine/core/report` — volume / tonnes / grade
 - `bakumine/api` — FastAPI app; `bakumine/cli.py` — CLI (add subcommands with `bakumine.cli.register`)
 - `web/` — Vite + React + TypeScript + three.js viewer
+- `bakumine/blast`, `web/src/blast` — Blast BakuMine (bench blast design and simulation, a separate product tab): `plan_blast.md` is its task list, `research_blast.md` its theory. Rule 7 does not apply to it; it only reads block-modeller objects
 - `data/synthetic` — generated benchmark deposit with known truth; `data/reference` — outputs of independent implementations
 - `tests/` — mirrors the package layout
 

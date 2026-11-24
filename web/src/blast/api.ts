@@ -24,10 +24,32 @@ export interface Loaded {
 export class BlastApiError extends Error {
   /** HTTP status; 0 = not reachable or not a valid bundle. */
   readonly status: number
-  constructor(message: string, status = 0) {
+  /** The API answered, but not with a valid bundle. */
+  readonly invalid: boolean
+  constructor(message: string, status = 0, invalid = false) {
     super(message)
     this.status = status
+    this.invalid = invalid
   }
+}
+
+/** FastAPI `detail`: a string (400) or a list of { loc, msg } (422). */
+export function detailText(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      const item = d as { loc?: unknown; msg?: unknown } | null
+      const where = Array.isArray(item?.loc) ? item.loc.filter((l) => l !== 'body').join('.') : ''
+      return typeof item?.msg === 'string' ? (where ? `${where}: ${item.msg}` : item.msg) : JSON.stringify(d)
+    })
+    return parts.join('; ')
+  }
+  return null
+}
+
+/** The endpoint is not there (not built yet, API down): the demo stands in. Anything else is a real answer. */
+export function apiAbsent(error: unknown): boolean {
+  return error instanceof BlastApiError && [0, 404, 405, 502, 503, 504].includes(error.status) && !error.invalid
 }
 
 async function json(url: string, init: RequestInit | undefined, fetchFn: FetchFn): Promise<unknown> {
@@ -42,7 +64,7 @@ async function json(url: string, init: RequestInit | undefined, fetchFn: FetchFn
     let detail = response.statusText
     try {
       const body = (await response.json()) as { detail?: unknown } | null
-      if (typeof body?.detail === 'string') detail = body.detail
+      detail = detailText(body?.detail) ?? detail
     } catch {
       // not JSON: keep the status text
     }
@@ -57,7 +79,7 @@ async function json(url: string, init: RequestInit | undefined, fetchFn: FetchFn
 
 function asBundle(value: unknown): BlastBundle {
   const errors = validateBundle(value)
-  if (errors.length > 0) throw new BlastApiError(`the API result is not a valid bundle: ${errors.slice(0, 3).join('; ')}`)
+  if (errors.length > 0) throw new BlastApiError(`the API result is not a valid bundle: ${errors.slice(0, 3).join('; ')}`, 0, true)
   return value as BlastBundle
 }
 
@@ -83,7 +105,11 @@ export async function loadResult(design: DesignParams = DEFAULT_DESIGN, signal?:
   }
 }
 
-/** Runs the simulation; when the API cannot, the demo is regenerated from the same design. */
+/**
+ * Runs the simulation. When the endpoint is not there, the demo is regenerated from the
+ * same design; when the API refuses the design (400 / 422) or fails, the error is thrown
+ * with the API's own words.
+ */
 export async function simulate(design: DesignParams, signal?: AbortSignal, fetchFn: FetchFn = fetch): Promise<Loaded> {
   try {
     const value = await json(
@@ -94,6 +120,7 @@ export async function simulate(design: DesignParams, signal?: AbortSignal, fetch
     return { bundle: asBundle(value), source: 'api', reason: null }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
+    if (!apiAbsent(error)) throw error
     return demo(design, why(error, 'Simulation not run by the API'))
   }
 }

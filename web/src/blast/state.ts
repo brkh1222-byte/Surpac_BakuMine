@@ -13,6 +13,7 @@ export const LAYERS = [
   { id: 'ground', label: 'Ground / muckpile' },
   { id: 'holes', label: 'Blast holes' },
   { id: 'labels', label: 'Delay labels' },
+  { id: 'allLabels', label: 'All delay labels' },
   { id: 'waves', label: 'Stress waves' },
   { id: 'ppv', label: 'PPV map' },
   { id: 'damage', label: 'Damage blocks' },
@@ -33,6 +34,8 @@ export interface BlastState {
   /** Why demo data is shown. */
   reason: string | null
   status: 'idle' | 'loading' | 'ready'
+  /** Why the last Simulate did not give a result (the API's words). */
+  error: string | null
   design: DesignParams
 
   /** Player clock, ms after the first initiation. */
@@ -49,6 +52,8 @@ export interface BlastState {
   /** Holes drawn much wider than they are, so that they can be seen. */
   exaggerateHoles: boolean
   groundOpacity: number
+  /** Fragments drawn this many times their size. */
+  fragmentScale: number
 
   setLoaded: (loaded: Loaded) => void
   load: (demoOnly: boolean) => Promise<void>
@@ -63,6 +68,7 @@ export interface BlastState {
   setLayer: (id: LayerId, on: boolean) => void
   setExaggerateHoles: (on: boolean) => void
   setGroundOpacity: (v: number) => void
+  setFragmentScale: (v: number) => void
 }
 
 export const useBlast = create<BlastState>((set, get) => ({
@@ -70,6 +76,7 @@ export const useBlast = create<BlastState>((set, get) => ({
   source: 'demo',
   reason: null,
   status: 'idle',
+  error: null,
   design: DEFAULT_DESIGN,
 
   t: 0,
@@ -81,14 +88,15 @@ export const useBlast = create<BlastState>((set, get) => ({
   loop: false,
 
   layers: {
-    ground: true, holes: true, labels: true, waves: true, ppv: false, damage: true, throw: true,
+    ground: true, holes: true, labels: true, allLabels: false, waves: true, ppv: false, damage: true, throw: true,
     flyrock: true, airblast: false, monitors: true, topography: true,
   },
   exaggerateHoles: true,
-  groundOpacity: 0.8,
+  groundOpacity: 1,
+  fragmentScale: 1,
 
   setLoaded: ({ bundle, source, reason }) =>
-    set({ bundle, source, reason, status: 'ready', t: 0, playing: false, tEnd: timelineEnd(bundle), lastFire: lastFire(bundle) }),
+    set({ bundle, source, reason, status: 'ready', error: null, t: 0, playing: false, tEnd: timelineEnd(bundle), lastFire: lastFire(bundle) }),
 
   load: async (demoOnly) => {
     set({ status: 'loading' })
@@ -102,10 +110,21 @@ export const useBlast = create<BlastState>((set, get) => ({
   },
 
   simulate: async () => {
-    set({ status: 'loading', playing: false })
+    set({ status: 'loading', playing: false, error: null })
     const demoOnly = get().reason?.startsWith('Demo requested') ?? false
-    if (demoOnly) get().setLoaded({ bundle: makeDemoBundle(get().design), source: 'demo', reason: 'Demo requested (?blast=demo)' })
-    else get().setLoaded(await apiSimulate(get().design))
+    if (demoOnly) {
+      get().setLoaded({ bundle: makeDemoBundle(get().design), source: 'demo', reason: 'Demo requested (?blast=demo)' })
+      return
+    }
+    const hadResult = get().source === 'api' && get().bundle !== null
+    try {
+      const loaded = await apiSimulate(get().design)
+      // A real result on screen is not replaced by demo numbers because the API went away.
+      if (loaded.source === 'demo' && hadResult) set({ status: 'ready', error: loaded.reason })
+      else get().setLoaded(loaded)
+    } catch (error) {
+      set({ status: get().bundle ? 'ready' : 'idle', error: error instanceof Error ? error.message : String(error) })
+    }
   },
 
   patchDesign: (patch) => set((s) => ({ design: { ...s.design, ...patch } })),
@@ -118,4 +137,5 @@ export const useBlast = create<BlastState>((set, get) => ({
   setLayer: (id, on) => set((s) => ({ layers: { ...s.layers, [id]: on } })),
   setExaggerateHoles: (exaggerateHoles) => set({ exaggerateHoles }),
   setGroundOpacity: (groundOpacity) => set({ groundOpacity }),
+  setFragmentScale: (fragmentScale) => set({ fragmentScale }),
 }))

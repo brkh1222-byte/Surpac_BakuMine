@@ -8,6 +8,8 @@ function fmt(v: number | null | undefined, digits = 0): string {
   return v.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits })
 }
 
+const has = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
 const size = (m: number) => (Number.isFinite(m) ? (m >= 1 ? `${fmt(m, 2)} m` : `${fmt(m * 1000)} mm`) : '–')
 
 function Card({ label, value, unit, tone }: { label: string; value: string; unit?: string; tone?: 'ok' | 'bad' }) {
@@ -60,6 +62,14 @@ function Cards({ bundle }: { bundle: BlastBundle }) {
       <Card label="Flyrock max" value={fmt(s.flyrock_max_m)} unit="m" />
       <Card label="Clearance" value={fmt(s.clearance_m)} unit="m" />
       <Card label="Back-break" value={fmt(s.backbreak_m, 1)} unit="m" />
+      {has(s.burden_m) && has(s.spacing_m) && <Card label="Burden × spacing" value={`${fmt(s.burden_m, 2)} × ${fmt(s.spacing_m, 2)}`} unit="m" />}
+      {has(s.rows) && <Card label="Rows" value={fmt(s.rows)} />}
+      {has(s.stemming_m) && <Card label="Stemming" value={fmt(s.stemming_m, 2)} unit="m" />}
+      {has(s.subdrill_m) && <Card label="Subdrill" value={fmt(s.subdrill_m, 2)} unit="m" />}
+      {has(s.burden_relief_ms_m) && <Card label="Burden relief" value={fmt(s.burden_relief_ms_m, 1)} unit="ms/m" />}
+      {has(s.throw_com_m) && <Card label="Throw (centre of mass)" value={fmt(s.throw_com_m, 1)} unit="m" />}
+      {has(s.throw_max_m) && <Card label="Throw max" value={fmt(s.throw_max_m, 1)} unit="m" />}
+      {has(s.muckpile_max_height_m) && <Card label="Muckpile height" value={fmt(s.muckpile_max_height_m, 1)} unit="m" />}
     </div>
   )
 }
@@ -70,6 +80,7 @@ export function ResultsPanel() {
   const reason = useBlast((s) => s.reason)
   if (!bundle) return <p className="blast-note">No result loaded.</p>
   const models = Object.entries(bundle.summary.models ?? {})
+  const notes = Array.isArray(bundle.summary.notes) ? bundle.summary.notes.filter((n): n is string => typeof n === 'string') : []
   return (
     <>
       <section className="blast-section">
@@ -127,7 +138,14 @@ export function ResultsPanel() {
       </section>
 
       <section className="blast-section">
-        <h3>Models and site constants</h3>
+        <h3>Model notes</h3>
+        {notes.length > 0 && (
+          <ul className="blast-notes" data-testid="blast-notes">
+            {notes.map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
+          </ul>
+        )}
         <p className="blast-note">
           Empirical engineering models, not a first-principles simulation. Constants marked uncalibrated are published typical values until a
           site calibration is supplied.

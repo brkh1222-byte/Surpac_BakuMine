@@ -6,6 +6,7 @@ export function LayersPanel() {
   const exaggerate = useBlast((s) => s.exaggerateHoles)
   const opacity = useBlast((s) => s.groundOpacity)
   const source = useBlast((s) => s.source)
+  const fragmentScale = useBlast((s) => s.fragmentScale)
   const s = useBlast.getState()
   return (
     <section className="blast-section">
@@ -21,7 +22,11 @@ export function LayersPanel() {
         </label>
         <label className="blast-range">
           Ground opacity
-          <input type="range" min={0.15} max={1} step={0.05} value={opacity} onChange={(e) => s.setGroundOpacity(Number(e.target.value))} />
+          <input type="range" min={0.15} max={1} step={0.05} value={opacity} title="Lower it to see the damage blocks in the wall" onChange={(e) => s.setGroundOpacity(Number(e.target.value))} />
+        </label>
+        <label className="blast-range" title="Fragments are drawn this many times their size (never smaller than a few pixels)">
+          Fragment size × {fragmentScale}
+          <input type="range" min={1} max={20} step={1} value={fragmentScale} data-testid="blast-fragment-scale" onChange={(e) => s.setFragmentScale(Number(e.target.value))} />
         </label>
       </div>
     </section>

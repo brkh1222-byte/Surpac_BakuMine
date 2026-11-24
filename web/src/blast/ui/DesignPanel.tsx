@@ -3,7 +3,7 @@
  * as null ("let the rules of thumb decide"). "Simulate" asks the API; without it the demo
  * bench is regenerated from the same parameters (and labelled as demo data).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { blastCentre } from '../scene/Rings'
 import { useBlast } from '../state'
 import type { DesignParams, ExplosiveName, PatternType, TimingType, Xy } from '../types'
@@ -85,8 +85,13 @@ export function DesignPanel() {
   const design = useBlast((s) => s.design)
   const status = useBlast((s) => s.status)
   const bundle = useBlast((s) => s.bundle)
+  const error = useBlast((s) => s.error)
   const { patchDesign, simulate } = useBlast.getState()
   const [polygonText, setPolygonText] = useState(() => (design.polygon ?? []).map((p) => p.join(', ')).join('\n'))
+  // The API's defaults (and a submitted polygon) arrive after the first render.
+  useEffect(() => {
+    setPolygonText((design.polygon ?? []).map((p) => p.join(', ')).join('\n'))
+  }, [design.polygon])
   const polygon = parsePolygon(polygonText)
 
   const rock = (patch: Partial<DesignParams['rock']>) => patchDesign({ rock: { ...design.rock, ...patch } })
@@ -200,8 +205,14 @@ export function DesignPanel() {
       ))}
 
       <button type="submit" className="blast-simulate" data-testid="blast-simulate" disabled={status === 'loading' || polygon === 'error'}>
+        {status === 'loading' && <i className="blast-spinner" aria-hidden="true" />}
         {status === 'loading' ? 'Simulating…' : 'Simulate'}
       </button>
+      {error && (
+        <p className="blast-error" role="alert" data-testid="blast-error">
+          {error}
+        </p>
+      )}
     </form>
   )
 }

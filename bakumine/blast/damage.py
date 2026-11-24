@@ -48,6 +48,7 @@ Units: metres, seconds, kilograms inside; PPV in mm/s and times in ms where the 
 
 from __future__ import annotations
 
+import functools
 import math
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -185,6 +186,12 @@ def _axis_coordinates(points: np.ndarray, hole: Hole) -> tuple[np.ndarray, np.nd
     return s, np.maximum(r0, 0.5 * hole.diameter)
 
 
+@functools.lru_cache(maxsize=8)
+def _gauss_nodes(nodes: int) -> tuple[np.ndarray, np.ndarray]:
+    """Gauss-Legendre nodes and weights (cached: they depend on the count only)."""
+    return np.polynomial.legendre.leggauss(nodes)
+
+
 def hp_integral(
     r0: Any, x0: Any, x_top: float, x_bottom: float, exponent: float, nodes: int = 32
 ) -> np.ndarray:
@@ -209,7 +216,7 @@ def hp_integral(
     th2 = np.arctan((x_bottom - x0) / r0)
     if exponent == 1.0:
         return (th2 - th1) / r0
-    xk, wk = np.polynomial.legendre.leggauss(nodes)
+    xk, wk = _gauss_nodes(int(nodes))
     half = 0.5 * (th2 - th1)
     mid = 0.5 * (th2 + th1)
     theta = mid[..., None] + half[..., None] * xk

@@ -5,7 +5,7 @@
  */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
-import { BufferAttribute, BufferGeometry, DoubleSide } from 'three'
+import { BufferAttribute, BufferGeometry, DoubleSide, Plane, Vector3 } from 'three'
 import { fetchManifest, fetchMesh, type MeshData } from '../../api/client'
 import { worldToScene } from '../../scene/origin'
 import { useViewer } from '../../state/store'
@@ -45,6 +45,9 @@ function gridPositions(grid: GridSpec, z: readonly (number | null)[], origin: re
   return out
 }
 
+/** The project topography is drawn this far below its true elevation, m. */
+const TOPOGRAPHY_DROP = 0.5
+
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v)
 
 export function Muckpile({ bundle, origin }: LayerProps) {
@@ -58,7 +61,8 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     const g = new BufferGeometry()
     g.setAttribute('position', new BufferAttribute(gridPositions(grid, zb, origin), 3))
     g.setAttribute('color', new BufferAttribute(new Float32Array(n * 3), 3))
-    g.setIndex(new BufferAttribute(gridIndex(grid, (i) => finite(zb[i]) && finite(za[i])), 1))
+    // A cell with a missing node is not drawn (never at z = 0); a node missing only in one state keeps the other.
+    g.setIndex(new BufferAttribute(gridIndex(grid, (i) => finite(zb[i]) || finite(za[i])), 1))
     return { g, landed: sortedFinite(bundle.throw.particles.t_land_ms), state: { f: -1, theme: '' } }
   }, [grid, origin, bundle])
   useEffect(() => () => built.g.dispose(), [built])
@@ -74,8 +78,10 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     const muck = hexLinear(BLAST_COLORS[theme].muck)
     const { z_before: zb, z_after: za } = grid
     for (let i = 0; i < position.count; i++) {
-      const a = zb[i] ?? 0
-      const b = za[i] ?? a
+      const before = zb[i]
+      const after = za[i]
+      const a = finite(before) ? before : finite(after) ? after : origin[2]
+      const b = finite(after) ? after : a
       position.setZ(i, a + (b - a) * f - origin[2])
       // Where the surface moved, it is broken rock.
       const m = Math.min(1, Math.abs(b - a) / 0.5) * f
@@ -88,7 +94,7 @@ export function Muckpile({ bundle, origin }: LayerProps) {
   })
 
   return (
-    <mesh geometry={built.g} renderOrder={2}>
+    <mesh geometry={built.g} renderOrder={2} frustumCulled={false}>
       <meshStandardMaterial vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
     </mesh>
   )
@@ -160,8 +166,8 @@ export function Topography({ bundle, origin }: LayerProps) {
     if (!mesh) return null
     const g = new BufferGeometry()
     const position = worldToScene(mesh.vertices, origin)
-    // A hair below the muckpile patch, which shows the same ground in more detail.
-    for (let i = 2; i < position.length; i += 3) position[i] -= 0.1
+    // Half a metre down: where it overlaps the bundle's ground, that one wins without z-fighting.
+    for (let i = 2; i < position.length; i += 3) position[i] -= TOPOGRAPHY_DROP
     g.setAttribute('position', new BufferAttribute(position, 3))
     g.setIndex(new BufferAttribute(mesh.faces, 1))
     if (mesh.normals) g.setAttribute('normal', new BufferAttribute(mesh.normals, 3))
@@ -173,10 +179,39 @@ export function Topography({ bundle, origin }: LayerProps) {
     return () => geometry?.dispose()
   }, [geometry, invalidate])
 
+  // Not drawn inside the heightmap's rectangle: there the bundle's ground (with the cut
+  // face and the muckpile) replaces it. With `clipIntersection` a fragment is dropped only
+  // when it is on the clipped side of all four planes, i.e. inside the rectangle.
+  const planes = useMemo(() => {
+    const m = bundle.muckpile
+    const inset = m.spacing
+    const x0 = m.origin[0] - origin[0] + inset
+    const y0 = m.origin[1] - origin[1] + inset
+    const x1 = m.origin[0] - origin[0] + (m.shape[0] - 1) * m.spacing - inset
+    const y1 = m.origin[1] - origin[1] + (m.shape[1] - 1) * m.spacing - inset
+    if (!(x1 > x0) || !(y1 > y0)) return []
+    return [
+      new Plane(new Vector3(1, 0, 0), -x1),
+      new Plane(new Vector3(-1, 0, 0), x0),
+      new Plane(new Vector3(0, 1, 0), -y1),
+      new Plane(new Vector3(0, -1, 0), y0),
+    ]
+  }, [bundle, origin])
+
   if (!geometry) return null
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color={BLAST_COLORS[theme].context} side={DoubleSide} roughness={1} metalness={0} />
+      <meshStandardMaterial
+        color={BLAST_COLORS[theme].context}
+        side={DoubleSide}
+        roughness={1}
+        metalness={0}
+        clippingPlanes={planes}
+        clipIntersection
+        polygonOffset
+        polygonOffsetFactor={2}
+        polygonOffsetUnits={2}
+      />
     </mesh>
   )
 }

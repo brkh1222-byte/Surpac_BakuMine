@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { makeDemoBundle } from './fixture'
 import {
-  activeWaves, advance, autoSpeed, contourSegments, countAtOrBefore, detonationSplit, firePulse, landedFraction, lastFire, logScale,
+  activeWaves, advance, fitFrame, fragmentDrawSize, labelledHoles, labelScale, autoSpeed, contourSegments, countAtOrBefore, detonationSplit, firePulse, landedFraction, lastFire, logScale,
   particlePosition, Phase, ppvAtRadius, ppvColor, PPV_STOPS, radiusAtPpv, ramp, sampleGrid, sliderToTime, sortedFinite, timelineEnd,
   timeToSlider, toHex, validateBundle, waveRadius,
 } from './math'
@@ -175,4 +175,44 @@ test('bundle validation: the demo passes; wrong shapes are named', () => {
   const blocks = structuredClone(bundle)
   blocks.damage.blocks.cls.pop()
   expect(validateBundle(blocks).join('\n')).toMatch(/damage\.blocks\.cls/)
+})
+
+test('delay labels: all for a small pattern, one per row for a large one', () => {
+  const small = Array.from({ length: 40 }, (_, i) => ({ row: Math.floor(i / 8) }))
+  expect(labelledHoles(small, false)).toHaveLength(40)
+  const large = Array.from({ length: 100 }, (_, i) => ({ row: Math.floor(i / 13) }))
+  expect(labelledHoles(large, false)).toEqual([0, 13, 26, 39, 52, 65, 78, 91])
+  expect(labelledHoles(large, true)).toHaveLength(100)
+})
+
+test('label scale: 1 at the fit distance, clamped, hidden when far', () => {
+  expect(labelScale(100, 100)).toBe(1)
+  expect(labelScale(50, 100)).toBe(1.5)
+  expect(labelScale(125, 100)).toBeCloseTo(0.8, 12)
+  expect(labelScale(300, 100)).toBe(0.6)
+  expect(labelScale(400, 100)).toBe(0)
+  expect(labelScale(100, 0)).toBe(1)
+})
+
+test('fragment draw size: true half-size times the factor, with a screen-size floor', () => {
+  expect(fragmentDrawSize(0.4, 1, 10)).toBeCloseTo(0.2, 12)
+  expect(fragmentDrawSize(0.4, 5, 10)).toBeCloseTo(1, 12)
+  // 300 m away a 4 cm fragment would be sub-pixel: drawn at 0.004 x distance.
+  expect(fragmentDrawSize(0.04, 1, 300)).toBeCloseTo(1.2, 12)
+})
+
+test('fit to blast: three pattern extents, centred in front of the face, seen from the front at 35 degrees', () => {
+  // 60 m x 35 m block, face looking south (the live test pattern, moved to the origin).
+  const polygon = [[30, 0], [-30, 0], [-30, 35], [30, 35]]
+  const frame = fitFrame(polygon, 180)
+  expect(frame.radius).toBeCloseTo(90, 9)
+  expect(frame.centre[0]).toBeCloseTo(0, 9)
+  // Centre of the block (y = 17.5) moved half an extent (30 m) south, towards the throw.
+  expect(frame.centre[1]).toBeCloseTo(-12.5, 9)
+  expect(frame.direction[0]).toBeCloseTo(0, 9)
+  expect(frame.direction[1]).toBeCloseTo(-Math.cos((35 * Math.PI) / 180), 9)
+  expect(frame.direction[2]).toBeCloseTo(Math.sin((35 * Math.PI) / 180), 9)
+  expect(Math.hypot(...frame.direction)).toBeCloseTo(1, 12)
+  // Face looking east: the camera stands east of the block.
+  expect(fitFrame(polygon, 90).direction[0]).toBeGreaterThan(0.8)
 })

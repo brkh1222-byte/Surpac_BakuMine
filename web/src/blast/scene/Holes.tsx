@@ -7,7 +7,7 @@ import { useFrame } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
 import { AdditiveBlending, Color, CylinderGeometry, InstancedMesh, Matrix4, MeshBasicMaterial, MeshStandardMaterial, Quaternion, SphereGeometry, Vector3 } from 'three'
 import { useViewer } from '../../state/store'
-import { firePulse, timingColor } from '../math'
+import { firePulse, labelledHoles, timingColor } from '../math'
 import { useBlast } from '../state'
 import { BLAST_COLORS, hexLinear, linear, type LabelItem, type LayerProps } from './common'
 import { Labels } from './Labels'
@@ -23,6 +23,7 @@ export function Holes({ bundle, origin }: LayerProps) {
   const theme = useViewer((s) => s.theme)
   const exaggerate = useBlast((s) => s.exaggerateHoles)
   const showLabels = useBlast((s) => s.layers.labels)
+  const allLabels = useBlast((s) => s.layers.allLabels)
   const holes = bundle.timeline.holes
   const duration = useMemo(() => Math.max(1, ...holes.map((h) => h.t_fire_ms)), [holes])
 
@@ -103,12 +104,15 @@ export function Holes({ bundle, origin }: LayerProps) {
 
   const labels = useMemo<LabelItem[]>(
     () =>
-      holes.map((h) => ({
-        position: [h.collar[0] - origin[0], h.collar[1] - origin[1], h.collar[2] - origin[2] + 0.4],
-        text: `${Math.round(h.t_fire_ms)}`,
-        className: 'blast-label-delay',
-      })),
-    [holes, origin],
+      labelledHoles(holes, allLabels).map((i) => {
+        const h = holes[i]
+        return {
+          position: [h.collar[0] - origin[0], h.collar[1] - origin[1], h.collar[2] - origin[2] + 0.4],
+          text: `${Math.round(h.t_fire_ms)}`,
+          className: 'blast-label-delay',
+        }
+      }),
+    [holes, origin, allLabels],
   )
 
   return (
@@ -116,7 +120,7 @@ export function Holes({ bundle, origin }: LayerProps) {
       <primitive object={built.stemming} />
       <primitive object={built.charge} />
       <primitive object={built.flash} />
-      {showLabels && <Labels items={labels} />}
+      {showLabels && <Labels items={labels} scaled />}
     </>
   )
 }

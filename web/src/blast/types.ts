@@ -38,6 +38,19 @@ export interface BlastSummary {
   clearance_m: number
   backbreak_m: number
   models: Record<string, ModelInfo>
+  /** Caveats of this run, in plain words. */
+  notes?: string[]
+  // Extras the simulation adds when it knows them.
+  burden_m?: number
+  spacing_m?: number
+  stemming_m?: number
+  subdrill_m?: number
+  rows?: number
+  burden_relief_ms_m?: number
+  throw_com_m?: number
+  throw_max_m?: number
+  muckpile_max_height_m?: number
+  [extra: string]: unknown
 }
 
 export interface TimelineHole {
@@ -224,6 +237,7 @@ export interface DesignMonitor {
   name: string
   xyz: Xyz
   limit_mm_s: number
+  airblast_limit_dbl?: number | null
 }
 
 /** Body of `POST /api/v1/blast/simulate`. null = "let the rules of thumb decide". */

@@ -433,3 +433,84 @@ export function timeToSlider(tMs: number, splitMs: number, endMs: number): numbe
 export function detonationSplit(lastFireMs: number, endMs: number): number {
   return Math.min(endMs, lastFireMs + 60)
 }
+
+// ---- labels, fragments, camera -------------------------------------------------------
+
+/** Above this many holes the delay labels are thinned to one per row. */
+export const LABEL_LIMIT = 40
+
+/**
+ * Which holes get a delay label: all of them for a small pattern (or when asked), else
+ * the first hole of each row (rows fire in sequence, so one label per row tells the order).
+ */
+export function labelledHoles(holes: readonly { row: number }[], all: boolean, limit: number = LABEL_LIMIT): number[] {
+  if (all || holes.length <= limit) return holes.map((_, i) => i)
+  const seen = new Set<number>()
+  const out: number[] = []
+  holes.forEach((h, i) => {
+    if (seen.has(h.row)) return
+    seen.add(h.row)
+    out.push(i)
+  })
+  return out
+}
+
+/**
+ * Size factor of a label seen from `distance` when it is designed for `reference` (the
+ * "fit to blast" distance): larger when close, smaller when far, within 0.6..1.5; 0 (hidden)
+ * beyond 3.5x the reference, where the labels would only be clutter.
+ */
+export function labelScale(distance: number, reference: number): number {
+  if (!(distance > 0) || !(reference > 0)) return 1
+  const k = reference / distance
+  if (k < 1 / 3.5) return 0
+  return k < 0.6 ? 0.6 : k > 1.5 ? 1.5 : k
+}
+
+/** Smallest drawn fragment as a fraction of its distance to the camera (about 3 px). */
+export const FRAGMENT_SCREEN_FLOOR = 0.004
+
+/**
+ * Half-size a fragment is drawn with: its true half-size times the user's exaggeration,
+ * but never smaller on screen than `floor` x distance.
+ */
+export function fragmentDrawSize(sizeM: number, exaggeration: number, distance: number, floor: number = FRAGMENT_SCREEN_FLOOR): number {
+  return Math.max((sizeM / 2) * exaggeration, distance * floor)
+}
+
+export interface FitFrame {
+  /** Plan point to look at, world. */
+  centre: [number, number]
+  /** Radius of the framed sphere, m. */
+  radius: number
+  /** Unit vector from the target to the camera (z up). */
+  direction: [number, number, number]
+}
+
+/**
+ * Camera framing of a blast: the pattern plus the muckpile area in front of it, about
+ * three pattern extents across, seen from in front of the face looking back at it.
+ * `points` are the plan outline (polygon or collars); `faceAzimuth` is the throw direction.
+ */
+export function fitFrame(points: readonly (readonly number[])[], faceAzimuthDeg: number, elevationDeg = 35): FitFrame {
+  const az = (faceAzimuthDeg * Math.PI) / 180
+  const f = [Math.sin(az), Math.cos(az)]
+  const u = [Math.cos(az), -Math.sin(az)]
+  const el = (elevationDeg * Math.PI) / 180
+  const direction: [number, number, number] = [f[0] * Math.cos(el), f[1] * Math.cos(el), Math.sin(el)]
+  if (points.length === 0) return { centre: [0, 0], radius: 50, direction }
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity
+  for (const p of points) {
+    const a = p[0] * u[0] + p[1] * u[1]
+    const b = p[0] * f[0] + p[1] * f[1]
+    if (a < a0) a0 = a
+    if (a > a1) a1 = a
+    if (b < b0) b0 = b
+    if (b > b1) b1 = b
+  }
+  const extent = Math.max(a1 - a0, b1 - b0, 10)
+  // Half an extent towards the throw: the muckpile lies in front of the face.
+  const a = (a0 + a1) / 2
+  const b = (b0 + b1) / 2 + extent / 2
+  return { centre: [a * u[0] + b * f[0], a * u[1] + b * f[1]], radius: 1.5 * extent, direction }
+}

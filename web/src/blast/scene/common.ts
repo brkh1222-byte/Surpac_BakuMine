@@ -45,7 +45,9 @@ export const blastView: {
   fit: (() => void) | null
   /** Container of the projected labels (a div over the canvas). */
   labels: HTMLDivElement | null
-} = { fit: null, labels: null }
+  /** Camera distance of the last "fit to blast": the distance labels are sized for. */
+  fitDistance: number
+} = { fit: null, labels: null, fitDistance: 0 }
 
 export interface LabelItem {
   /** Scene coordinates (world minus origin). */
@@ -61,6 +63,6 @@ export interface LayerProps {
 
 /** Colours inside the canvas that depend on the theme. */
 export const BLAST_COLORS = {
-  dark: { ground: '#5d6660', muck: '#8a7a62', context: '#2b3136', rock: '#6f7a84', stemming: '#9aa4ad', spent: '#3a4047', ring: '#ffb347', clearance: '#ff5d5d', air: '#6fb7ff', ink: '#e8edf2', fragment: '#b9aa90' },
-  light: { ground: '#a9b0a4', muck: '#9c8566', context: '#d9dcd6', rock: '#8d979f', stemming: '#5f6a73', spent: '#b9c0c5', ring: '#c56a00', clearance: '#c62828', air: '#1f6fbf', ink: '#1e2327', fragment: '#7d6c52' },
+  dark: { ground: '#5d6660', muck: '#8a7a62', context: '#2b3136', rock: '#6f7a84', stemming: '#9aa4ad', spent: '#3a4047', ring: '#ffb347', clearance: '#ff5d5d', air: '#6fb7ff', ink: '#e8edf2', fragment: '#a4abb1', flying: '#ff9d3c' },
+  light: { ground: '#a9b0a4', muck: '#9c8566', context: '#d9dcd6', rock: '#8d979f', stemming: '#5f6a73', spent: '#b9c0c5', ring: '#c56a00', clearance: '#c62828', air: '#1f6fbf', ink: '#1e2327', fragment: '#6c747b', flying: '#d9660a' },
 } as const

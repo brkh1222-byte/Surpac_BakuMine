@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { loadResult, simulate } from './api'
+import { apiAbsent, BlastApiError, detailText, loadResult, simulate } from './api'
 import { chargeBins, DEFAULT_DESIGN, DEMO_HOLES_PER_ROW, DEMO_ROWS, demoDelay, makeDemoBundle, maxInstantaneousCharge } from './fixture'
 import { particlePosition, ppvAtRadius, sampleGrid, timelineEnd, validateBundle } from './math'
 import { productFromSearch, searchForProduct } from './product'
@@ -135,9 +135,17 @@ test('API client: a served bundle is used; 404, network failure and a bad bundle
   expect((await simulate(DEFAULT_DESIGN, undefined, down)).source).toBe('demo')
 
   const bad = (async () => new Response(JSON.stringify({ format: 'bakumine-blast-result', version: 1 }), { status: 200 })) as typeof fetch
-  const rejected = await simulate(DEFAULT_DESIGN, undefined, bad)
+  const rejected = await loadResult(DEFAULT_DESIGN, undefined, bad)
   expect(rejected.source).toBe('demo')
   expect(rejected.reason).toMatch(/not a valid bundle/)
+  await expect(simulate(DEFAULT_DESIGN, undefined, bad)).rejects.toThrow(/not a valid bundle/)
+
+  // A design the API refuses is an error with the API's words, not a reason to show the demo.
+  const refused = (async () => new Response(JSON.stringify({ detail: 'the polygon is outside the topography' }), { status: 400 })) as typeof fetch
+  await expect(simulate(DEFAULT_DESIGN, undefined, refused)).rejects.toThrow('400: the polygon is outside the topography')
+  expect(detailText([{ loc: ['body', 'bench_height'], msg: 'Input should be greater than 0' }])).toBe('bench_height: Input should be greater than 0')
+  expect(apiAbsent(new BlastApiError('x', 404))).toBe(true)
+  expect(apiAbsent(new BlastApiError('x', 400))).toBe(false)
 
   let sent: unknown = null
   const echo = (async (_url: RequestInfo | URL, init?: RequestInit) => {
