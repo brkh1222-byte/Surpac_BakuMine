@@ -432,4 +432,4 @@ def test_cli_raster_options_need_a_raster(tmp_path, capsys):
     _database(tmp_path / "db", collar, None)
     code = main(["surface", "from-points", "--database", str(tmp_path / "db"),
                  "--drop-within", "10", "--out", str(tmp_path / "t.obj")])  # fmt: skip
-    assert code != 0 and "--drop-within need --raster" in capsys.readouterr().err
+    assert code != 0 and "--drop-within need --raster or --fetch" in capsys.readouterr().err

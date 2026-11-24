@@ -145,6 +145,8 @@ Heights of a global DEM are above a geoid model (EGM2008 for Copernicus); a nati
 
 A precise survey of the deposit area and a DEM around it are joined by triangulating them together: the survey points, strings and collars are kept as they are, the DEM grid nodes are shifted by the median of `survey z - DEM z` (the survey is the height reference) and every node closer than a distance `d` in plan to a survey point or breakline segment is left out (default `d` = the grid spacing), so no coarse DEM node sits next to a precise point and makes a spike. Where the two disagree by more than the DEM error after the shift (a pit or dump made after the DEM images), the survey wins within `d` of its data; the surface between the last survey point and the first kept node is the straight triangle between them.
 
+Copernicus GLO-30 is published as 1° x 1° Cloud Optimised GeoTIFF tiles named after their south-west corner (`Copernicus_DSM_COG_10_N50_00_E015_00_DEM`) in a public bucket; there is no tile over open sea. The tiles for a model come from the longitude / latitude box of its plan rectangle, with the edges sampled, because a straight UTM edge is curved in longitude / latitude (a line of constant northing reaches its highest latitude on the central meridian).
+
 ### 5.3 Solids
 A solid is a closed triangulated mesh. Classic Surpac workflow: triangulate between the closed strings on successive sections ("between segments"), then cap the two ends. The between-section step is a ring-stitching problem: walk both polygons and at each step add the triangle with the shorter diagonal. Bifurcations (one polygon on a section becoming two on the next) are handled by splitting the parent ring.
 

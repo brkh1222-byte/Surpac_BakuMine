@@ -163,6 +163,7 @@ def configure_from_points(parser: argparse.ArgumentParser) -> None:
     dem.add_argument("--drop-within", type=float, metavar="M",
                      help="leave out raster nodes this close to a source (default: the grid "
                           "spacing; 0 keeps them all)")  # fmt: skip
+    _fetch_options(dem)
     parser.add_argument("--duplicates", default="mean",
                         choices=("mean", "first", "last", "min", "max", "error"),
                         help="points with equal XY and different Z (default: mean)")  # fmt: skip
@@ -221,9 +222,9 @@ def run_from_points(args: argparse.Namespace) -> int:
             raise CommandError("--extend-z expects 'nearest' or a number") from None
     padding = args.extend_padding or None
     dem_info = None
-    if args.raster:
+    if args.raster or args.fetch:
         if z != "nearest" or args.extend_step:
-            raise CommandError("--extend-z and --extend-step do not apply with --raster")
+            raise CommandError("--extend-z and --extend-step do not apply with a raster")
         dem_info = _dem_around(args, clouds, breaklines, rectangle, padding)
         clouds.append(dem_info.pop("points"))
         rectangle = padding = None
@@ -236,11 +237,12 @@ def run_from_points(args: argparse.Namespace) -> int:
                 ("--raster-spacing", args.raster_spacing),
                 ("--raster-z-shift", args.raster_z_shift),
                 ("--drop-within", args.drop_within),
+                ("--dem-cache", args.dem_cache),
             )
             if value is not None
         ]
         if given:
-            raise CommandError(f"{', '.join(given)} need --raster")
+            raise CommandError(f"{', '.join(given)} need --raster or --fetch")
     result = sp.surface_from_points(
         clouds,
         breaklines,
@@ -301,7 +303,8 @@ def _dem_around(
     if not (area[2] > area[0] and area[3] > area[1]):
         raise CommandError("the area of the raster is empty: give --extend-padding or a rectangle")
     db = _database(args.database[0]) if args.database else None
-    rasters, crs = _load_rasters(args.raster, args.raster_crs, args.crs, db)
+    files = [*args.raster, *_fetched(args, area, db)]
+    rasters, crs = _load_rasters(files, args.raster_crs, args.crs, db)
     z, origin, spacing, grid = _raster_grid(rasters, crs, area, args.raster_spacing)
     rule: float | str = args.raster_z_shift or "median"
     if rule not in ("median", "none"):
@@ -450,12 +453,65 @@ def _raster_grid(rasters: list[Any], crs: str | None, rectangle: list[float], sp
     return z, origin, spacing, grid
 
 
+_MAX_TILES = 16
+
+
+def _fetch_options(group: Any) -> None:
+    group.add_argument(
+        "--fetch",
+        choices=("copernicus30",),
+        help="download the Copernicus GLO-30 tiles (30 m, 2011-2015) that cover the area. Off "
+        "unless given: the tile names, so the location of the area to the nearest degree, are "
+        "sent to the public AWS bucket copernicus-dem-30m",
+    )
+    group.add_argument(
+        "--dem-cache",
+        metavar="DIR",
+        help="folder of downloaded tiles, reused on the next run (default ~/.cache/bakumine/dem)",
+    )
+
+
+def _fetched(args: argparse.Namespace, area: list[float], db: Any) -> list[str]:
+    """Paths of the tiles of ``--fetch`` over ``area`` (none without the option)."""
+    if not getattr(args, "fetch", None):
+        if getattr(args, "dem_cache", None):
+            raise CommandError("--dem-cache needs --fetch")
+        return []
+    from bakumine.core.geometry import dem_fetch as df
+    from bakumine.core.geometry import raster_dem as rd
+
+    crs = args.crs or (db.metadata.crs if db is not None else None)
+    if not crs:
+        raise CommandError("--fetch needs the model CRS: give --crs, e.g. EPSG:32633")
+    try:
+        names = df.copernicus_tiles(*df.lonlat_box(area, rd._crs_text(crs)))
+    except ValueError as exc:
+        raise CommandError(str(exc)) from None
+    if len(names) > _MAX_TILES:
+        raise CommandError(
+            f"the area needs {len(names)} tiles (more than {_MAX_TILES}): check --crs and the area"
+        )
+    print(
+        f"fetch copernicus30: {len(names)} tile(s) {', '.join(names)}; tile names go to "
+        f"{df.COPERNICUS30_URL}"
+    )
+    got = df.fetch_tiles(names, args.dem_cache, progress=lambda line: print(f"  {line}"))
+    if got["cached"]:
+        print(f"  {len(got['cached'])} tile(s) already in the cache")
+    if got["missing"]:
+        print(f"  not in the bucket (sea or no data): {', '.join(got['missing'])}")
+    if not got["files"]:
+        raise CommandError("no Copernicus tile covers the area")
+    return [str(p) for p in got["files"]]
+
+
 def configure_from_raster(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "files",
-        nargs="+",
+        nargs="*",
         metavar="FILE",
-        help="GeoTIFF (.tif) or ESRI ASCII grid (.asc); several = adjacent tiles",
+        help="GeoTIFF (.tif) or ESRI ASCII grid (.asc); several = adjacent tiles. "
+        "None with --fetch",
     )
     parser.add_argument(
         "--raster-crs",
@@ -495,6 +551,7 @@ def configure_from_raster(parser: argparse.ArgumentParser) -> None:
         "--database, else none)",
     )
     _collar_check_options(tie)
+    _fetch_options(parser.add_argument_group("download"))
     _add_outputs(parser, "DTM")
     parser.set_defaults(func=_guarded(run_from_raster))
 
@@ -505,8 +562,9 @@ def run_from_raster(args: argparse.Namespace) -> int:
     from bakumine.core.geometry.dtm import DTM, dtm_from_grid
 
     _need_output(args)
+    if not args.files and not args.fetch:
+        raise CommandError("give raster files, or --fetch copernicus30")
     db = _database(args.database) if args.database else None
-    rasters, crs = _load_rasters(args.files, args.raster_crs, args.crs, db)
 
     if args.rectangle and args.model:
         raise CommandError("give --rectangle or --model, not both")
@@ -528,6 +586,8 @@ def run_from_raster(args: argparse.Namespace) -> int:
         raise CommandError("--padding must be >= 0")
     rectangle = [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
 
+    files = [*args.files, *_fetched(args, rectangle, db)]
+    rasters, crs = _load_rasters(files, args.raster_crs, args.crs, db)
     z, origin, spacing, grid = _raster_grid(rasters, crs, rectangle, args.spacing)
 
     shift_rule = args.z_shift or ("median" if db is not None else "none")
