@@ -7,6 +7,7 @@ from bakumine import __version__
 from bakumine.api.guard import RequestGuard
 from bakumine.api.ops_classify import router as classify_router
 from bakumine.api.ops_intercepts import router as intercepts_router
+from bakumine.api.routes_blast import router as blast_router
 from bakumine.api.routes_digitise import router as digitise_router
 from bakumine.api.routes_geometry import router as geometry_router
 from bakumine.api.routes_ops import router as ops_router
@@ -26,6 +27,7 @@ app.include_router(geometry_router)
 app.include_router(ops_router)
 app.include_router(intercepts_router)
 app.include_router(classify_router)
+app.include_router(blast_router)
 
 
 @app.get("/api/health")

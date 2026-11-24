@@ -91,8 +91,15 @@ JSON written by `simulate`, read by the viewer. Arrays are plain lists; coordina
   "flyrock": { face_burst_m, cratering_m, stemming_ejection_m, max_range_m, clearance_m, safety_factor },
   "airblast": { k, a, rings: [ { radius_m, pa, dbl } ] },
   "monitors": [ { name, xyz, distance_m, charge_kg, scaled_distance, ppv_mm_s, limit_mm_s, ok,
-                  airblast_dbl, airblast_limit_dbl, airblast_ok } ] }
+                  airblast_dbl, airblast_limit_dbl, airblast_ok } ],
+  "envelope": { "window_ms": 8, "mic_kg", "bins": [ { t_ms, kg, holes:[ids] } ] } }
+               # charge fired per 8 ms window (vibration.charge_per_delay): t_ms = start of the window,
+               # kg = explosive in it, holes = their ids; the tallest bin is the MIC (mic_kg)
 ```
+
+Added by B5: `envelope` (above); `summary.notes` (plain-language caveats) and further report totals in
+`summary` (rows, burden_m, spacing_m, stemming_m, subdrill_m, throw_com_m, muckpile_volume_m3, ...). Values
+that are not finite are written as `null`.
 
 ## 4. Tasks
 

@@ -90,6 +90,11 @@ def _register_builtin() -> None:
     for name, (help_text, configure) in extract.COMMANDS.items():
         register(name, help_text, configure)
 
+    from bakumine.commands import blast
+
+    for name, (help_text, configure) in blast.COMMANDS.items():
+        register(name, help_text, configure)
+
 
 _register_builtin()
 
