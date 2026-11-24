@@ -134,6 +134,15 @@ Surpac's primitive is the **string**: an ordered list of 3D points with a string
 ### 5.2 Surfaces (DTM)
 A DTM is a triangulated surface that has one Z for each XY: topography, a weathering boundary, a fault. It is built by **2D Delaunay triangulation** of the points in plan view, with strings honoured as **breaklines** (constrained Delaunay), so ridges and crests are not cut across.
 
+#### 5.2.1 Topography from an elevation raster
+Sources, most precise first: a ground survey (RTK GNSS / total station, centimetres), drone photogrammetry or LiDAR (centimetres to decimetres, exported as points or a grid), the contour drawings of a topographic map (half the contour interval), commercial stereo-satellite surfaces (1-3 m), free global DEMs (Copernicus GLO-30, ALOS AW3D30, SRTM/NASADEM: 1 arc second, about 30 m; Copernicus states an absolute vertical error below 4 m at 90 % confidence), and the collar elevations alone (exact at the holes only). A global DEM is a surface model (it includes dumps and buildings) of the date of its images (Copernicus: 2011-2015), so later pits and dumps are missing.
+
+A raster is a grid of heights `z[row, col]` at cell centres. GeoTIFF georeferencing (OGC GeoTIFF 1.1): `ModelPixelScale (sx, sy)` and a tie point `(i, j) -> (X, Y)` give `X = X_tie + (col - i) * sx`, `Y = Y_tie - (row - j) * sy`; with `RasterPixelIsArea` the tie point is the corner of the cell, so its centre is half a cell further, with `RasterPixelIsPoint` it is the centre. ESRI ASCII grids give the lower-left corner (`xllcorner`) or centre (`xllcenter`) and list the rows from north to south.
+
+The model works in a projected CRS (UTM); a geographic DEM (longitude, latitude) is resampled onto a regular grid in that CRS: every node is transformed to longitude / latitude and the height is interpolated **bilinearly** between the four surrounding cell centres, which reproduces a plane exactly and keeps the surface continuous. The grid is then triangulated cell by cell.
+
+Heights of a global DEM are above a geoid model (EGM2008 for Copernicus); a national survey uses its own height system, and the two can differ by metres. The surveyed collars tie them: `dz = collar z - DEM z` per collar; the **median** of `dz` is the vertical shift (robust to a few wrong collars), and collars far from it after the shift point to a wrong collar elevation, a dump or pit made after the DEM, or a DEM error.
+
 ### 5.3 Solids
 A solid is a closed triangulated mesh. Classic Surpac workflow: triangulate between the closed strings on successive sections ("between segments"), then cap the two ends. The between-section step is a ring-stitching problem: walk both polygons and at each step add the triangle with the shorter diagonal. Bifurcations (one polygon on a section becoming two on the next) are handled by splitting the parent ring.
 

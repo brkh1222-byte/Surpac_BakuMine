@@ -1,6 +1,8 @@
-"""Surface subcommands: ``bakumine surface from-points | import``.
+"""Surface subcommands: ``bakumine surface from-points | from-raster | check | import``.
 
     bakumine surface from-points --database DB --extend-padding 200 --project P --name Topo
+    bakumine surface from-raster dem.tif --database DB --model M --padding 100 --out topo.obj
+    bakumine surface check topo.obj --database DB
     bakumine surface import pit.dxf --kind dtm --project P
 
 Every command can write its mesh three ways, in any combination: ``--out FILE`` (``.obj``,
@@ -230,6 +232,281 @@ def run_from_points(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ surface from-raster
+
+
+def _collar_check_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--collar-tolerance",
+        type=float,
+        default=5.0,
+        metavar="M",
+        help="list collars whose height differs from the (shifted) surface by "
+        "more than M metres after the median shift (default 5)",
+    )
+    parser.add_argument(
+        "--residuals",
+        metavar="CSV",
+        help="write the per-collar comparison (hole_id, x, y, z, surface_z, dz)",
+    )
+
+
+def _report_collars(table: Any, summary: dict[str, Any], args: argparse.Namespace) -> None:
+    n, on = summary["collars"], summary["on_surface"]
+    if summary["median"] is None:
+        print(f"collars: none of {n} lies on the surface")
+    else:
+        s = summary["spread"]
+        print(
+            f"collars: {on} of {n} on the surface; collar z - surface z: median "
+            f"{summary['median']:+.2f} m, mean {summary['mean']:+.2f} m; after the median: "
+            f"std {s['std']:.2f} m, 90 % within {s['p90_abs']:.2f} m, worst {s['max_abs']:.2f} m"
+        )
+    if summary["off_surface"]:
+        names = ", ".join(summary["off_surface"][:10])
+        more = " ..." if len(summary["off_surface"]) > 10 else ""
+        print(f"  {len(summary['off_surface'])} collars outside the surface: {names}{more}")
+    suspect = summary["suspect"]
+    if suspect:
+        print(
+            f"  {len(suspect)} collars differ by more than {summary['tolerance']:g} m from the "
+            "median (wrong collar height, a dump or pit made after the surface, or a surface "
+            "error):"
+        )
+        for row in suspect[:15]:
+            dz, off = row["dz"], row["off_median"]
+            print(f"    {row['hole_id']}: dz {dz:+.2f} m ({off:+.2f} from the median)")
+        if len(suspect) > 15:
+            print(f"    ... {len(suspect) - 15} more (see --residuals)")
+    if args.residuals:
+        path = Path(args.residuals)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(path, index=False)
+        _wrote(path, f"{len(table)} collars")
+
+
+def configure_from_raster(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "files",
+        nargs="+",
+        metavar="FILE",
+        help="GeoTIFF (.tif) or ESRI ASCII grid (.asc); several = adjacent tiles",
+    )
+    parser.add_argument(
+        "--raster-crs",
+        metavar="CRS",
+        help="CRS of the raster files when they do not say it (EPSG:4326 ...)",
+    )
+    parser.add_argument(
+        "--crs",
+        metavar="CRS",
+        help="projected CRS of the model, e.g. EPSG:32648 (WGS 84 / UTM 48N). "
+        "Default: the CRS of --database, else that of a projected raster",
+    )
+    area = parser.add_argument_group(
+        "area (default: the collars of --database)",
+        "The surface covers this plan rectangle, grown by --padding.",
+    )
+    area.add_argument("--rectangle", metavar="XMIN,YMIN,XMAX,YMAX")
+    area.add_argument("--model", metavar="DIR", help="block model folder: its plan box")
+    area.add_argument("--padding", type=float, default=0.0, metavar="M")
+    parser.add_argument(
+        "--spacing",
+        type=float,
+        metavar="M",
+        help="grid spacing of the surface (default: the raster cell size)",
+    )
+    tie = parser.add_argument_group(
+        "collars",
+        "With --database the surface is compared with the collars. A satellite DEM measures "
+        "heights from another zero (a geoid) than a local survey: --z-shift median (default "
+        "with --database) moves the surface by the median of collar z - surface z.",
+    )
+    tie.add_argument("--database", metavar="DIR", help="drillhole database folder")
+    tie.add_argument(
+        "--z-shift",
+        metavar="median|none|M",
+        help="vertical shift added to the raster heights (default: median with "
+        "--database, else none)",
+    )
+    _collar_check_options(tie)
+    _add_outputs(parser, "DTM")
+    parser.set_defaults(func=_guarded(run_from_raster))
+
+
+def run_from_raster(args: argparse.Namespace) -> int:
+    import numpy as np
+
+    from bakumine.core.geometry import raster_dem as rd
+    from bakumine.core.geometry import surface_points as sp
+    from bakumine.core.geometry.dtm import DTM, dtm_from_grid
+
+    _need_output(args)
+    rasters = []
+    for file in args.files:
+        if not Path(file).is_file():
+            raise CommandError(f"no file {file}")
+        r = rd.read_raster(file, args.raster_crs)
+        rasters.append(r)
+        nrow, ncol = r.shape
+        print(
+            f"{r.source}: {r.info['format']}, {ncol} x {nrow} cells of {abs(r.dx):g} x "
+            f"{abs(r.dy):g}, CRS {r.crs or 'not given'}, heights {np.nanmin(r.z):.1f} to "
+            f"{np.nanmax(r.z):.1f}"
+        )
+    db = _database(args.database) if args.database else None
+
+    crs = args.crs
+    if crs is None and db is not None and db.metadata.crs:
+        crs = db.metadata.crs
+    if crs is None:
+        projected = [r.crs for r in rasters if r.crs and not r.geographic]
+        if projected and not any(r.geographic for r in rasters):
+            crs = projected[0]
+    if crs is None and any(r.crs for r in rasters):
+        raise CommandError(
+            "give --crs, the projected CRS of the model (e.g. EPSG:32648 for WGS 84 / UTM 48N)"
+        )
+    if crs is not None:
+        crs = rd._crs_text(crs)
+        for r in rasters:
+            if r.crs is None:
+                r.crs = crs
+                print(f"{r.source}: no CRS in the file, taken to be the model CRS {crs}")
+
+    if args.rectangle and args.model:
+        raise CommandError("give --rectangle or --model, not both")
+    if args.rectangle:
+        rectangle = _floats(args.rectangle, 4, "--rectangle")
+    elif args.model:
+        from bakumine.core.blockmodel.storage import load_model
+
+        rectangle = sp.model_rectangle(load_model(args.model).definition)
+    elif db is not None:
+        xy = sp.collar_points(db)[:, :2]
+        if len(xy) == 0:
+            raise CommandError("the database has no collar with coordinates")
+        rectangle = [*xy.min(axis=0), *xy.max(axis=0)]
+    else:
+        raise CommandError("give the area: --rectangle, --model or --database")
+    pad = float(args.padding or 0.0)
+    if pad < 0:
+        raise CommandError("--padding must be >= 0")
+    rectangle = [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
+
+    spacing = args.spacing
+    if spacing is None:
+        latitude = None
+        if rasters[0].geographic and crs is not None:
+            from pyproj import Transformer
+
+            t = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+            latitude = t.transform(
+                0.5 * (rectangle[0] + rectangle[2]), 0.5 * (rectangle[1] + rectangle[3])
+            )[1]
+        spacing = round(rd.native_spacing(rasters[0], latitude), 1) or rd.native_spacing(rasters[0])
+    z, origin, grid = rd.grid_from_rasters(rasters, rectangle, spacing, crs)
+    if grid["nodes_with_height"] == 0:
+        raise CommandError(
+            "no node of the area lies on the raster: check --crs / --raster-crs and the area"
+        )
+    print(
+        f"grid: {grid['nodes'][0]} x {grid['nodes'][1]} nodes at {spacing:g} m over "
+        f"{', '.join(f'{v:.1f}' for v in grid['rectangle'])}" + (f" in {crs}" if crs else "")
+    )
+    if grid["nodes_without_height"]:
+        print(f"  {grid['nodes_without_height']} nodes without height (off the raster or no data)")
+
+    shift_rule = args.z_shift or ("median" if db is not None else "none")
+    shift = 0.0
+    summary: dict[str, Any] = {"grid": grid, "crs": crs, "rasters": [r.source for r in rasters]}
+    if shift_rule not in ("median", "none"):
+        try:
+            shift = float(shift_rule)
+        except ValueError:
+            raise CommandError("--z-shift expects median, none or a number of metres") from None
+    if shift_rule == "median" and db is None:
+        raise CommandError("--z-shift median needs --database (the collars to tie to)")
+    raw = dtm_from_grid(z, origin, (spacing, spacing))
+    if db is not None:
+        if shift_rule == "median":
+            first = rd.residual_summary(rd.collar_residuals(raw, db.collar), args.collar_tolerance)
+            if first["median"] is not None:
+                shift = first["median"]
+                print(f"vertical shift: {shift:+.2f} m (median of collar z - raster z)")
+        table = rd.collar_residuals(raw, db.collar, shift)
+        check = rd.residual_summary(table, args.collar_tolerance)
+        _report_collars(table, check, args)
+        summary["collars"] = check
+    summary["z_shift"] = shift
+    mesh = (
+        raw.mesh
+        if not shift
+        else DTM(dtm_from_grid(z + shift, origin, (spacing, spacing)).mesh).mesh
+    )
+    lo, hi = mesh.vertices.min(axis=0), mesh.vertices.max(axis=0)
+    print(
+        f"surface: {mesh.n_vertices} vertices, {mesh.n_faces} triangles, "
+        f"Z {lo[2]:.2f} to {hi[2]:.2f}"
+    )
+    _emit(mesh, "dtm", args.name or "topography", args, summary)
+    return 0
+
+
+# ------------------------------------------------------------------ surface check
+
+
+def configure_check(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "file",
+        nargs="?",
+        help="surface file (.obj, .dxf, .ply, .stl, .dtm); or --geometry-dir + --name",
+    )
+    parser.add_argument("--geometry-dir", metavar="DIR")
+    parser.add_argument("--name", help="surface name in --geometry-dir")
+    parser.add_argument(
+        "--database", required=True, metavar="DIR", help="drillhole database folder"
+    )
+    _collar_check_options(parser)
+    parser.add_argument("--summary", metavar="JSON", help="also write the summary as JSON")
+    parser.set_defaults(func=_guarded(run_check))
+
+
+def run_check(args: argparse.Namespace) -> int:
+    import numpy as np
+
+    from bakumine.core.geometry import raster_dem as rd
+    from bakumine.core.geometry.dtm import DTM
+    from bakumine.core.geometry.mesh import Mesh
+
+    if args.file and args.geometry_dir:
+        raise CommandError("give a surface file or --geometry-dir, not both")
+    if args.file:
+        from bakumine.core.geometry.mesh_import import import_mesh
+
+        mesh, _ = import_mesh(args.file, "dtm", 1.0)
+        what = args.file
+    elif args.geometry_dir and args.name:
+        folder = Path(args.geometry_dir)
+        mesh = Mesh(
+            np.load(folder / f"{args.name}_vertices.npy"),
+            np.load(folder / f"{args.name}_faces.npy"),
+        )
+        what = f"{args.name} in {folder}"
+    else:
+        raise CommandError("give a surface file, or --geometry-dir and --name")
+    table = rd.collar_residuals(DTM(mesh), _database(args.database).collar)
+    summary = rd.residual_summary(table, args.collar_tolerance)
+    print(f"surface {what}: {mesh.n_vertices} vertices, {mesh.n_faces} triangles")
+    _report_collars(table, summary, args)
+    if args.summary:
+        path = Path(args.summary)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        _wrote(path, "summary")
+    return 0
+
+
 # ------------------------------------------------------------------ surface import
 
 
@@ -275,6 +552,22 @@ def configure_surface(parser: argparse.ArgumentParser) -> None:
             help="DTM from collars, point tables and strings",
             description="Triangulate points into a DTM (topography), optionally with "
             "breaklines and extended to a rectangle.",
+        )
+    )
+    configure_from_raster(
+        sub.add_parser(
+            "from-raster",
+            help="DTM from an elevation grid (GeoTIFF / ASCII grid: satellite DEM, drone, LiDAR)",
+            description="Resample elevation rasters onto a regular grid in the model CRS over "
+            "the model area, tie the heights to the collars and triangulate.",
+        )
+    )
+    configure_check(
+        sub.add_parser(
+            "check",
+            help="compare a surface with the collar heights of a database",
+            description="Collar z - surface z for every collar: median (the vertical shift "
+            "between them), spread and the collars that disagree.",
         )
     )
     configure_import(

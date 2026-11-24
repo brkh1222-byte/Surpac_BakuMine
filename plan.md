@@ -205,6 +205,8 @@ From a web review of public Surpac material (course catalogues, tutorials, the 1
 - [ ] **P8.T10 Solids from sections:** ring holes, one-to-many splits, grade of a digitised segment.
 - [ ] **P8.T11 Trend surface to dynamic-anisotropy attributes** (trend DTM -> dip / dip direction per block).
 - [ ] *(Babbitt part done 2026-11-21; other datasets not reachable)* **P8.T12 Retest on public data with a wireframe and a published result:** the Babbitt domain wireframe (`Mpz.stl`, pygslib repo, MIT) and the tutorial's published means; candidates not yet reachable: Northern Quarries iron (Tasmania MRT), Wolfram Camp (Queensland open data).
+- [x] **P8.T14 Topography from elevation rasters.** `bakumine surface from-raster` (GeoTIFF incl. Copernicus / ALOS / SRTM tiles, ESRI ASCII grid; resampled bilinearly onto a grid in the model CRS; adjacent tiles joined), vertical tie to the collars by the median offset, and `bakumine surface check` (collar z - surface z, suspect collars) for any surface. *Accept:* a plane is reproduced exactly; a lon/lat raster matches scipy's interpolator after projection; a planted datum shift and bad collar are found.
+- [ ] **P8.T15 Merge a precise survey with a DEM** (`surface from-points --raster`, DEM points dropped near survey data), fetch of Copernicus tiles (off by default), elevation-file upload in the viewer.
 - [ ] **P8.T13 Mineralised shell at a geological boundary.** On the real gold project the report grade is reproduced by a shell boundary below the reporting cut-off, not by the reporting cut-off applied per hole: let the shell cut-off differ from the reporting cut-off in the workflow panels, and add class rules by drill spacing as national reports state them.
 
 ## 5. Dependency map
