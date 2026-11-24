@@ -1,6 +1,6 @@
 /**
  * Client of the geometry operation endpoints (bakumine/api/routes_geometry.py): surfaces
- * from points and import of a surface / solid file.
+ * from points or from elevation files, and import of a surface / solid file.
  */
 
 const OPS = '/api/v1/ops'
@@ -8,7 +8,7 @@ const OPS = '/api/v1/ops'
 /** What an uploaded file holds; `roles` says what it can be used for. */
 export interface GeometryFile {
   file: string
-  roles: ('points' | 'strings' | 'mesh')[]
+  roles: ('points' | 'strings' | 'mesh' | 'raster')[]
   /** points table */
   columns?: string[]
   rows?: number
@@ -21,6 +21,47 @@ export interface GeometryFile {
   n_faces?: number
   /** a companion file that must be uploaded with it (the .str of a .dtm) */
   needs?: string
+  /** elevation grid: columns x rows, cell size, CRS (null = not in the file), height range */
+  cells?: number[]
+  cell?: number[]
+  crs?: string | null
+  geographic?: boolean
+  heights?: number[] | null
+}
+
+/** Grid laid over the area (the summary of `grid_from_rasters`). */
+export interface RasterGrid {
+  nodes: number[]
+  spacing: number
+  rectangle: number[]
+  nodes_with_height: number
+  nodes_without_height: number
+}
+
+/** Collar z - surface z after the shift. */
+export interface CollarCheck {
+  collars: number
+  on_surface: number
+  off_surface: string[]
+  tolerance: number
+  median: number | null
+  mean: number | null
+  spread: { std: number; p90_abs: number; max_abs: number } | null
+  suspect: { hole_id: string; dz: number; off_median: number }[]
+}
+
+export interface RasterSurfaceResult {
+  id: string
+  name: string
+  kind: 'dtm'
+  crs: string | null
+  grid: RasterGrid
+  notes: string[]
+  z_shift: number
+  collars: CollarCheck | null
+  n_vertices: number
+  n_faces: number
+  bounds: number[][]
 }
 
 export interface GeometryUpload {
@@ -45,6 +86,17 @@ export interface SurfaceResult {
   n_faces: number
   plan_area: number
   bounds: number[][]
+  /** with an elevation file: the DEM nodes around the data */
+  dem?: {
+    nodes: number
+    kept: number
+    dropped: number
+    drop_within: number
+    z_shift: number
+    tie: { points: number; median: number; p90_abs: number; max_abs: number } | null
+    crs: string | null
+    notes: string[]
+  }
 }
 
 export interface MeshImportResult {
@@ -85,5 +137,6 @@ export const geometryApi = {
   upload: (file: File, token?: string) =>
     send<GeometryUpload>('PUT', `/geometry/uploads?filename=${encodeURIComponent(file.name)}${token ? `&token=${token}` : ''}`, file, false),
   surface: (body: unknown) => postJson<SurfaceResult>('/surfaces/from-points', body),
+  surfaceFromRaster: (body: unknown) => postJson<RasterSurfaceResult>('/surfaces/from-raster', body),
   importMesh: (body: unknown) => postJson<MeshImportResult>('/meshes/import', body),
 }

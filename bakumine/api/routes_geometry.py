@@ -3,6 +3,7 @@
     PUT    /ops/geometry/uploads?filename=&token=   raw file body; what the file holds
     DELETE /ops/geometry/uploads/{token}
     POST   /ops/surfaces/from-points                collars / point tables / strings -> DTM
+    POST   /ops/surfaces/from-raster                uploaded GeoTIFF / ASCII grid -> DTM
     POST   /ops/meshes/import                       uploaded DXF / OBJ / PLY / .dtm -> DTM or solid
     POST   /ops/solids/implicit                     logged codes of a database -> solid
     POST   /ops/orientation                         dip / dip azimuth / pitch <-> angles, axes
@@ -51,6 +52,12 @@ def delete_geometry_upload(token: str, source: Source) -> dict[str, str]:
 def post_surface(body: Json, source: Source) -> dict[str, Any]:
     folder = _project(source).folder
     return _guard(lambda: geo.surface_from_points(folder, body))
+
+
+@router.post("/surfaces/from-raster")
+def post_surface_from_raster(body: Json, source: Source) -> dict[str, Any]:
+    folder = _project(source).folder
+    return _guard(lambda: geo.surface_from_raster(folder, body))
 
 
 @router.post("/meshes/import")

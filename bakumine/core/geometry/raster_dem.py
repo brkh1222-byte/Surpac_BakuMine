@@ -68,7 +68,10 @@ import numpy as np
 __all__ = [
     "Raster",
     "collar_residuals",
+    "default_spacing",
     "dem_fill",
+    "raster_surface",
+    "settle_crs",
     "grid_from_rasters",
     "native_spacing",
     "read_raster",
@@ -420,6 +423,90 @@ def grid_from_rasters(
         "rasters": [{"source": s, "nodes": n} for s, n in used.items()],
     }
     return z, (xmin, ymin), info
+
+
+def settle_crs(
+    rasters: Sequence[Raster], crs: str | None = None, database_crs: str | None = None
+) -> tuple[str | None, list[str]]:
+    """The projected CRS the grid is laid in, and notes on what was assumed.
+
+    ``crs`` if given, else ``database_crs``, else the CRS of the rasters when they are all
+    projected (and agree). A raster without CRS is taken to be in that CRS. ``None`` when
+    neither the rasters nor the caller name one (the rasters are then used as they are).
+    Raises ``ValueError`` when the rasters have a CRS but no projected CRS is known.
+    """
+    if crs is None and database_crs:
+        crs = database_crs
+    if crs is None:
+        projected = {r.crs for r in rasters if r.crs and not r.geographic}
+        if len(projected) == 1 and not any(r.geographic for r in rasters):
+            crs = projected.pop()
+    if crs is None and any(r.crs for r in rasters):
+        raise ValueError(
+            "give the projected CRS of the model (e.g. EPSG:32633 for WGS 84 / UTM 33N)"
+        )
+    notes = []
+    if crs is not None:
+        crs = _crs_text(crs)
+        for r in rasters:
+            if r.crs is None:
+                r.crs = crs
+                notes.append(f"{r.source}: no CRS in the file, taken to be the model CRS {crs}")
+    return crs, notes
+
+
+def default_spacing(
+    rasters: Sequence[Raster], crs: str | None, rectangle: Sequence[float]
+) -> float:
+    """The cell size of the first raster in metres, rounded to 0.1 m (at the area's latitude)."""
+    latitude = None
+    if rasters[0].geographic and crs is not None:
+        from pyproj import Transformer
+
+        t = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        latitude = t.transform(
+            0.5 * (rectangle[0] + rectangle[2]), 0.5 * (rectangle[1] + rectangle[3])
+        )[1]
+    return round(native_spacing(rasters[0], latitude), 1) or native_spacing(rasters[0])
+
+
+def raster_surface(
+    z: np.ndarray,
+    origin: Sequence[float],
+    spacing: float,
+    collar: Any = None,
+    *,
+    z_shift: float | str | None = None,
+    tolerance: float = 5.0,
+) -> tuple[Any, dict[str, Any], Any]:
+    """The DTM of a grid, tied to the collars; returns ``(dtm, info, residuals)``.
+
+    ``z_shift``: ``"median"`` (default with ``collar``: the median of collar z - grid z),
+    ``"none"`` (default without) or metres. ``info`` has ``z_shift`` and ``collars`` (the
+    :func:`residual_summary` after the shift, ``None`` without collars); ``residuals`` is
+    the :func:`collar_residuals` table or ``None``.
+    """
+    from bakumine.core.geometry.dtm import dtm_from_grid
+
+    rule = z_shift if z_shift is not None else ("median" if collar is not None else "none")
+    if isinstance(rule, str) and rule not in ("median", "none"):
+        raise ValueError("the vertical shift must be median, none or a number of metres")
+    if rule == "median" and collar is None:
+        raise ValueError("a median vertical shift needs the collars to tie to")
+    raw = dtm_from_grid(z, origin, (spacing, spacing))
+    shift = 0.0 if isinstance(rule, str) else float(rule)
+    if not np.isfinite(shift):
+        raise ValueError("the vertical shift must be finite")
+    summary = table = None
+    if collar is not None:
+        if rule == "median":
+            first = residual_summary(collar_residuals(raw, collar), tolerance)
+            if first["median"] is not None:
+                shift = first["median"]
+        table = collar_residuals(raw, collar, shift)
+        summary = residual_summary(table, tolerance)
+    dtm = raw if not shift else dtm_from_grid(np.asarray(z) + shift, origin, (spacing, spacing))
+    return dtm, {"z_shift": shift, "collars": summary}, table
 
 
 # ------------------------------------------------------------------ collars

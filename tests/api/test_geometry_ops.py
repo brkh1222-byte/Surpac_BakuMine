@@ -259,6 +259,96 @@ def test_mesh_import_endpoint_cli_python(env, tmp_path, capsys):
     assert client.post(f"{OPS}/meshes/import", json={"upload": "../../etc"}).status_code == 400
 
 
+# ------------------------------------------------------------------ elevation rasters
+
+
+def _asc_of_topography(env, path, offset=3.0, cell=10.0):
+    """An ESRI ASCII grid of the true topography (raised by ``offset``) around the collars."""
+    topo = DTM(project_mesh(env["folder"], "topo"))
+    lo = env["collars"][:, :2].min(axis=0) - 150.0
+    hi = env["collars"][:, :2].max(axis=0) + 150.0
+    xs = np.arange(lo[0], hi[0] + cell, cell)
+    ys = np.arange(lo[1], hi[1] + cell, cell)[::-1]  # rows from north to south
+    gx, gy = np.meshgrid(xs, ys)
+    z = topo.z_at(gx.ravel(), gy.ravel()).reshape(gx.shape) + offset
+    z[~np.isfinite(z)] = -9999.0
+    x0, y0 = float(xs[0]), float(ys[-1])
+    header = (f"ncols {len(xs)}\nnrows {len(ys)}\nxllcenter {x0!r}\nyllcenter {y0!r}\n"
+              f"cellsize {cell!r}\nnodata_value -9999\n")  # fmt: skip
+    body = "\n".join(" ".join(f"{v:.4f}" for v in row) for row in z)
+    path.write_text(header + body + "\n")
+    return path
+
+
+def test_surface_from_elevation_file_endpoint_cli_python(env, tmp_path, capsys):
+    from bakumine.core.geometry import raster_dem as rd
+
+    client, folder = env["client"], env["folder"]
+    asc = _asc_of_topography(env, tmp_path / "dem.asc")
+    up = upload(client, asc)
+    info = up["files"][0]
+    assert info["roles"] == ["raster"] and info["crs"] is None and info["cell"] == [10.0, 10.0]
+    ref = {"upload": up["token"], "file": "dem.asc"}
+    r = client.post(
+        f"{OPS}/surfaces/from-raster",
+        json={"name": "Topo DEM", "rasters": [ref], "database": "drillholes",
+              "area": {"mode": "collars", "padding": 100}, "spacing": 20},
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
+    result = r.json()
+    assert result["kind"] == "dtm" and result["crs"] is None
+    assert result["z_shift"] == pytest.approx(-3.0, abs=0.3)  # the grid reads 3 m high
+    assert result["collars"]["on_surface"] == 80 and result["collars"]["spread"]["p90_abs"] < 1.0
+    api_mesh = project_mesh(folder, result["id"])
+
+    db_path = Project.open(folder).path_of("drillholes")
+    assert main(["surface", "from-raster", str(asc), "--database", str(db_path),
+                 "--padding", "100", "--spacing", "20",
+                 "--out", str(tmp_path / "t.obj")]) == 0  # fmt: skip
+    assert "vertical shift" in capsys.readouterr().out
+    same_mesh(read_obj(tmp_path / "t.obj"), api_mesh)
+
+    lo, hi = env["collars"][:, :2].min(axis=0) - 100, env["collars"][:, :2].max(axis=0) + 100
+    z, origin, _ = rd.grid_from_rasters([rd.read_raster(asc)], [*lo, *hi], 20.0, None)
+    dtm, tie, _ = rd.raster_surface(z, origin, 20.0, env["database"].collar)
+    same_mesh(dtm.mesh, api_mesh)
+    assert tie["z_shift"] == result["z_shift"]
+
+
+def test_surface_from_points_with_an_elevation_file(env, tmp_path, capsys):
+    client, folder = env["client"], env["folder"]
+    asc = _asc_of_topography(env, tmp_path / "dem2.asc")
+    up = upload(client, asc)
+    r = client.post(
+        f"{OPS}/surfaces/from-points",
+        json={"name": "Collars and DEM", "databases": ["drillholes"],
+              "extend": {"mode": "padding", "padding": 100},
+              "raster": {"rasters": [{"upload": up["token"], "file": "dem2.asc"}],
+                         "spacing": 20, "drop_within": 30}},
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
+    result = r.json()
+    assert result["dem"]["z_shift"] == pytest.approx(-3.0, abs=0.3)
+    assert result["dem"]["dropped"] > 0 and result["n_extension_points"] == 0
+    api_mesh = project_mesh(folder, result["id"])
+    surface = DTM(api_mesh)
+    c = env["collars"]
+    assert np.allclose(surface.z_at(c[:, 0], c[:, 1]), c[:, 2])  # through every collar
+
+    db_path = Project.open(folder).path_of("drillholes")
+    assert main(["surface", "from-points", "--database", str(db_path), "--raster", str(asc),
+                 "--raster-spacing", "20", "--drop-within", "30", "--extend-padding", "100",
+                 "--out", str(tmp_path / "m.obj")]) == 0  # fmt: skip
+    capsys.readouterr()
+    same_mesh(read_obj(tmp_path / "m.obj"), api_mesh)
+    bad = client.post(
+        f"{OPS}/surfaces/from-points",
+        json={"databases": ["drillholes"], "extend": {"mode": "padding", "padding": 100, "z": 5},
+              "raster": {"rasters": [{"upload": up["token"], "file": "dem2.asc"}]}},
+    )  # fmt: skip
+    assert bad.status_code == 400 and "do not apply with a raster" in bad.json()["detail"]
+
+
 def test_bad_requests_are_400_and_logged(env, capsys):
     client, folder = env["client"], env["folder"]
     before = len(joblog.jobs(folder))
@@ -270,6 +360,9 @@ def test_bad_requests_are_400_and_logged(env, capsys):
         ("surfaces/from-points", {"databases": ["drillholes"], "duplicates": "median"}),
         ("surfaces/from-points", {"databases": ["drillholes"],
                                   "extend": {"mode": "rectangle", "rectangle": [0, 0, 1]}}),
+        ("surfaces/from-raster", {}),
+        ("surfaces/from-raster", {"database": "drillholes", "rasters": []}),
+        ("surfaces/from-raster", {"database": "drillholes", "area": {"mode": "pit"}}),
     ]  # fmt: skip
     for path, body in cases:
         r = client.post(f"{OPS}/{path}", json=body)
@@ -288,7 +381,11 @@ def test_replay_rebuilds_the_same_meshes(env, tmp_path, capsys):
     """Runs last: every geometry job above is redone by the CLI from the job log."""
     folder = env["folder"]
     done = [e for e in joblog.jobs(folder) if e["status"] == "done"]
-    assert {e["operation"] for e in done} == {"surface_from_points", "import_mesh"}
+    assert {e["operation"] for e in done} == {
+        "surface_from_points",
+        "surface_from_raster",
+        "import_mesh",
+    }
     target = tmp_path / "replayed"
     assert main(["project", "replay", str(folder), "--into", str(target)]) == 0, capsys.readouterr()
     capsys.readouterr()

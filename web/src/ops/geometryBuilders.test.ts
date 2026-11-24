@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSurfaceRequest, type SurfaceForm } from './geometryBuilders'
+import { buildRasterRequest, buildSurfaceRequest, type RasterForm, type SurfaceForm } from './geometryBuilders'
 
 describe('surface from points request', () => {
   const form: SurfaceForm = {
@@ -35,5 +35,47 @@ describe('surface from points request', () => {
     expect(buildSurfaceRequest({ ...form, extendMode: 'rectangle', rectangle: '0, 0, 0, 5' })).toMatch(/Rectangle/)
     expect(buildSurfaceRequest({ ...form, extendMode: 'padding', padding: '10', extendZ: 'high' })).toMatch(/elevation/)
     expect(buildSurfaceRequest({ ...form, points: [{ upload: 'a', file: 'p.csv', columns: 'x, y' }] })).toMatch(/three columns/)
+  })
+})
+
+describe('elevation files', () => {
+  const dem = { rasters: [{ upload: 'tok', file: 'dem.tif' }], rasterCrs: '', crs: '', spacing: '', zShift: '' }
+  const points: SurfaceForm = {
+    name: 'Topo', databases: ['drillholes'], points: [], strings: [], breaklines: [],
+    extendMode: 'padding', padding: '200', rectangle: '', model: '', extendZ: '', duplicates: 'mean',
+  }
+  it('fills the area around the data', () => {
+    expect(buildSurfaceRequest({ ...points, dem: { ...dem, dropWithin: '30', spacing: '25', crs: ' EPSG:32633 ' } })).toEqual({
+      name: 'Topo', databases: ['drillholes'], duplicates: 'mean',
+      extend: { mode: 'padding', padding: 200, z: 'nearest' },
+      raster: { rasters: [{ upload: 'tok', file: 'dem.tif' }], crs: 'EPSG:32633', spacing: 25, z_shift: 'median', drop_within: 30 },
+    })
+    expect(buildSurfaceRequest({ ...points, dem: { ...dem, zShift: '-1.5' } })).toMatchObject({ raster: { z_shift: -1.5 } })
+    expect(buildSurfaceRequest({ ...points, extendZ: '1000', dem })).toMatch(/does not apply/)
+    expect(buildSurfaceRequest({ ...points, dem: { ...dem, rasters: [] } })).toMatch(/Upload/)
+    expect(buildSurfaceRequest({ ...points, dem: { ...dem, zShift: 'up' } })).toMatch(/shift/)
+  })
+  const raster: RasterForm = {
+    ...dem, name: ' DEM topo ', database: 'drillholes', areaMode: 'collars', model: '', rectangle: '', padding: '100', tolerance: '',
+  }
+  it('builds the from-raster request', () => {
+    expect(buildRasterRequest(raster)).toEqual({
+      name: 'DEM topo', rasters: [{ upload: 'tok', file: 'dem.tif' }], z_shift: 'median',
+      area: { mode: 'collars', padding: 100 }, database: 'drillholes',
+    })
+    expect(buildRasterRequest({ ...raster, areaMode: 'model', model: 'bm', tolerance: '3', rasterCrs: 'EPSG:4326' })).toMatchObject({
+      area: { mode: 'model', model: 'bm', padding: 100 }, collar_tolerance: 3, raster_crs: 'EPSG:4326',
+    })
+    expect(buildRasterRequest({ ...raster, database: '', areaMode: 'rectangle', rectangle: '0, 0, 500, 400', zShift: 'none' })).toEqual({
+      name: 'DEM topo', rasters: [{ upload: 'tok', file: 'dem.tif' }], z_shift: 'none',
+      area: { mode: 'rectangle', rectangle: [0, 0, 500, 400], padding: 100 },
+    })
+  })
+  it('reports what is missing', () => {
+    expect(buildRasterRequest({ ...raster, database: '' })).toMatch(/database/)
+    expect(buildRasterRequest({ ...raster, database: '', areaMode: 'rectangle', rectangle: '0, 0, 5, 5' })).toMatch(/median/)
+    expect(buildRasterRequest({ ...raster, areaMode: 'model' })).toMatch(/block model/)
+    expect(buildRasterRequest({ ...raster, spacing: '-2' })).toMatch(/spacing/)
+    expect(buildRasterRequest({ ...raster, name: '' })).toMatch(/name/)
   })
 })

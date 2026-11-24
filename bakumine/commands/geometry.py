@@ -404,22 +404,14 @@ def _load_rasters(files: list[str], raster_crs: str | None, crs: str | None, db:
             f"{abs(r.dy):g}, CRS {r.crs or 'not given'}, heights {np.nanmin(r.z):.1f} to "
             f"{np.nanmax(r.z):.1f}"
         )
-    if crs is None and db is not None and db.metadata.crs:
-        crs = db.metadata.crs
-    if crs is None:
-        projected = [r.crs for r in rasters if r.crs and not r.geographic]
-        if projected and not any(r.geographic for r in rasters):
-            crs = projected[0]
-    if crs is None and any(r.crs for r in rasters):
+    try:
+        crs, notes = rd.settle_crs(rasters, crs, db.metadata.crs if db is not None else None)
+    except ValueError:
         raise CommandError(
-            "give --crs, the projected CRS of the model (e.g. EPSG:32648 for WGS 84 / UTM 48N)"
-        )
-    if crs is not None:
-        crs = rd._crs_text(crs)
-        for r in rasters:
-            if r.crs is None:
-                r.crs = crs
-                print(f"{r.source}: no CRS in the file, taken to be the model CRS {crs}")
+            "give --crs, the projected CRS of the model (e.g. EPSG:32633 for WGS 84 / UTM 33N)"
+        ) from None
+    for note in notes:
+        print(note)
     return rasters, crs
 
 
@@ -428,15 +420,7 @@ def _raster_grid(rasters: list[Any], crs: str | None, rectangle: list[float], sp
     from bakumine.core.geometry import raster_dem as rd
 
     if spacing is None:
-        latitude = None
-        if rasters[0].geographic and crs is not None:
-            from pyproj import Transformer
-
-            t = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-            latitude = t.transform(
-                0.5 * (rectangle[0] + rectangle[2]), 0.5 * (rectangle[1] + rectangle[3])
-            )[1]
-        spacing = round(rd.native_spacing(rasters[0], latitude), 1) or rd.native_spacing(rasters[0])
+        spacing = rd.default_spacing(rasters, crs, rectangle)
     elif not spacing > 0:
         raise CommandError("the grid spacing must be > 0")
     z, origin, grid = rd.grid_from_rasters(rasters, rectangle, spacing, crs)
@@ -559,7 +543,6 @@ def configure_from_raster(parser: argparse.ArgumentParser) -> None:
 def run_from_raster(args: argparse.Namespace) -> int:
     from bakumine.core.geometry import raster_dem as rd
     from bakumine.core.geometry import surface_points as sp
-    from bakumine.core.geometry.dtm import DTM, dtm_from_grid
 
     _need_output(args)
     if not args.files and not args.fetch:
@@ -590,33 +573,26 @@ def run_from_raster(args: argparse.Namespace) -> int:
     rasters, crs = _load_rasters(files, args.raster_crs, args.crs, db)
     z, origin, spacing, grid = _raster_grid(rasters, crs, rectangle, args.spacing)
 
-    shift_rule = args.z_shift or ("median" if db is not None else "none")
-    shift = 0.0
-    summary: dict[str, Any] = {"grid": grid, "crs": crs, "rasters": [r.source for r in rasters]}
-    if shift_rule not in ("median", "none"):
+    rule: float | str | None = args.z_shift
+    if rule not in (None, "median", "none"):
         try:
-            shift = float(shift_rule)
+            rule = float(rule)
         except ValueError:
             raise CommandError("--z-shift expects median, none or a number of metres") from None
-    if shift_rule == "median" and db is None:
+    if rule == "median" and db is None:
         raise CommandError("--z-shift median needs --database (the collars to tie to)")
-    raw = dtm_from_grid(z, origin, (spacing, spacing))
-    if db is not None:
-        if shift_rule == "median":
-            first = rd.residual_summary(rd.collar_residuals(raw, db.collar), args.collar_tolerance)
-            if first["median"] is not None:
-                shift = first["median"]
-                print(f"vertical shift: {shift:+.2f} m (median of collar z - raster z)")
-        table = rd.collar_residuals(raw, db.collar, shift)
-        check = rd.residual_summary(table, args.collar_tolerance)
-        _report_collars(table, check, args)
-        summary["collars"] = check
-    summary["z_shift"] = shift
-    mesh = (
-        raw.mesh
-        if not shift
-        else DTM(dtm_from_grid(z + shift, origin, (spacing, spacing)).mesh).mesh
+    collar = db.collar if db is not None else None
+    dtm, tie, table = rd.raster_surface(
+        z, origin, spacing, collar, z_shift=rule, tolerance=args.collar_tolerance
     )
+    summary: dict[str, Any] = {"grid": grid, "crs": crs, "rasters": [r.source for r in rasters]}
+    if tie["collars"] is not None:
+        if (rule or "median") == "median":
+            print(f"vertical shift: {tie['z_shift']:+.2f} m (median of collar z - raster z)")
+        _report_collars(table, tie["collars"], args)
+        summary["collars"] = tie["collars"]
+    summary["z_shift"] = tie["z_shift"]
+    mesh = dtm.mesh
     lo, hi = mesh.vertices.min(axis=0), mesh.vertices.max(axis=0)
     print(
         f"surface: {mesh.n_vertices} vertices, {mesh.n_faces} triangles, "
@@ -805,6 +781,46 @@ def _replay_surface(e: dict[str, Any]) -> list[dict[str, Any]]:
             argv.append(f"--extend-step={float(extend['step'])!r}")
     if p.get("duplicates"):
         argv += ["--duplicates", str(p["duplicates"])]
+    dem = replay.get("raster")
+    if dem:
+        for file in dem["files"]:
+            argv += ["--raster", _where({"file": file})]
+        argv += _raster_flags(dem, "--raster-spacing")
+        argv.append(f"--raster-z-shift={_shift_text(dem['z_shift'])}")
+        if dem.get("drop_within") is not None:
+            argv.append(f"--drop-within={float(dem['drop_within'])!r}")
+    return _finish(e, argv)
+
+
+def _shift_text(value: Any) -> str:
+    return value if isinstance(value, str) else repr(float(value))
+
+
+def _raster_flags(item: dict[str, Any], spacing_option: str) -> list[str]:
+    argv = []
+    if item.get("raster_crs"):
+        argv += ["--raster-crs", str(item["raster_crs"])]
+    if item.get("crs"):
+        argv += ["--crs", str(item["crs"])]
+    argv.append(f"{spacing_option}={float(item['spacing'])!r}")
+    return argv
+
+
+def _replay_raster(e: dict[str, Any]) -> list[dict[str, Any]]:
+    replay = e.get("replay") or {}
+    argv = ["surface", "from-raster", *(_where({"file": f}) for f in replay["files"])]
+    argv += _raster_flags(replay, "--spacing")
+    if "database" in replay:
+        argv += ["--database", _where(replay["database"])]
+    if "model" in replay:
+        argv += ["--model", _where(replay["model"])]
+    if "rectangle" in replay:
+        argv.append("--rectangle=" + ",".join(repr(float(v)) for v in replay["rectangle"]))
+    if replay.get("padding"):
+        argv.append(f"--padding={float(replay['padding'])!r}")
+    if replay.get("z_shift") is not None:
+        argv.append(f"--z-shift={_shift_text(replay['z_shift'])}")
+    argv.append(f"--collar-tolerance={float(replay.get('collar_tolerance', 5.0))!r}")
     return _finish(e, argv)
 
 
@@ -819,5 +835,6 @@ def _replay_import(e: dict[str, Any]) -> list[dict[str, Any]]:
 #: job-log operation -> mapper to CLI steps (merged into ``replay._MAPPERS``)
 REPLAY: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "surface_from_points": _replay_surface,
+    "surface_from_raster": _replay_raster,
     "import_mesh": _replay_import,
 }

@@ -291,7 +291,7 @@ _MAPPERS["classify"] = _classify  # bakumine classify --params WORK/....json
 def _more_mappers() -> None:
     from bakumine.commands import geometry, solid
 
-    _MAPPERS.update(geometry.REPLAY)  # surface_from_points, import_mesh
+    _MAPPERS.update(geometry.REPLAY)  # surface_from_points | _raster, import_mesh
     _MAPPERS.update(solid.REPLAY)  # implicit_solid
 
 

@@ -1,7 +1,8 @@
-"""Geometry operations behind the UI dialogs: surfaces from points and mesh import. Like
-:mod:`bakumine.api.operations` they wrap the core functions the CLI uses (``bakumine
-surface from-points``, ``surface import``), write a job-log entry and add the result to
-the project. (:mod:`bakumine.api.operations_implicit` has the implicit solid.)
+"""Geometry operations behind the UI dialogs: surfaces from points or from elevation rasters,
+and mesh import. Like :mod:`bakumine.api.operations` they wrap the core functions the CLI
+uses (``bakumine surface from-points``, ``surface from-raster``, ``surface import``), write a
+job-log entry and add the result to the project. (:mod:`bakumine.api.operations_implicit`
+has the implicit solid.)
 
 Files for these operations are uploaded to ``geometry_uploads/<token>/<file name>`` (one
 token may hold several files: a ``.dtm`` needs its ``.str`` next to it). A request names a
@@ -36,6 +37,7 @@ GEOMETRY_UPLOADS = "geometry_uploads"
 POINT_SUFFIXES = (".csv", ".txt", ".xlsx", ".xlsm")
 STRING_SUFFIXES = (".str", ".dxf")
 MESH_SUFFIXES = (".dtm", ".dxf", ".obj", ".ply", ".stl")
+RASTER_SUFFIXES = (".tif", ".tiff", ".asc")
 _TOKEN = re.compile(r"[0-9a-f]{12}\Z")
 _ERRORS = (ValueError, KeyError, TypeError, FileNotFoundError, OverflowError)
 
@@ -60,10 +62,11 @@ def _safe_name(filename: str) -> str:
         *POINT_SUFFIXES,
         *STRING_SUFFIXES,
         *MESH_SUFFIXES,
+        *RASTER_SUFFIXES,
     }:
         raise OperationError(
             f"{filename!r}: use a CSV / XLSX table of points, a .str or .dxf string file, "
-            "or a .dxf / .obj / .ply / .stl / .dtm mesh"
+            "a .dxf / .obj / .ply / .stl / .dtm mesh or a .tif / .asc elevation grid"
         )
     return name
 
@@ -110,6 +113,19 @@ def _describe(path: Path) -> dict[str, Any]:
                 out["roles"].append("mesh")
         if suffix == ".dtm" and not _companion(path):
             out["needs"] = path.with_suffix(".str").name
+        if suffix in RASTER_SUFFIXES:
+            from bakumine.core.geometry.raster_dem import read_raster
+
+            r = read_raster(path)
+            known = np.isfinite(r.z)
+            out.update(
+                cells=[int(r.shape[1]), int(r.shape[0])],
+                cell=[float(abs(r.dx)), float(abs(r.dy))],
+                crs=r.crs,
+                geographic=bool(r.geographic),
+                heights=[float(r.z[known].min()), float(r.z[known].max())] if known.any() else None,
+            )
+            out["roles"].append("raster")
     except OperationError:
         raise
     except Exception as exc:  # unreadable file
@@ -317,6 +333,16 @@ def _surface(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dic
         elif z != "nearest":
             z = float(z)
         step = extend.get("step")
+        dem = request.get("raster")
+        dem_info = None
+        if dem:
+            if not isinstance(dem, dict):
+                raise OperationError("raster must be an object")
+            if z != "nearest" or step not in (None, ""):
+                raise OperationError("the boundary elevation and step do not apply with a raster")
+            dem_info = _dem_around(sources, dem, clouds, breaklines, rectangle, padding, replay)
+            clouds.append(dem_info.pop("points"))
+            rectangle = padding = None
         result = sp.surface_from_points(
             clouds,
             breaklines,
@@ -333,7 +359,200 @@ def _surface(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dic
     rec.entry["replay"] = replay
     obj = _add_mesh(folder, "dtm", name, result.dtm.mesh, "surface from points")
     rec.entry["outputs"] = [obj.to_dict()]
-    return {"id": obj.id, "name": obj.name, "kind": "dtm", "sources": counts, **result.info}
+    out = {"id": obj.id, "name": obj.name, "kind": "dtm", "sources": counts, **result.info}
+    if dem_info is not None:
+        out["dem"] = dem_info
+    return out
+
+
+def _dem_around(
+    sources: _Sources,
+    dem: dict[str, Any],
+    clouds: list[np.ndarray],
+    breaklines: list[np.ndarray],
+    rectangle: Any,
+    padding: float | None,
+    replay: dict[str, Any],
+) -> dict[str, Any]:
+    """The raster nodes around the precise sources (``points``) and what was done; as
+    ``bakumine surface from-points --raster``."""
+    from bakumine.core.drillholes.importer import load_database
+    from bakumine.core.geometry import raster_dem as rd
+
+    survey = np.concatenate(clouds) if clouds else np.zeros((0, 3))
+    every = np.concatenate([survey, *breaklines]) if breaklines else survey
+    if rectangle is None:
+        rectangle = [*every[:, :2].min(axis=0), *every[:, :2].max(axis=0)]
+    rectangle = [float(v) for v in rectangle]
+    pad = float(padding or 0.0)
+    area = [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
+    if not (area[2] > area[0] and area[3] > area[1]):
+        raise OperationError("the area of the raster is empty: extend the surface by a padding")
+    database_crs = None
+    if replay["databases"]:
+        first = sources.project.path_of(sources.obj(replay["databases"][0]["object"], "database"))
+        database_crs = load_database(first).metadata.crs
+    z, origin, spacing, grid, crs, notes, raster_replay = _raster_grid(
+        sources, dem, area, database_crs
+    )
+    rule = _shift_rule(dem.get("z_shift")) or "median"
+    drop = dem.get("drop_within")
+    drop = None if drop in (None, "") else float(drop)
+    try:
+        points, info = rd.dem_fill(
+            survey, breaklines, z, origin, spacing, drop_within=drop, z_shift=rule
+        )
+    except ValueError as exc:
+        raise OperationError(str(exc)) from None
+    replay["raster"] = {**raster_replay, "z_shift": rule, "drop_within": drop}
+    return {"points": points, **info, "grid": grid, "crs": crs, "notes": notes}
+
+
+# ------------------------------------------------------------------ elevation rasters
+
+
+def _area(sources: _Sources, area: Any, collars: np.ndarray | None, replay: dict) -> list[float]:
+    """Plan rectangle of ``{mode: collars | model | rectangle, padding}``, grown by padding."""
+    from bakumine.core.geometry import surface_points as sp
+
+    area = area or {}
+    if not isinstance(area, dict):
+        raise OperationError("area must be an object")
+    mode = str(area.get("mode") or "collars")
+    if mode == "collars":
+        if collars is None or len(collars) == 0:
+            raise OperationError("pick the drillhole database whose collars give the area")
+        rectangle = [*collars[:, :2].min(axis=0), *collars[:, :2].max(axis=0)]
+    elif mode == "model":
+        from bakumine.core.blockmodel.storage import load_model
+
+        obj = sources.obj(area.get("model"), "model")
+        rectangle = sp.model_rectangle(load_model(sources.project.path_of(obj)).definition)
+        replay["model"] = {"object": obj.id, "path": obj.path}
+    elif mode == "rectangle":
+        rectangle = [float(v) for v in area.get("rectangle") or []]
+        if len(rectangle) != 4:
+            raise OperationError("rectangle needs four numbers: xmin, ymin, xmax, ymax")
+        replay["rectangle"] = rectangle
+    else:
+        raise OperationError("area mode must be collars, model or rectangle")
+    pad = float(area.get("padding") or 0.0)
+    if not (np.isfinite(pad) and pad >= 0):
+        raise OperationError("padding must be >= 0")
+    if pad:
+        replay["padding"] = pad
+    return [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
+
+
+def _raster_grid(
+    sources: _Sources, block: dict[str, Any], rectangle: list[float], database_crs: str | None
+) -> tuple[Any, ...]:
+    """Read the uploaded rasters of ``block`` and grid them over ``rectangle``.
+
+    Returns ``(z, origin, spacing, grid, crs, notes, replay)``.
+    """
+    from bakumine.core.geometry import raster_dem as rd
+
+    refs = _list(block.get("rasters"), "rasters")
+    if not refs:
+        raise OperationError("upload at least one elevation file (.tif / .asc)")
+    raster_crs = block.get("raster_crs") or None
+    rasters, files = [], []
+    for ref in refs:
+        path, relative = sources.upload(ref, RASTER_SUFFIXES)
+        rasters.append(rd.read_raster(path, raster_crs))
+        files.append(relative)
+    try:
+        crs, notes = rd.settle_crs(rasters, block.get("crs") or None, database_crs)
+    except ValueError:
+        raise OperationError(
+            "give the projected CRS of the model (e.g. EPSG:32633 for WGS 84 / UTM 33N)"
+        ) from None
+    spacing = block.get("spacing")
+    if spacing in (None, ""):
+        spacing = rd.default_spacing(rasters, crs, rectangle)
+    else:
+        spacing = float(spacing)
+        if not (np.isfinite(spacing) and spacing > 0):
+            raise OperationError("the grid spacing must be > 0")
+    z, origin, grid = rd.grid_from_rasters(rasters, rectangle, spacing, crs)
+    if grid["nodes_with_height"] == 0:
+        raise OperationError(
+            "no node of the area lies on the elevation file: check the CRS and the area"
+        )
+    replay = {"files": files, "raster_crs": raster_crs, "crs": crs, "spacing": spacing}
+    return z, origin, spacing, grid, crs, notes, replay
+
+
+def _shift_rule(value: Any) -> float | str | None:
+    if value in (None, ""):
+        return None
+    if value in ("median", "none"):
+        return str(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise OperationError("the vertical shift must be median, none or metres") from None
+
+
+def surface_from_raster(folder: Path, request: dict[str, Any]) -> dict[str, Any]:
+    """``bakumine surface from-raster``: uploaded GeoTIFF / ASCII grids to a DTM, tied to the
+    collars of a database."""
+    return _record(
+        folder, "surface_from_raster", request, lambda rec: _from_raster(folder, request, rec)
+    )
+
+
+def _from_raster(folder: Path, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
+    from bakumine.core.drillholes.importer import load_database
+    from bakumine.core.geometry import raster_dem as rd
+    from bakumine.core.geometry import surface_points as sp
+
+    if not isinstance(request, dict):
+        raise OperationError("the request must be an object")
+    name = _name(request, "topography")
+    sources = _Sources(folder, rec)
+    replay: dict[str, Any] = {}
+    try:
+        db = None
+        if request.get("database"):
+            obj = sources.obj(request["database"], "database")
+            db = load_database(sources.project.path_of(obj))
+            replay["database"] = {"object": obj.id, "path": obj.path}
+        collars = sp.collar_points(db) if db is not None else None
+        rectangle = _area(sources, request.get("area"), collars, replay)
+        z, origin, spacing, grid, crs, notes, raster_replay = _raster_grid(
+            sources, request, rectangle, db.metadata.crs if db is not None else None
+        )
+        replay.update(raster_replay)
+        rule = _shift_rule(request.get("z_shift"))
+        tolerance = float(request.get("collar_tolerance") or 5.0)
+        dtm, tie, _ = rd.raster_surface(
+            z, origin, spacing, db.collar if db is not None else None,
+            z_shift=rule, tolerance=tolerance,
+        )  # fmt: skip
+        replay.update(z_shift=rule, collar_tolerance=tolerance)
+    except OperationError:
+        raise
+    except _ERRORS as exc:
+        raise _fail(exc) from None
+    rec.entry["replay"] = replay
+    obj = _add_mesh(folder, "dtm", name, dtm.mesh, "surface from elevation raster")
+    rec.entry["outputs"] = [obj.to_dict()]
+    v = dtm.mesh.vertices
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "kind": "dtm",
+        "crs": crs,
+        "grid": grid,
+        "notes": notes,
+        "z_shift": tie["z_shift"],
+        "collars": tie["collars"],
+        "n_vertices": int(dtm.mesh.n_vertices),
+        "n_faces": int(dtm.mesh.n_faces),
+        "bounds": [[float(x) for x in v.min(axis=0)], [float(x) for x in v.max(axis=0)]],
+    }
 
 
 # ------------------------------------------------------------------ mesh import
