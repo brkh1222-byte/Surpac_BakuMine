@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { openProduct, type Product } from '../blast/product'
 import { view, type StandardView } from '../scene/view'
 import { MAX_EXAGGERATION, MIN_EXAGGERATION, useViewer, type Projection } from '../state/store'
 
@@ -47,7 +48,12 @@ function ExaggerationInput() {
   )
 }
 
-export function Toolbar() {
+const PRODUCTS: { id: Product; label: string; title: string }[] = [
+  { id: 'modeller', label: 'Block Modeller', title: 'Drilling data to a 3D block model' },
+  { id: 'blast', label: 'Blast BakuMine', title: 'Bench blast design and simulation' },
+]
+
+export function Toolbar({ product = 'modeller' }: { product?: Product }) {
   const projection = useViewer((s) => s.projection)
   const setProjection = useViewer((s) => s.setProjection)
   const theme = useViewer((s) => s.theme)
@@ -62,39 +68,51 @@ export function Toolbar() {
         <span>BakuMine</span>
       </div>
 
-      <div className="group" role="group" aria-label="Standard views">
-        {VIEWS.map((v) => (
-          <button key={v.id} type="button" title={v.title} data-testid={`view-${v.id}`} onClick={() => view.rig?.setView(v.id)}>
-            {v.label}
-          </button>
-        ))}
-      </div>
-
-      <button
-        type="button"
-        className="standalone"
-        title="Zoom to the extents of all visible objects"
-        data-testid="zoom-extents"
-        onClick={() => view.rig?.zoomToExtents()}
-      >
-        Zoom to extents
-      </button>
-
-      <div className="group" role="group" aria-label="Projection">
-        {PROJECTIONS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            aria-pressed={projection === p.id}
-            data-testid={`proj-${p.id}`}
-            onClick={() => setProjection(p.id)}
-          >
+      <div className="group product-switch" role="group" aria-label="Product">
+        {PRODUCTS.map((p) => (
+          <button key={p.id} type="button" title={p.title} aria-pressed={product === p.id} data-testid={`product-${p.id}`} onClick={() => openProduct(p.id)}>
             {p.label}
           </button>
         ))}
       </div>
 
-      <ExaggerationInput />
+      {product === 'modeller' && (
+        <>
+          <div className="group" role="group" aria-label="Standard views">
+            {VIEWS.map((v) => (
+              <button key={v.id} type="button" title={v.title} data-testid={`view-${v.id}`} onClick={() => view.rig?.setView(v.id)}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            className="standalone"
+            title="Zoom to the extents of all visible objects"
+            data-testid="zoom-extents"
+            onClick={() => view.rig?.zoomToExtents()}
+          >
+            Zoom to extents
+          </button>
+
+          <div className="group" role="group" aria-label="Projection">
+            {PROJECTIONS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                aria-pressed={projection === p.id}
+                data-testid={`proj-${p.id}`}
+                onClick={() => setProjection(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <ExaggerationInput />
+        </>
+      )}
 
       <div className="spacer" />
 
