@@ -1,6 +1,6 @@
 """Near-field blast damage: Holmberg-Persson PPV, damage classes, back-break, block attribute.
 
-research_blast_physics.md section 2. Close to a blast hole the charge is not a point: the
+research_blast.md part 3, section 2. Close to a blast hole the charge is not a point: the
 vibration at a point is built up from the whole charge column. Holmberg and Persson (1978,
 1979) take the far-field law ``PPV = K W^alpha / R^beta`` for every element ``q dx`` of the
 column and add the elements up:

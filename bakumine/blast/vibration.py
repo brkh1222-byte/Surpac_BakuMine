@@ -1,6 +1,6 @@
 """Ground vibration and air overpressure of a blast: scaled-distance laws.
 
-research_blast_effects.md section 2.
+research_blast.md part 2, section 2.
 
 Ground vibration
 ----------------

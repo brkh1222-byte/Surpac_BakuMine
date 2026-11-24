@@ -1,6 +1,6 @@
 """Bench blast design: rules of thumb for the pattern, hole layout on a bench polygon, totals.
 
-research_blast_design.md sections 1 to 4. Everything is SI (metres, kilograms, kg/m3); the
+research_blast.md part 1, sections 1 to 4. Everything is SI (metres, kilograms, kg/m3); the
 published imperial forms are converted in the text of the research note and here only the SI
 form is computed.
 

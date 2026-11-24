@@ -1,4 +1,4 @@
-"""Initiation timing (bakumine.blast.timing), research_blast_design.md sections 5 to 7.
+"""Initiation timing (bakumine.blast.timing), research_blast.md part 1, sections 5 to 7.
 
 Firing times of a 3 x 4 pattern are worked by hand; the maximum instantaneous charge is
 checked against a brute-force scan of every window.

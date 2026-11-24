@@ -1,6 +1,6 @@
 """Initiation timing of a bench blast: delay patterns, firing order, charge per delay.
 
-research_blast_design.md sections 5 to 7. Times are milliseconds after the first initiation
+research_blast.md part 1, sections 5 to 7. Times are milliseconds after the first initiation
 (``Hole.delay_ms``); the first hole of every pattern fires at 0.
 
 Each pattern function returns a **new** :class:`~bakumine.blast.model.BlastDesign` (the

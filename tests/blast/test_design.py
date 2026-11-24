@@ -1,4 +1,4 @@
-"""Bench blast design rules and layout (bakumine.blast.design), research_blast_design.md.
+"""Bench blast design rules and layout (bakumine.blast.design), research_blast.md part 1,.
 
 Independent checks: the Konya burden against the imperial form of the formula evaluated in
 feet and inches, the powder-factor solver against scipy's root finder, hole counts and the

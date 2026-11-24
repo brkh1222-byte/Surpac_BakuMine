@@ -1,6 +1,6 @@
 """Elastic wave speeds, explosive pressures and wave sources of a blast.
 
-research_blast_physics.md section 1. These are the textbook relations of an isotropic linear
+research_blast.md part 3, section 1. These are the textbook relations of an isotropic linear
 elastic solid and of an ideal detonation; they feed the viewer (expanding wavefronts) and
 the near-field damage model (:mod:`bakumine.blast.damage`).
 

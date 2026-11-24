@@ -1,6 +1,6 @@
 """Flyrock: maximum throw by mechanism (Richards and Moore 2004) and ballistic flight.
 
-research_blast_effects.md section 3.
+research_blast.md part 2, section 3.
 
 Richards and Moore (2004)
 -------------------------

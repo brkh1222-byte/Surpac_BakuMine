@@ -1,6 +1,6 @@
 """Fragment size distribution of a bench blast: the Kuz-Ram model.
 
-research_blast_effects.md section 1. Three published pieces are combined (Cunningham 1983,
+research_blast.md part 2, section 1. Three published pieces are combined (Cunningham 1983,
 1987, 2005):
 
 Mean size (Kuznetsov 1973, in Cunningham's relative-weight-strength form)

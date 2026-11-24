@@ -1,0 +1,696 @@
+# Blast BakuMine: theory and formulas
+
+Every formula the blast module implements, with its published source. Items marked unverified were written from memory and not checked against the printed source; site constants are uncalibrated typical values.
+
+Parts: 1 design and timing, 2 fragmentation, vibration, airblast and flyrock, 3 damage, waves and throw.
+
+---
+
+# Blast design and timing: theory (B2)
+
+Formulas implemented in `bakumine/blast/design.py` and `bakumine/blast/timing.py`, with their sources.
+To be merged into `research_blast.md`. SI units: metres, kilograms, kg/m3; delays in milliseconds.
+
+Symbols: `d` hole (charge) diameter, `H` bench height, `B` burden, `S` spacing, `T` stemming, `J` subdrill,
+`L` hole length, `rho_e`, `rho_r` explosive and rock density, `SGe = rho_e / 1000`, `SGr = rho_r / 1000`.
+
+## 1. Burden
+
+### 1.1 Konya (`burden_konya`)
+
+Konya and Walter (1990) give, in imperial units,
+
+    B [ft] = (2 SGe / SGr + 1.5) De [in]
+
+with `De` the diameter of the explosive. Conversion: 1 ft = 0.3048 m, 1 in = 25.4 mm, so
+`B [m] = 0.3048 / 25.4 * (...) * De [mm] = 0.012 (2 SGe / SGr + 1.5) De [mm]` (0.3048 / 25.4 = 0.012 exactly):
+
+    B = 0.012 (2 SGe / SGr + 1.5) De        B in m, De in mm
+
+Check (hand arithmetic, not a number quoted from the book): ANFO 0.85, rock 2.70, De = 4 in = 101.6 mm:
+`(0.6296 + 1.5) * 4 = 8.519 ft = 2.596 m`.
+
+### 1.2 Ash (`burden_ash`)
+
+Ash (1963): `B = Kb d` (same unit), `Kb` between 20 and 40; `Kb = 30` for average conditions (rock of density
+about 2.7 with an explosive of density about 1.2 to 1.3), about 25 for a light explosive such as ANFO and 35
+for a dense one in the same rock. Values outside 20 to 40 are refused. Ash's other ratios, as summarised by
+Hustrulid (1999): spacing `Ks = S / B` 1 to 2, subdrill `Kj = J / B` about 0.3 (0.2 to 0.5), stemming
+`Kt = T / B` about 0.7 (0.5 to 1.0), hole length `Kh = H / B` 1.5 to 4.
+
+### 1.3 From a target powder factor (`burden_from_powder_factor`)
+
+Derived here (no source needed beyond the definitions). With `S = m B`, `T = kt B`, `J = kj B` and the linear
+charge density `w = pi/4 d^2 rho_e`, one vertical hole carries `Q = w (H + J - T)` and breaks `B S H`:
+
+    q = w (H + (kj - kt) B) / (m B^2 H)
+    q m H B^2 - w (kj - kt) B - w H = 0
+    B = [ w (kj - kt) + sqrt( w^2 (kj - kt)^2 + 4 q m H^2 w ) ] / (2 q m H)
+
+(the positive root). Tested against `scipy.optimize.brentq` on the first equation.
+
+## 2. Spacing, stemming, subdrill, stiffness (`suggest`)
+
+- **Spacing.** Staggered: `S = 1.15 B`. This is the equilateral-triangle pattern, `S / B = 2 / sqrt(3) = 1.1547`,
+  which covers the plan area most evenly; it is the staggered ratio recommended by Jimeno, Jimeno and Carcedo
+  (1995) and by Hustrulid (1999). Square: `S = B` (default). The range offered for square / rectangular patterns
+  is 1.0 to 1.25; `S = 1.25 B` is the ratio of Langefors and Kihlstrom (1963). `spacing_ratio` overrides.
+  Not implemented: Konya's spacing rules that depend on `H / B` and on instantaneous / delayed rows
+  (`S = (H + 2B) / 3`, `2B`, `(H + 7B) / 8`, `1.4B`).
+- **Stemming.** `T = 0.7 B` (Konya and Walter 1990; Ash's `Kt`). Published range 0.7 to 1.0 B; 0.7 is the
+  default, `stemming_ratio` overrides.
+- **Subdrill.** `J = 0.3 B` (Konya and Walter 1990; Ash's `Kj`).
+- **Stiffness ratio** `H / B` (Konya and Walter 1990): 1 = poor (severe airblast, flyrock, vibration, coarse
+  fragmentation; redesign), 2 = fair, 3 = good, 4 = excellent, above 4 no further benefit. `suggest` and
+  `stiffness_warning` return a text when `H / B < 2` or `> 4`.
+- **Charge** (vertical hole): `L = H + J`, charge length `L - T` (0 with a warning when not positive),
+  `Q = pi/4 d^2 rho_e (L - T)` (fully coupled bulk explosive), powder factor `q = Q / (B S H)` in kg/m3 and
+  `Q / (B S H rho_r / 1000)` in kg/t.
+
+## 3. Layout on a bench polygon (`layout`)
+
+Conventions (ours; geometry only):
+
+- `f = (sin az, cos az)` is the plan unit vector of the face azimuth (direction the face looks, clockwise
+  from north); `u = (cos az, -sin az)` is `f` turned 90 degrees clockwise = left to right for an observer
+  behind the blast looking out over the face. Polygon vertices are taken to `(s, t) = (p . u, p . f)`.
+- The face edge is `t_max`. Row `r` (0 = front) lies at `t = t_max - (r + 1) B`; there are
+  `floor((t_max - t_min) / B)` rows, so a row exactly on the back edge is kept (the back row is the back limit
+  of the blast and a rectangle `n B` deep has `n` rows, each owning a strip `B` wide).
+- Holes in a row at `s = s_min + S / 2 + k S`; in a staggered pattern odd rows are shifted by `S / 2`. Holes
+  inside the polygon or on its boundary (1e-6 m) are kept: even-odd ray casting plus a point-to-edge distance
+  test. A rectangle `m S` wide has `m` holes in even rows and, staggered, `m + 1` in odd rows (edge holes).
+- Names: row letter (A, B, ... Z, AA, ...) + position from the left starting at 1. `Hole.index` is that
+  position minus 1.
+- Collar elevation: the flat `top`, or `top.z_at(x, y)`. No surface (NaN) or collar at / below the floor:
+  the hole is dropped and listed in `notes["dropped_holes"]`.
+- Hole: `L = (z_collar - z_floor) / sin(dip) + J`, toe `= collar + L (cos(dip) f, -sin(dip))`. Vertical:
+  toe at `z_floor - J`. Inclined holes (dip below horizontal < 90) are parallel to an inclined face: the
+  toe is displaced toward the face (Jimeno et al. 1995 describe inclined drilling parallel to the face).
+  Burden and spacing are plan distances at the collar (the burden perpendicular to an inclined hole is
+  `B sin(dip)`); stemming and subdrill are lengths along the hole.
+- Charge from `T` to `L`. A hole with `L <= T` is kept uncharged (`charge_top = charge_bottom = L`) and
+  listed in `notes["uncharged_holes"]`.
+- `bench_height` of the design: `top - floor` (flat) or mean `z_collar - z_floor` (surface).
+
+## 4. Totals (`summary`)
+
+`volume = polygon area (shoelace) x bench height` (from `BlastDesign.volume`); `tonnes = volume rho_r / 1000`;
+powder factor `= explosive mass / volume` (kg/m3) and `/ tonnes` (kg/t); specific drilling
+`= drilled metres / volume`; stiffness `= H / B`. With a sloping top the volume uses the mean bench height
+at the collars: an approximation, not a surface-to-floor integral.
+
+## 5. Delay patterns
+
+All patterns are `t = n Th + r Tr`, `Th` inter-hole delay, `Tr` inter-row delay (> 0), `r` the row from the
+face and `n` the number of spacings along the row from the initiation hole (a front-row hole at `s0`). These
+are the standard surface-delay layouts (row-by-row, echelon, V) described by Konya and Walter (1990),
+Jimeno et al. (1995) and Hustrulid (1999); the rounding rules for staggered rows are ours:
+
+- row-by-row: `Th = 0` (whole row at once), or `Th > 0` = echelon from the left;
+- echelon from a front corner: `n = ceil(d / S)` for a hole `d >= 0` inside of the corner hole,
+  `n = floor(|d| / S)` outside it;
+- V-cut from the centre of the front row (the front-row hole nearest the row's middle, the left one of a
+  tie): `n = floor(|s - s0| / S)`;
+- hole-by-hole: echelon from the left, refused if two holes get the same time.
+
+Property (proved by cases, tested): in a square pattern a hole fires `Tr` after the hole straight ahead; in a
+staggered pattern, of the two holes ahead (at `+- S / 2`), the one nearer the initiation hole fires earlier
+for any `Th >= 0`, `Tr > 0`, and both do when `Tr > Th`.
+
+## 6. Maximum instantaneous charge (`max_instantaneous_charge`)
+
+The charge weight per delay `W` in the scaled-distance law `PPV = K (R / sqrt(W))^-beta` is the largest
+explosive mass detonated within any 8 ms: Duvall, Johnson, Meyer and Devine (1963) found that charges
+separated by delays of 8 ms or more act as separate charges for vibration amplitude, and the rule is in
+US regulation (30 CFR 816.67: "maximum weight of explosives to be detonated within any 8-millisecond
+period"; also used in Siskind et al. 1980). Implemented as the maximum over half-open windows
+`[t_i, t_i + 8 ms)` starting at each firing time (sorted times, cumulative sums, binary search), so two
+charges exactly 8 ms apart are separate delays. Tested against an O(n^2) scan.
+
+## 7. Burden relief (`burden_relief`)
+
+`relief = (first firing time of row r+1 - first firing time of row r) / B` in ms per metre of burden; the
+median over the row pairs is reported. Guide (Konya and Walter 1990, row-to-row time constant `TR`, SI form
+as given in Konya and Walter 1991): 6.5 ms/m violent, excessive airblast, backbreak; 8 ms/m pile high and
+close to the face, moderate airblast and backbreak; 11.5 ms/m average pile height, airblast and backbreak;
+16.5 ms/m scattered pile with minimum backbreak. Flags: below 6.5, above 16.5, or within 6.5 to 16.5.
+**These four values are quoted from memory of the table and were not checked against the printed source.**
+
+## References
+
+- Ash, R.L. (1963). The mechanics of rock breakage (parts 1 to 4). *Pit and Quarry*, 56.
+- Duvall, W.I., Johnson, C.F., Meyer, A.V.C. and Devine, J.F. (1963). *Vibrations from instantaneous and
+  millisecond-delayed quarry blasts*. US Bureau of Mines Report of Investigations 6151.
+- Hustrulid, W. (1999). *Blasting Principles for Open Pit Mining*, vol. 1. Balkema, Rotterdam.
+- Jimeno, C.L., Jimeno, E.L. and Carcedo, F.J.A. (1995). *Drilling and Blasting of Rocks*. Balkema, Rotterdam.
+- Konya, C.J. and Walter, E.J. (1990). *Surface Blast Design*. Prentice Hall, Englewood Cliffs.
+- Konya, C.J. and Walter, E.J. (1991). *Rock Blasting and Overbreak Control*. US Federal Highway
+  Administration, FHWA-HI-92-001.
+- Langefors, U. and Kihlstrom, B. (1963). *The Modern Technique of Rock Blasting*. Wiley, New York.
+- Siskind, D.E., Stagg, M.S., Kopp, J.W. and Dowding, C.H. (1980). *Structure response and damage produced by
+  ground vibration from surface mine blasting*. US Bureau of Mines Report of Investigations 8507.
+- US Code of Federal Regulations, 30 CFR 816.67, Use of explosives: control of adverse effects.
+
+Not verified against the printed sources (written from memory of the literature): the Ash `Kb` values 25 / 35
+for light / dense explosives, the attribution of `S = 1.25 B` to Langefors and Kihlstrom, the attribution of
+`S = 1.15 B` to Jimeno et al. and Hustrulid (the value itself is geometry), and the burden-relief table.
+
+
+---
+
+# Blast effects: fragmentation, vibration, air overpressure, flyrock
+
+Theory for `bakumine/blast/fragmentation.py`, `vibration.py` and `flyrock.py` (task B3). To be merged into
+`research_blast.md`. Units: metres, kilograms, seconds, pascals unless a formula states otherwise.
+All models here are empirical. Their constants are site constants: the defaults are published typical
+values and are reported as **uncalibrated**.
+
+Confidence marks: **[A]** formula or value as I know it from the primary source; **[B]** widely quoted,
+taken from secondary literature, not re-checked against the primary source in this build (no access to
+the documents). Section 5 lists what was not verified.
+
+## 1. Fragmentation: the Kuz-Ram model
+
+### 1.1 Mean fragment size (Kuznetsov) [A]
+
+Kuznetsov (1973) related the mean fragment size to the specific charge and the charge per hole for TNT.
+Cunningham (1983, 1987) rewrote it for any explosive with the relative weight strength (ANFO = 100,
+TNT = 115):
+
+```
+x50 [cm] = A * K^(-0.8) * Q^(1/6) * (115 / RWS)^(19/20)
+```
+
+- `A` rock factor (1.2)
+- `K` powder factor, kg of explosive per m3 of rock
+- `Q` explosive mass per hole, kg
+- `RWS` relative weight strength of the explosive, ANFO = 100
+
+`kuznetsov_x50` returns metres (`x50_cm / 100`).
+
+### 1.2 Rock factor [B]
+
+Cunningham (1987) derived `A` from the blastability index of Lilly (1986):
+
+```
+A   = 0.06 * (RMD + RDI + HF)
+RMD = 10 (powdery / friable) | JF (vertically jointed) | 50 (massive)
+JF  = JPS + JPA
+JPS = 10 (joint spacing < 0.1 m) | 20 (0.1 m to oversize) | 50 (oversize to drill pattern size)
+JPA = 20 (dip out of the face) | 30 (strike perpendicular to the face) | 40 (dip into the face)
+RDI = 25 * rho - 50            rho in t/m3
+HF  = E / 3   if E < 50 GPa,   else UCS / 5   (E in GPa, UCS in MPa)
+```
+
+`A` ranges from about 0.8 to 22. In Cunningham's form the joint factor **replaces** RMD for a jointed
+rock mass. Some secondary sources write `A = 0.06 (RMD + JF + RDI + HF)`; with Cunningham's class
+values that would count the joints twice, so the code uses the form above. Cunningham (2005) adds a
+joint-condition factor on JPS and a correction factor `C(A)` for site calibration; these are not
+implemented.
+
+`rock_factor_from_rock` is an estimate from the `Rock` fields (joint spacing gives JPS, JPA = 30 as the
+middle class because the model has no joint orientation). `Rock.rock_factor` wins when set.
+
+### 1.3 Uniformity index (Cunningham 1987) [A]
+
+```
+n = (2.2 - 14 B/d) * sqrt((1 + S/B) / 2) * (1 - W/B) * (|BCL - CCL| / L + 0.1)^0.1 * (L / H)
+```
+
+- `B` burden, m; `S` spacing, m; `d` hole diameter, **mm**
+- `W` standard deviation of drilling accuracy, m
+- `BCL`, `CCL` bottom and column charge length, m; `L = BCL + CCL` total charge length, m
+- `H` bench height, m
+- staggered pattern: `n * 1.1`
+
+The code takes `d` in metres and converts. For a hole with one explosive the code uses `BCL = 0`,
+`CCL = L`, so the charge term is `1.1^0.1 = 1.0096` (see section 5). `n <= 0` (burden far too large for
+the diameter, or `W >= B`) is outside the model and returned as NaN.
+
+### 1.4 Size distribution (Rosin and Rammler 1933) [A]
+
+```
+P(x) = 1 - exp(-0.693 * (x / x50)^n)          fraction passing size x
+xc   = x50 / 0.693^(1/n)                      characteristic size, P(xc) = 1 - 1/e = 0.632
+x(p) = x50 * (-ln(1 - p) / 0.693)^(1/n)       size with fraction p passing (P80: p = 0.8)
+```
+
+0.693 is `ln 2` rounded; the code uses `ln 2` so that `P(x50) = 0.5` exactly. The distribution is the
+Weibull distribution with shape `n` and scale `xc` (used as the independent check with
+`scipy.stats.weibull_min`).
+
+Known limit: Kuz-Ram underestimates the fines (Cunningham 2005; Ouchterlony 2005).
+
+### 1.5 Swebrec function (Ouchterlony 2005) [A]
+
+```
+P(x) = 1 / (1 + [ln(xmax / x) / ln(xmax / x50)]^b)        0 < x <= xmax
+```
+
+`xmax` largest fragment, `b` curve undulation. `P(x50) = 0.5`, `P(xmax) = 1`. Given as an alternative
+curve; the prediction of `xmax` and `b` from the design (the KCO model) is not implemented.
+
+## 2. Ground vibration
+
+### 2.1 Scaled-distance law [A]
+
+```
+PPV [mm/s] = K * (R / sqrt(W))^(-beta)
+```
+
+`R` distance in m, `W` explosive mass per delay in kg. Square-root scaling follows from the cylindrical
+charge geometry of blast holes (Duvall and Fogelson 1962; Nicholls, Johnson and Duvall 1971; Siskind et
+al. 1980; Dowding 1985). `K` and `beta` are fitted to monitored blasts of the site.
+
+Presets (all uncalibrated):
+
+| Preset | K | beta | Source |
+|---|---|---|---|
+| `AS2187_AVERAGE` (default) | 1140 | 1.6 | AS 2187.2-2006 Appendix J, "average conditions", free face, 50 % exceedance [A] |
+| `ISEE_TYPICAL` | 1143 | 1.6 | ISEE Blasters' Handbook: `PPV [in/s] = 160 (D [ft] / sqrt(W [lb]))^-1.6` [B] |
+| `ISEE_UPPER_BOUND` | 1729 | 1.6 | ISEE Blasters' Handbook (after Oriard): `242 (D / sqrt(W))^-1.6` [B] |
+
+Unit conversion: `1 m/kg^0.5 = 3.28084 / sqrt(2.20462) = 2.2096 ft/lb^0.5`, so
+`K_metric = K_imperial * 25.4 * 2.2096^(-beta)`; for 160 this gives 1143, which agrees with the 1140 of
+AS 2187.2.
+
+The law is a far-field law: it grows without bound as `R -> 0`. The near field is handled by the
+Holmberg-Persson model (`damage.py`).
+
+### 2.2 Charge per delay
+
+Charges that fire less than 8 ms apart are counted as one delay (the 8 ms convention goes back to
+Duvall, Johnson, Meyer and Devine 1963, USBM RI 6151, and is used in Bulletin 656 and the OSM rules)
+[B]. `charge_per_delay` forms one group per window `[t, t + window)` starting at each firing time; the
+largest group is the maximum instantaneous charge (MIC). Holes exactly 8 ms apart are separate delays.
+
+`ppv_at` has two modes:
+
+- `"mic"`: `W` = MIC, `R` = distance to the nearest charge centre. The classical conservative number.
+- `"per_hole"`: `max over groups g of K (R_g / sqrt(W_g))^-beta`, `R_g` = distance to the charge
+  centroid of the group. This is an engineering envelope, not a published model; it does not model
+  wave superposition.
+
+### 2.3 Site calibration [A]
+
+Least squares in log-log space (Dowding 1985):
+
+```
+log10 PPV = log10 K - beta * log10(R / sqrt(W))
+s   = sqrt(SSE / (n - 2))            standard error of the residuals, log10 units
+K95 = K * 10^(1.645 * s)             95 % upper-bound line, same slope
+```
+
+`K95` assumes normal residuals in log space and ignores the uncertainty of the fitted line itself (no
+prediction-interval widening).
+
+### 2.4 Guideline limits (PPV, mm/s)
+
+| Key | Value | Source |
+|---|---|---|
+| `usbm_ri8507_plaster_low_freq` | 12.7 (0.50 in/s) | Siskind et al. 1980, RI 8507: plaster, below 40 Hz [A] |
+| `usbm_ri8507_drywall_low_freq` | 19.05 (0.75 in/s) | RI 8507: drywall, below 40 Hz [A] |
+| `usbm_ri8507_above_40hz` | 50.8 (2.0 in/s) | RI 8507: above 40 Hz [A] |
+| `osm_0_300ft` / `osm_301_5000ft` / `osm_beyond_5000ft` | 31.75 / 25.4 / 19.05 | OSM 30 CFR 816.67(d) distance table: 1.25 / 1.00 / 0.75 in/s [A] |
+| `din4150_industrial` / `_residential` / `_sensitive` | 20 / 5 / 3 | DIN 4150-3:1999 Table 1, foundation, 1-10 Hz (rising to 40-50 / 15-20 / 8-10 at 50-100 Hz) [A] |
+| `as2187_sensitive_95pct` / `_max` | 5 / 10 | AS 2187.2-2006 Appendix J, human comfort, sensitive sites [B] |
+| `as2187_commercial` | 25 | AS 2187.2-2006 Appendix J, occupied non-sensitive sites [B] |
+
+The limits are frequency dependent (RI 8507 Appendix B curve, DIN lines); the table holds the value of
+the band named in the key. The code does not predict the vibration frequency.
+
+## 3. Air overpressure
+
+```
+P [kPa] = K_a * (R / W^(1/3))^(-a)
+dBL     = 20 * log10(P / 20e-6 Pa)
+```
+
+Cube-root scaling (spherical spreading in air). AS 2187.2-2006 Appendix J gives `a = 1.45` and
+`K_a = 10 to 100` for confined blasthole charges [B]. The default `K_a = 100` is the upper end of that
+range (conservative). `W` is the MIC; `R` is measured from the nearest collar. Weather (inversions,
+wind) and topographic shielding are not modelled; they can change the level by 10 dB or more.
+
+Check values: 2 Pa = 100 dBL; 20 Pa = 120 dBL; a doubling of distance lowers the level by
+`20 * 1.45 * log10 2 = 8.7 dB`.
+
+Guideline limits (dBL, peak linear):
+
+| Key | Value | Source |
+|---|---|---|
+| `as2187_sensitive_95pct` / `_max` | 115 / 120 | AS 2187.2-2006 Appendix J (and ANZEC 1990: 115 dBL, 5 % of blasts up to 120) [B] |
+| `as2187_commercial` | 125 | AS 2187.2-2006 Appendix J [B] |
+| `as2187_damage` | 133 | AS 2187.2-2006 Appendix J [B] |
+| `usbm_ri8485_0_1hz` / `_2hz` / `_6hz` | 134 / 133 / 129 | Siskind, Stachura, Stagg and Kopp 1980, RI 8485; OSM 30 CFR 816.67(b), by the high-pass frequency of the measuring system [A] |
+
+## 4. Flyrock
+
+### 4.1 Richards and Moore (2004) [A]
+
+Launch velocity of a fragment from a charge with linear density `m` (kg/m) behind a confinement `c` (m):
+
+```
+v0 = k * (sqrt(m) / c)^1.3
+```
+
+Maximum horizontal range on level ground, `g = 9.81 m/s2`:
+
+```
+face burst          L = (k^2 / g) * (sqrt(m) / B)^2.6                    c = burden B
+cratering           L = (k^2 / g) * (sqrt(m) / SH)^2.6                   c = stemming height SH
+stemming ejection   L = (k^2 / g) * (sqrt(m) / SH)^2.6 * sin(2 theta)    theta = hole angle
+```
+
+Face burst and cratering are the ballistic maximum `v0^2 / g` (launch at 45 degrees). Stemming
+ejection travels along the hole axis; `theta` is the inclination of the hole from the horizontal, so a
+vertical hole gives zero horizontal range. `k` = 13.5 (soft rock) to 27 (hard rock); the default is 27.
+The paper's safety factors on `L`: 2 for equipment, 4 for people.
+
+Convention in `predict`: face burst for the holes of row 0 with their burden; cratering and stemming
+ejection for every charged hole with `Hole.stemming` (measured along the hole); `m = Hole.linear_density`.
+The design burden is used, not the surveyed face burden: an under-burdened face hole (the main cause of
+face-burst flyrock) needs face profiling data that the model does not have.
+
+### 4.2 Ballistics [A]
+
+Without drag, from height `h0` above the landing level, launch angle `a` above the horizontal:
+
+```
+R = v0 cos(a) / g * (v0 sin(a) + sqrt(v0^2 sin(a)^2 + 2 g h0))       (= v0^2 sin(2a) / g for h0 = 0)
+t = (vz + sqrt(vz^2 + 2 g (z0 - z_ground))) / g
+```
+
+With quadratic drag on a sphere of diameter `d` and density `rho` (standard aerodynamics, e.g. Hoerner
+1965):
+
+```
+dv/dt = -g ez - c |v| v,     c = 3 rho_air Cd / (4 rho d),     Cd = 0.47,  rho_air = 1.225 kg/m3
+```
+
+integrated with the classical fourth-order Runge-Kutta method. `Cd = 0.47` is the smooth-sphere value
+at Reynolds numbers of about 1e3 to 2e5; angular rock fragments have higher and variable coefficients,
+so drag results are indicative. Ground contact: the flight is stepped, the first step in which the
+height above the ground changes sign is bracketed, and the contact is found by bisection. Checked
+against `scipy.integrate.solve_ivp` with a terminal event.
+
+## 5. Not verified, and choices made
+
+- No formula was checked against a published worked example (Cunningham's or Richards and Moore's
+  examples were not available). Tests check the code against hand arithmetic of the formulas above and
+  against independent implementations (scipy), i.e. they verify the implementation, not the
+  transcription of the formulas from the papers.
+- Rock factor: the form `0.06 (RMD + RDI + HF)` with `RMD = JF` for jointed rock, and the class values,
+  are from memory of Cunningham (1987, 2005) [B].
+- Uniformity index: `BCL = 0, CCL = L` for a single-explosive hole is a choice. Some implementations
+  set the charge term to 1 or use `BCL = CCL`; the difference is 1.0096 against 0.794 at the extreme.
+- `ISEE_TYPICAL` / `ISEE_UPPER_BOUND` (160 and 242 in imperial units): widely quoted, edition and page
+  not checked [B].
+- AS 2187.2-2006 Appendix J values (K = 1140, B = 1.6; K_a 10-100, a = 1.45; comfort limits 5 / 10 /
+  25 mm/s and 115 / 120 / 125 / 133 dBL): from secondary sources, table numbers not checked [B].
+- The 8 ms criterion source (RI 6151) [B].
+- The `"per_hole"` PPV envelope and measuring the airblast distance from the nearest collar are
+  engineering conventions of this code, not published models.
+
+## 6. References
+
+- Australian and New Zealand Environment Council (ANZEC) 1990. Technical basis for guidelines to
+  minimise annoyance due to blasting overpressure and ground vibration.
+- Cunningham, C.V.B. 1983. The Kuz-Ram model for prediction of fragmentation from blasting. Proc. 1st
+  Int. Symp. on Rock Fragmentation by Blasting, Lulea, Sweden, 439-453.
+- Cunningham, C.V.B. 1987. Fragmentation estimations and the Kuz-Ram model: four years on. Proc. 2nd
+  Int. Symp. on Rock Fragmentation by Blasting, Keystone, Colorado, 475-487.
+- Cunningham, C.V.B. 2005. The Kuz-Ram fragmentation model: 20 years on. Proc. 3rd EFEE World
+  Conference on Explosives and Blasting, Brighton, 201-210.
+- DIN 4150-3:1999. Erschuetterungen im Bauwesen, Teil 3: Einwirkungen auf bauliche Anlagen (Structural
+  vibration, Part 3: Effects of vibration on structures). Deutsches Institut fuer Normung.
+- Dowding, C.H. 1985. Blast Vibration Monitoring and Control. Prentice-Hall.
+- Duvall, W.I. and Fogelson, D.E. 1962. Review of criteria for estimating damage to residences from
+  blasting vibrations. US Bureau of Mines RI 5968.
+- Duvall, W.I., Johnson, C.F., Meyer, A.V.C. and Devine, J.F. 1963. Vibrations from instantaneous and
+  millisecond-delayed quarry blasts. US Bureau of Mines RI 6151.
+- Hoerner, S.F. 1965. Fluid-Dynamic Drag. Published by the author.
+- International Society of Explosives Engineers (ISEE). Blasters' Handbook (17th ed. 1998, 18th ed.
+  2011).
+- Kuznetsov, V.M. 1973. The mean diameter of the fragments formed by blasting rock. Soviet Mining
+  Science 9(2), 144-148.
+- Lilly, P.A. 1986. An empirical method of assessing rock mass blastability. Proc. Large Open Pit
+  Mining Conference, AusIMM, Newman, 89-92.
+- Nicholls, H.R., Johnson, C.F. and Duvall, W.I. 1971. Blasting vibrations and their effects on
+  structures. US Bureau of Mines Bulletin 656.
+- Office of Surface Mining Reclamation and Enforcement 1983. 30 CFR 816.67, Use of explosives: control
+  of adverse effects.
+- Ouchterlony, F. 2005. The Swebrec function: linking fragmentation by blasting and crushing. Mining
+  Technology (Trans. Inst. Min. Metall. A) 114, A29-A44.
+- Richards, A.B. and Moore, A.J. 2004. Flyrock control: by chance or design. Proc. 30th Annual
+  Conference on Explosives and Blasting Technique, ISEE, New Orleans.
+- Rosin, P. and Rammler, E. 1933. The laws governing the fineness of powdered coal. Journal of the
+  Institute of Fuel 7, 29-36.
+- Siskind, D.E., Stachura, V.J., Stagg, M.S. and Kopp, J.W. 1980. Structure response and damage produced
+  by airblast from surface mining. US Bureau of Mines RI 8485.
+- Siskind, D.E., Stagg, M.S., Kopp, J.W. and Dowding, C.H. 1980. Structure response and damage produced
+  by ground vibration from surface mine blasting. US Bureau of Mines RI 8507.
+- Standards Australia 2006. AS 2187.2-2006, Explosives: Storage and use, Part 2: Use of explosives.
+  Appendix J: Ground vibration and airblast overpressure.
+
+
+---
+
+# Blast physics: waves, near-field damage, throw and muckpile (task B4)
+
+Theory behind `bakumine/blast/waves.py`, `damage.py` and `throw.py`. To be merged into `research_blast.md`.
+Units: metres, kilograms, seconds, pascals; PPV in mm/s and delays in ms at the boundary.
+
+Every formula below is the one the code implements. Where a constant or a citation detail was written from
+memory of the literature and not checked against the primary source during this task, it is marked
+**[unverified]**. Nothing here was checked against a monitored blast.
+
+## 0. What this is not
+
+These are engineering models: closed-form or one-dimensional relations fitted to field observations, of the
+kind used in blast design practice. They are **not** a hydrocode and not a discrete-element simulation. There
+is no equation of state of the detonation products, no stress tensor, no crack growth, no gas flow in
+fractures, no wave reflection at the free face, no wave interference between holes, no collisions between
+fragments, no air drag. The wavefronts in the viewer are spheres expanding at one constant speed, the damage
+classes are thresholds on one scalar (PPV), and the flying rock is a cloud of independent points with an
+assumed launch speed. The site constants (Holmberg-Persson `K, alpha, beta`; damage multiples; all launch
+parameters) are published typical values or plain assumptions and are labelled `calibrated=False`. The
+pictures are a visualisation of these models; they must not be read as a first-principles prediction.
+
+## 1. Waves (`waves.py`)
+
+### 1.1 Elastic wave speeds
+
+Isotropic linear elastic solid with Young's modulus `E`, Poisson's ratio `nu`, density `rho`:
+
+    cp = sqrt( E (1 - nu) / (rho (1 + nu) (1 - 2 nu)) )        P wave (longitudinal)
+    cs = sqrt( E / (2 rho (1 + nu)) )                          S wave (shear)
+    cs / cp = sqrt( (1 - 2 nu) / (2 (1 - nu)) )
+
+Equivalent to `cp = sqrt((lambda + 2 mu) / rho)`, `cs = sqrt(mu / rho)` with the Lame constants. Standard
+elastodynamics (e.g. Kolsky, H., 1963, *Stress Waves in Solids*, Dover; Jaeger, J.C., Cook, N.G.W. and
+Zimmerman, R.W., 2007, *Fundamentals of Rock Mechanics*, 4th ed., Blackwell). A measured `Rock.p_wave`
+replaces `cp`; `cs` then comes from the ratio. Note: `E` from a static test is lower than the dynamic
+modulus, so a computed `cp` tends to be lower than a measured one; a measured value should be preferred.
+
+Check: `E = 50 GPa, nu = 0.25, rho = 2700` gives `cp = 4714.05 m/s`, `cs = 2721.66 m/s` (by hand in the tests).
+
+Arrival time of the P wave from a source fired at `t0`: `t = t0 + |x - x_s| / cp` (straight ray, one speed).
+
+### 1.2 Detonation and borehole pressure
+
+    P_d = rho_e * VOD^2 / 4          detonation (Chapman-Jouguet) pressure
+    P_b = P_d / 2                    borehole (explosion) pressure, fully coupled charge
+
+`P_d = rho_e VOD^2 / (gamma + 1)` with the adiabatic exponent of the products `gamma = 3` gives the factor 4;
+the borehole pressure after expansion to the hole volume is commonly taken as half of it. Sources: Cook, M.A.
+(1958), *The Science of High Explosives*, Reinhold; Persson, P.-A., Holmberg, R. and Lee, J. (1994), *Rock
+Blasting and Explosives Engineering*, CRC Press. These are approximations for an ideal detonation; commercial
+explosives in small diameters detonate non-ideally and reach less. Decoupled charges are not modelled.
+
+Check: ANFO 850 kg/m3, 4000 m/s: `P_d = 3.4 GPa`, `P_b = 1.7 GPa`.
+
+### 1.3 Crushed zone radius
+
+Two published simple models, selectable; they differ by a factor of about four for the default rock, which
+reflects the real disagreement in the literature.
+
+* `model="esen"` (default). Esen, S., Onederra, I. and Bilgin, H.A. (2003), "Modelling the size of the
+  crushed zone around a blasthole", *Int. J. Rock Mech. Min. Sci.* 40(4), 485-495:
+
+      CZI = P_b^3 / (K * sigma_c^2),   K = E_d / (1 + nu_d),   r_c = 0.812 * r_0 * CZI^0.219
+
+  `r_0` hole radius, `sigma_c` uniaxial compressive strength, `K` rock stiffness from the dynamic modulus and
+  Poisson ratio. The code uses `Rock.youngs_gpa` and `Rock.poisson` as given (not necessarily dynamic), and
+  `P_b` from 1.2 (the paper's borehole pressure `rho_e VOD^2 / 8` for `gamma = 3` is the same number).
+  **[unverified]** the constants 0.812 and 0.219 are as remembered from the paper.
+* `model="pressure_ratio"`: `r_c = r_0 * sqrt(P_d / sigma_c)` with the detonation pressure, as used for the
+  fines model of Kanchibotla, S.S., Valery, W. and Morrell, S. (1999), "Modelling fines in blast fragmentation
+  and its impact on crushing and grinding", *Proc. Explo '99*, AusIMM, Kalgoorlie. **[unverified]** that the
+  paper uses the detonation (not the borehole) pressure; page numbers not checked.
+
+The result is never smaller than the hole radius.
+
+### 1.4 Wave sources for the viewer
+
+One source per charged hole: the centre of the charge column, the firing time `delay_ms`, the charge mass. The
+viewer draws `radius(t) = cp (t - t_ms)`. Untimed designs are refused.
+
+## 2. Near-field damage (`damage.py`)
+
+### 2.1 Holmberg-Persson PPV of an extended charge
+
+Far from a charge of mass `W` the peak particle velocity follows `PPV = K W^alpha / R^beta`. Near a blast hole
+the charge is a column. Holmberg, R. and Persson, P.-A. (1978), "The Swedish approach to contour blasting",
+*Proc. 4th Conf. on Explosives and Blasting Technique*, Society of Explosives Engineers, New Orleans, and
+(1979) "Design of tunnel perimeter blasthole patterns to prevent rock damage", *Proc. Tunnelling '79*,
+Institution of Mining and Metallurgy, London, split the column into elements `q dx` (`q` = linear charge
+density, kg/m) and add them:
+
+    PPV = K * ( q * I )^alpha
+    I   = integral over the charged length of  dx / ( r0^2 + (x - x0)^2 )^( beta / (2 alpha) )
+
+`r0` = perpendicular distance of the point from the hole axis, `x0` = its position along the axis. The code
+takes both from the hole's collar and direction, so inclined holes need nothing special. Constants for Swedish
+hard bedrock: `K = 700, alpha = 0.7, beta = 1.5` with PPV in mm/s, `W` in kg, `R` in m (the commonly quoted
+values; uncalibrated for any other site).
+
+Evaluation. With `x - x0 = r0 tan(theta)` and `p = beta / (2 alpha)`:
+
+    I = r0^(1 - 2p) * integral_{theta1}^{theta2} cos(theta)^(2p - 2) d theta,   theta_i = atan((x_i - x0) / r0)
+
+integrated by 32-node Gauss-Legendre quadrature (smooth integrand for `p >= 1`). For `beta = 2 alpha`
+(`p = 1`) this is the closed form of the papers, `I = (atan((x2 - x0)/r0) - atan((x1 - x0)/r0)) / r0`.
+`r0` is clamped to the hole radius. Far field: for `R >> L`, `I -> L / R^(2p)`, so
+`PPV -> K (q L)^alpha / R^beta`, the point-charge law.
+
+Checks in the tests: `scipy.integrate.quad` of the integral in the original variable (3 sets of constants,
+vertical and inclined hole), the arctan closed form, the point-charge limit at 2000 m (1e-4), monotone decay.
+
+Known weaknesses, not corrected: (i) the elements are added as if their peaks arrived at the same time and in
+the same direction, which overestimates PPV near a long column; (ii) the sum of element contributions is not
+a physically consistent superposition of velocities. See Blair, D. and Minchinton, A. (1996), "On the damage
+zone surrounding a single blasthole", *Proc. Fragblast-5*, Montreal, Balkema; Hustrulid, W. and Lu, W. (2002),
+"Some general design concepts regarding the control of blast-induced damage during rock slope excavation",
+*Proc. Fragblast-7*, Beijing **[unverified]** (venue and exact title of the second from memory).
+
+Several holes. `combine="max"` (default): the field is the maximum of the single-hole PPV; holes are never
+summed. `combine="window"`: the holes whose firing times lie within `window_ms` (default 8 ms) after a hole
+are treated as one charge, `PPV = K (sum of q I)^alpha`, and the largest group counts. This extension of the
+element sum across holes is this module's convention, by analogy with "charge per delay"; it is not from the
+Holmberg-Persson papers.
+
+### 2.2 Critical PPV and damage classes
+
+A plane P wave with particle velocity `v` carries the strain `epsilon = v / cp` and the stress
+`sigma = E v / cp`. Tensile failure when `sigma = sigma_t`:
+
+    PPV_c = sigma_t * cp / E
+
+(Persson, Holmberg and Lee 1994; also in Jimeno, C.L., Jimeno, E.L. and Carcedo, F.J.A., 1995, *Drilling and
+Blasting of Rocks*, Balkema.) Default rock: `10 MPa * 4714 m/s / 50 GPa = 0.943 m/s = 943 mm/s`, inside the
+700-1000 mm/s usually quoted from Holmberg and Persson for the onset of damage in Swedish bedrock
+**[unverified]**.
+
+Classes (0 intact, 1 damaged, 2 fractured, 3 crushed; a class starts strictly above its threshold):
+
+| class | threshold | default rock |
+|---|---|---|
+| damaged | `0.4 PPV_c` | 377 mm/s |
+| fractured | `PPV_c` | 943 mm/s |
+| crushed | `4 PPV_c` | 3771 mm/s |
+
+The multiples 0.4 and 4 are the ratios of the steps of the rock-independent table of Bauer, A. and Calder,
+P.N. (1978), *Open Pit and Blast Seminar*, Mining Engineering Department, Queen's University, Kingston,
+Ontario: below 250 mm/s no fracturing of intact rock; 250-635 mm/s minor tensile slabbing; 635-2540 mm/s
+strong tensile and some radial cracking; above 2540 mm/s complete break-up of the rock mass (10, 25, 100
+in/s). Identifying `PPV_c` with their 635 mm/s step is **a choice of this module**, not a published rule; the
+names of the classes ("crushed" for their "complete break-up") are ours too. The table itself is available as
+`BAUER_CALDER`. Rock-specific tables exist (Mojtabai, N. and Beattie, S.G., 1996, "Empirical approach to
+prediction of damage in bench blasting", *Trans. Inst. Min. Metall. Sect. A* 105) but their numbers are not
+used, because they could not be quoted with confidence. Thresholds carry `calibrated=False`.
+
+### 2.3 Back-break
+
+From the mid-charge point of every last-row hole the PPV (all holes, maximum) is followed horizontally away
+from the free face; the back-break is the distance where it falls to the "fractured" threshold (bracket by
+doubling, then bisection to 1 mm). 0 when even the hole wall is below the threshold. This is only the reach
+of the PPV criterion: joints, gas penetration and the confinement of the last row, which control real
+back-break, are absent, and with the uncalibrated Swedish constants the value is large (about 7 m for a
+150 mm ANFO hole in the default rock). Treat it as an index until `K, alpha, beta` are fitted on site.
+
+### 2.4 Block attribute
+
+For each block centre: `ppv_mm_s` (2.1), `cls` (2.2), `blasted` = centre inside the design polygon in plan
+(even-odd ray casting, implemented locally) and between `floor_z` and the bench top (collar elevation of the
+nearest hole in plan), and `t_break_ms` = firing time of the nearest charge column + distance to that column
+/ `cp`, for blocks that are blasted or at least fractured; NaN otherwise and NaN for untimed holes.
+"Breaks when the P wave arrives" is a display convention: real breakage takes several wave transits and the
+gas phase.
+
+## 3. Throw and muckpile (`throw.py`)
+
+### 3.1 Launch velocity: parametrised, not derived
+
+No burden-velocity formula is implemented. Published relations exist (power laws of burden over charge
+per metre fitted to high-speed films; Gurney-type energy relations), but their constants could not be stated
+with confidence in this clean-room task, so none is claimed. Instead the launch is described by parameters
+(`ThrowParams`, `calibrated=False`):
+
+* `face_velocity` = 15 m/s for the front row. Face velocities of roughly 10-30 m/s are the range commonly
+  reported from high-speed photography of bench blasts (Chiappetta, R.F., Bauer, A., Dailey, P.J. and
+  Burchell, S.L., 1983, "The use of high-speed motion picture photography in blast evaluation and design",
+  *Proc. 9th Conf. on Explosives and Blasting Technique*, Society of Explosives Engineers, Dallas; summarised
+  in Jimeno, Jimeno and Carcedo 1995). **[unverified]** the range is quoted as "typical", not from a table of
+  the primary source.
+* `row_factor` = 0.8: row `r` moves at `face_velocity * 0.8^r` (later rows are more confined). Assumption.
+* Elevation angle from 5 degrees at the toe to 25 degrees at the crest, linear in height. Assumption.
+* Scatter: speed x `(1 + 0.15 N(0,1))` (not below 0.1), elevation and azimuth + `5 deg * N(0,1)`. Assumption.
+* `size_exponent` = 0: optional slowing of fragments larger than x50 by `(x50 / x)^exponent`.
+* Direction: `(sin az, cos az)` in plan for the face azimuth `az` clockwise from north.
+* Start time: `t0 = delay + d / cp (+ response_ms_per_m * d)`, `d` = distance to the charge column of the
+  nearest hole. Real burden response times are longer than the wave travel time; the extra term is 0 by
+  default because no value could be cited.
+
+The distinct flyrock model (Richards and Moore) lives in `flyrock.py`; this module's particles are all
+`kind = 0` (muck).
+
+### 3.2 Fragment size
+
+Rosin-Rammler distribution (Rosin, P. and Rammler, E., 1933, "The laws governing the fineness of powdered
+coal", *J. Inst. Fuel* 7, 29-36) in the Kuz-Ram form `P(x) = 1 - exp(-ln 2 (x / x50)^n)`; sampled by the
+inverse `x = x50 (-ln(1 - u) / ln 2)^(1/n)`, `u` uniform. `x50` and `n` come from the fragmentation model.
+
+### 3.3 Flight and landing
+
+No drag: `p(t) = p0 + v0 t - (g / 2) t^2 ez`, `g = 9.81 m/s2`. Landing = first time the path meets the ground:
+the flight is sampled at 64 time steps up to a time at which the particle is certainly down, the first step
+ending on or below the ground brackets the root, 60 bisections locate it. The ground is a bilinear heightmap
+of the surface with the blasted block removed (inside the polygon: `floor_z`). Limits: a ridge thinner than
+one time step can be flown through; no bounce, no rolling, no collisions; drag matters for small fragments
+and is ignored. Check: `scipy.integrate.solve_ivp` with a terminal event on a level, on two inclined planes
+and on a heightmap with a bench step; closed form on level ground.
+
+### 3.4 Muckpile
+
+Each of the `n` particles carries `V_blast * swell / n` (`swell` = broken / in-situ volume, `Rock.swell`) and
+puts it into the grid cell it lands in. The heap is then relaxed to the angle of repose `phi`: for each pair
+of neighbouring cells (8 neighbours, distance `d` or `d sqrt 2`) whose surface difference exceeds
+`tan(phi) * distance`, a share (`damping` = 0.25) of the excess moves from the upper to the lower cell, never
+more than the loose rock the upper cell holds; the fixed ground does not move. Sweeps over disjoint pair
+groups, cycling through the 8 symmetries of the grid, until the largest transfer is below 0.1 mm. This is the
+talus ("thermal erosion") relaxation of Musgrave, F.K., Kolb, C.E. and Mace, R.S. (1989), "The synthesis and
+rendering of eroded fractal terrains", *Computer Graphics (SIGGRAPH '89)* 23(3), 41-50, a relative of the
+sandpile automaton. Volume is conserved to rounding; the resting shape is one of many stable ones and is
+slightly order-dependent (a 60 m3 column relaxes to a heap 3.10 m high, analytic cone 3.19 m, centre within
+0.15 cell). `p_rest` of a particle is its landing position in plan on the final surface; particles are not
+moved with the sliding rock.
+
+Outputs: `z_before` (given surface), `z_after = ground with block removed + thickness`; where the given
+surface is unknown (NaN) the level `floor_z` is used internally and both stay NaN. Summary: throw of the
+centre of mass, largest throw, pile height, `swell_check = pile volume / blasted volume` (must equal the
+swell), largest slope excess, particles landed outside the grid, volume on unknown ground.
+
+Not modelled: the real mechanics of muckpile formation (the face slumping as a body, rows piling against each
+other, cast distance depending on powder factor and delay timing). The delay sequence changes only the start
+times here, not the shape of the pile.

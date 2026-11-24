@@ -1,6 +1,6 @@
 """Throw and muckpile: where the broken rock of a bench blast goes.
 
-research_blast_physics.md section 3. This is a **simplified kinematic model**, made to show
+research_blast.md part 3, section 3. This is a **simplified kinematic model**, made to show
 and to size the muckpile, not to predict the path of a single rock:
 
 1. *Particles.* ``n`` points are drawn uniformly in the blasted volume (the design polygon
