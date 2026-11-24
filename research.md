@@ -143,6 +143,8 @@ The model works in a projected CRS (UTM); a geographic DEM (longitude, latitude)
 
 Heights of a global DEM are above a geoid model (EGM2008 for Copernicus); a national survey uses its own height system, and the two can differ by metres. The surveyed collars tie them: `dz = collar z - DEM z` per collar; the **median** of `dz` is the vertical shift (robust to a few wrong collars), and collars far from it after the shift point to a wrong collar elevation, a dump or pit made after the DEM, or a DEM error.
 
+A precise survey of the deposit area and a DEM around it are joined by triangulating them together: the survey points, strings and collars are kept as they are, the DEM grid nodes are shifted by the median of `survey z - DEM z` (the survey is the height reference) and every node closer than a distance `d` in plan to a survey point or breakline segment is left out (default `d` = the grid spacing), so no coarse DEM node sits next to a precise point and makes a spike. Where the two disagree by more than the DEM error after the shift (a pit or dump made after the DEM images), the survey wins within `d` of its data; the surface between the last survey point and the first kept node is the straight triangle between them.
+
 ### 5.3 Solids
 A solid is a closed triangulated mesh. Classic Surpac workflow: triangulate between the closed strings on successive sections ("between segments"), then cap the two ends. The between-section step is a ring-stitching problem: walk both polygons and at each step add the triangle with the shorter diagonal. Bifurcations (one polygon on a section becoming two on the next) are handled by splitting the parent ring.
 

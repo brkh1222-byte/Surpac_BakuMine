@@ -44,6 +44,15 @@ surface to the surveyed collars (the median, so that a few wrong collars do not 
 Collars that still differ from the shifted surface by more than a tolerance are listed: a
 wrong collar elevation, a collar on a waste dump or in a pit dug after the DEM was made, or
 an error in the DEM.
+
+Survey and DEM together
+-----------------------
+A precise survey (points, contour strings, collars) is right where it was measured and
+usually covers only the deposit; a DEM covers everything but is coarse. :func:`dem_fill`
+keeps the DEM grid nodes farther than ``drop_within`` metres in plan from every survey point
+and from every breakline segment, shifted by the median of ``survey z - DEM z`` (the
+survey is the height reference), so that triangulating survey and kept nodes together
+gives the survey near the deposit and the DEM around it.
 """
 
 from __future__ import annotations
@@ -59,6 +68,7 @@ import numpy as np
 __all__ = [
     "Raster",
     "collar_residuals",
+    "dem_fill",
     "grid_from_rasters",
     "native_spacing",
     "read_raster",
@@ -479,3 +489,116 @@ def residual_summary(table: Any, tolerance: float = 5.0) -> dict[str, Any]:
         suspect=suspect,
     )
     return summary
+
+
+# ------------------------------------------------------------------ survey + DEM
+
+
+def _densify(lines: Sequence[np.ndarray], step: float) -> np.ndarray:
+    """Points along every segment of ``lines`` no farther apart than ``step``."""
+    out = []
+    for line in lines:
+        xy = np.asarray(line, dtype=np.float64).reshape(-1, 3)[:, :2]
+        out.append(xy)
+        for a, b in zip(xy[:-1], xy[1:], strict=True):
+            n = int(math.ceil(float(np.hypot(*(b - a))) / step))
+            if n > 1:
+                t = np.arange(1, n)[:, None] / n
+                out.append(a + t * (b - a))
+    return np.concatenate(out) if out else np.zeros((0, 2))
+
+
+def dem_fill(
+    survey: np.ndarray,
+    breaklines: Sequence[np.ndarray] | None,
+    z: np.ndarray,
+    origin: Sequence[float],
+    spacing: float,
+    *,
+    drop_within: float | None = None,
+    z_shift: float | str = "median",
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """The DEM grid nodes to triangulate with a survey; see the module docstring.
+
+    ``z, origin, spacing`` are the grid of :func:`grid_from_rasters`. ``survey`` holds the
+    precise points ``(n, 3)``; ``breaklines`` their strings. ``drop_within`` (default: the
+    grid spacing) is the plan distance inside which DEM nodes give way to the survey
+    (breakline segments are sampled every ``drop_within / 4``, so a node within about 1 %
+    of ``drop_within`` of a segment may stay).
+    ``z_shift`` is ``"median"`` (tie to the survey), ``"none"`` or metres.
+
+    Returns ``(points, info)``: the kept nodes (shifted) and ``info`` with ``nodes`` (grid
+    nodes with a height), ``kept``, ``dropped``, ``drop_within``, ``z_shift`` and ``tie``
+    (``points`` compared, ``median``, ``p90_abs`` and ``max_abs`` of ``survey z - DEM z``
+    after the shift; ``None`` without a comparison).
+    """
+    from scipy.spatial import cKDTree
+
+    from bakumine.core.geometry.dtm import dtm_from_grid
+
+    survey = np.asarray(survey, dtype=np.float64).reshape(-1, 3)
+    lines = [np.asarray(b, dtype=np.float64).reshape(-1, 3) for b in breaklines or ()]
+    reference = np.concatenate([survey, *lines]) if lines else survey
+    if not np.isfinite(reference).all():
+        raise ValueError("survey points must be finite")
+    z = np.asarray(z, dtype=np.float64)
+    drop = float(spacing if drop_within is None else drop_within)
+    if not (np.isfinite(drop) and drop >= 0):
+        raise ValueError("drop_within must be >= 0")
+    nx, ny = z.shape
+    gx, gy = np.meshgrid(
+        origin[0] + np.arange(nx) * spacing, origin[1] + np.arange(ny) * spacing, indexing="ij"
+    )
+    known = np.isfinite(z)
+    nodes = np.column_stack([gx[known], gy[known], z[known]])
+
+    tie = None
+    if len(reference) and len(nodes) >= 3:
+        try:
+            dem_z = dtm_from_grid(z, origin, (spacing, spacing)).z_at(
+                reference[:, 0], reference[:, 1]
+            )
+        except ValueError:  # no grid cell with four corners
+            dem_z = np.full(len(reference), np.nan)
+        dz = reference[:, 2] - dem_z
+        dz = dz[np.isfinite(dz)]
+        if len(dz):
+            tie = {"points": int(len(dz)), "median": float(np.median(dz))}
+    if isinstance(z_shift, str):
+        if z_shift == "none":
+            shift = 0.0
+        elif z_shift == "median":
+            if tie is None:
+                raise ValueError(
+                    "no survey point lies on the DEM, so the DEM cannot be tied to it: "
+                    "give the vertical shift in metres, or none"
+                )
+            shift = tie["median"]
+        else:
+            raise ValueError("z_shift must be 'median', 'none' or a number")
+    else:
+        shift = float(z_shift)
+        if not np.isfinite(shift):
+            raise ValueError("z_shift must be finite")
+    if tie is not None:
+        r = np.abs(dz - shift)
+        tie.update(p90_abs=float(np.quantile(r, 0.9)), max_abs=float(r.max()))
+
+    keep = np.ones(len(nodes), dtype=bool)
+    if drop > 0 and len(nodes) and len(reference):
+        near = reference[:, :2]
+        if lines:
+            near = np.concatenate([near, _densify(lines, max(drop / 4.0, 1e-6))])
+        distance = cKDTree(near).query(nodes[:, :2], distance_upper_bound=drop)[0]
+        keep = ~(distance <= drop)
+    points = nodes[keep].copy()
+    points[:, 2] += shift
+    info = {
+        "nodes": int(len(nodes)),
+        "kept": int(keep.sum()),
+        "dropped": int((~keep).sum()),
+        "drop_within": drop,
+        "z_shift": shift,
+        "tie": tie,
+    }
+    return points, info

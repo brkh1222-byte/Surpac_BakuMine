@@ -141,6 +141,28 @@ def configure_from_points(parser: argparse.ArgumentParser) -> None:
     ext.add_argument("--extend-z", default="nearest", metavar="nearest|Z")
     ext.add_argument("--extend-step", type=float, metavar="M",
                      help="spacing of the added points (default: the data spacing)")  # fmt: skip
+    dem = parser.add_argument_group(
+        "DEM around the survey",
+        "With --raster the grid of an elevation raster (satellite DEM, drone surface) fills the "
+        "area around the precise sources: over the extension rectangle (or the data box grown "
+        "by --extend-padding) its nodes are added, except those within --drop-within metres "
+        "in plan of a source point or breakline, and are moved up or down by the median of "
+        "source z - DEM z. No boundary points are added then: the raster reaches the edge.",
+    )
+    dem.add_argument("--raster", action="append", default=[], metavar="FILE",
+                     help="GeoTIFF / ASCII grid (repeatable: adjacent tiles)")  # fmt: skip
+    dem.add_argument("--raster-crs", metavar="CRS",
+                     help="CRS of the raster files when they do not say it")  # fmt: skip
+    dem.add_argument("--crs", metavar="CRS",
+                     help="projected CRS of the model (default: of the first --database, "
+                          "else of a projected raster)")  # fmt: skip
+    dem.add_argument("--raster-spacing", type=float, metavar="M",
+                     help="grid spacing (default: the raster cell size)")  # fmt: skip
+    dem.add_argument("--raster-z-shift", metavar="median|none|M",
+                     help="vertical shift of the raster heights (default: median)")  # fmt: skip
+    dem.add_argument("--drop-within", type=float, metavar="M",
+                     help="leave out raster nodes this close to a source (default: the grid "
+                          "spacing; 0 keeps them all)")  # fmt: skip
     parser.add_argument("--duplicates", default="mean",
                         choices=("mean", "first", "last", "min", "max", "error"),
                         help="points with equal XY and different Z (default: mean)")  # fmt: skip
@@ -197,11 +219,33 @@ def run_from_points(args: argparse.Namespace) -> int:
             z = float(z)
         except ValueError:
             raise CommandError("--extend-z expects 'nearest' or a number") from None
+    padding = args.extend_padding or None
+    dem_info = None
+    if args.raster:
+        if z != "nearest" or args.extend_step:
+            raise CommandError("--extend-z and --extend-step do not apply with --raster")
+        dem_info = _dem_around(args, clouds, breaklines, rectangle, padding)
+        clouds.append(dem_info.pop("points"))
+        rectangle = padding = None
+    else:
+        given = [
+            option
+            for option, value in (
+                ("--raster-crs", args.raster_crs),
+                ("--crs", args.crs),
+                ("--raster-spacing", args.raster_spacing),
+                ("--raster-z-shift", args.raster_z_shift),
+                ("--drop-within", args.drop_within),
+            )
+            if value is not None
+        ]
+        if given:
+            raise CommandError(f"{', '.join(given)} need --raster")
     result = sp.surface_from_points(
         clouds,
         breaklines,
         rectangle=rectangle,
-        padding=args.extend_padding or None,
+        padding=padding,
         extend_z=z,
         step=args.extend_step,
         duplicates=args.duplicates,
@@ -228,8 +272,62 @@ def run_from_points(args: argparse.Namespace) -> int:
         f"surface: {info['n_vertices']} vertices, {info['n_faces']} triangles, plan area "
         f"{info['plan_area']:.1f} m2, Z {info['bounds'][0][2]:.2f} to {info['bounds'][1][2]:.2f}"
     )
+    if dem_info is not None:
+        info["dem"] = dem_info
     _emit(result.dtm.mesh, "dtm", args.name or "topography", args, info)
     return 0
+
+
+def _dem_around(
+    args: argparse.Namespace,
+    clouds: list[Any],
+    breaklines: list[Any],
+    rectangle: list[float] | None,
+    padding: float | None,
+) -> dict[str, Any]:
+    """Raster nodes around the precise sources (``points`` key) and what was done."""
+    import numpy as np
+
+    from bakumine.core.geometry import raster_dem as rd
+
+    survey = np.concatenate(clouds) if clouds else np.zeros((0, 3))
+    every = np.concatenate([survey, *breaklines]) if breaklines else survey
+    if rectangle is None:
+        rectangle = [*every[:, :2].min(axis=0), *every[:, :2].max(axis=0)]
+    pad = float(padding or 0.0)
+    if pad < 0:
+        raise CommandError("--extend-padding must be >= 0")
+    area = [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
+    if not (area[2] > area[0] and area[3] > area[1]):
+        raise CommandError("the area of the raster is empty: give --extend-padding or a rectangle")
+    db = _database(args.database[0]) if args.database else None
+    rasters, crs = _load_rasters(args.raster, args.raster_crs, args.crs, db)
+    z, origin, spacing, grid = _raster_grid(rasters, crs, area, args.raster_spacing)
+    rule: float | str = args.raster_z_shift or "median"
+    if rule not in ("median", "none"):
+        try:
+            rule = float(rule)
+        except ValueError:
+            raise CommandError("--raster-z-shift expects median, none or metres") from None
+    try:
+        points, info = rd.dem_fill(
+            survey, breaklines, z, origin, spacing, drop_within=args.drop_within, z_shift=rule
+        )
+    except ValueError as exc:
+        raise CommandError(str(exc)) from None
+    tie = info["tie"]
+    if tie is not None:
+        print(
+            f"raster vs sources at {tie['points']} points: median source z - raster z "
+            f"{tie['median']:+.2f} m; after the shift 90 % within {tie['p90_abs']:.2f} m, "
+            f"worst {tie['max_abs']:.2f} m"
+        )
+    print(
+        f"raster: shift {info['z_shift']:+.2f} m; {info['kept']} of {info['nodes']} nodes kept, "
+        f"{info['dropped']} within {info['drop_within']:g} m of a source left out"
+    )
+    return {"points": points, **info, "grid": grid, "crs": crs,
+            "rasters": [r.source for r in rasters]}  # fmt: skip
 
 
 # ------------------------------------------------------------------ surface from-raster
@@ -285,6 +383,73 @@ def _report_collars(table: Any, summary: dict[str, Any], args: argparse.Namespac
         _wrote(path, f"{len(table)} collars")
 
 
+def _load_rasters(files: list[str], raster_crs: str | None, crs: str | None, db: Any):
+    """Read the rasters and settle the model CRS (given, of the database, of the rasters)."""
+    import numpy as np
+
+    from bakumine.core.geometry import raster_dem as rd
+
+    rasters = []
+    for file in files:
+        if not Path(file).is_file():
+            raise CommandError(f"no file {file}")
+        r = rd.read_raster(file, raster_crs)
+        rasters.append(r)
+        nrow, ncol = r.shape
+        print(
+            f"{r.source}: {r.info['format']}, {ncol} x {nrow} cells of {abs(r.dx):g} x "
+            f"{abs(r.dy):g}, CRS {r.crs or 'not given'}, heights {np.nanmin(r.z):.1f} to "
+            f"{np.nanmax(r.z):.1f}"
+        )
+    if crs is None and db is not None and db.metadata.crs:
+        crs = db.metadata.crs
+    if crs is None:
+        projected = [r.crs for r in rasters if r.crs and not r.geographic]
+        if projected and not any(r.geographic for r in rasters):
+            crs = projected[0]
+    if crs is None and any(r.crs for r in rasters):
+        raise CommandError(
+            "give --crs, the projected CRS of the model (e.g. EPSG:32648 for WGS 84 / UTM 48N)"
+        )
+    if crs is not None:
+        crs = rd._crs_text(crs)
+        for r in rasters:
+            if r.crs is None:
+                r.crs = crs
+                print(f"{r.source}: no CRS in the file, taken to be the model CRS {crs}")
+    return rasters, crs
+
+
+def _raster_grid(rasters: list[Any], crs: str | None, rectangle: list[float], spacing: Any):
+    """Heights of the rasters on a grid over ``rectangle``; spacing default: the cell size."""
+    from bakumine.core.geometry import raster_dem as rd
+
+    if spacing is None:
+        latitude = None
+        if rasters[0].geographic and crs is not None:
+            from pyproj import Transformer
+
+            t = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+            latitude = t.transform(
+                0.5 * (rectangle[0] + rectangle[2]), 0.5 * (rectangle[1] + rectangle[3])
+            )[1]
+        spacing = round(rd.native_spacing(rasters[0], latitude), 1) or rd.native_spacing(rasters[0])
+    elif not spacing > 0:
+        raise CommandError("the grid spacing must be > 0")
+    z, origin, grid = rd.grid_from_rasters(rasters, rectangle, spacing, crs)
+    if grid["nodes_with_height"] == 0:
+        raise CommandError(
+            "no node of the area lies on the raster: check --crs / --raster-crs and the area"
+        )
+    print(
+        f"grid: {grid['nodes'][0]} x {grid['nodes'][1]} nodes at {spacing:g} m over "
+        f"{', '.join(f'{v:.1f}' for v in grid['rectangle'])}" + (f" in {crs}" if crs else "")
+    )
+    if grid["nodes_without_height"]:
+        print(f"  {grid['nodes_without_height']} nodes without height (off the raster or no data)")
+    return z, origin, spacing, grid
+
+
 def configure_from_raster(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "files",
@@ -335,44 +500,13 @@ def configure_from_raster(parser: argparse.ArgumentParser) -> None:
 
 
 def run_from_raster(args: argparse.Namespace) -> int:
-    import numpy as np
-
     from bakumine.core.geometry import raster_dem as rd
     from bakumine.core.geometry import surface_points as sp
     from bakumine.core.geometry.dtm import DTM, dtm_from_grid
 
     _need_output(args)
-    rasters = []
-    for file in args.files:
-        if not Path(file).is_file():
-            raise CommandError(f"no file {file}")
-        r = rd.read_raster(file, args.raster_crs)
-        rasters.append(r)
-        nrow, ncol = r.shape
-        print(
-            f"{r.source}: {r.info['format']}, {ncol} x {nrow} cells of {abs(r.dx):g} x "
-            f"{abs(r.dy):g}, CRS {r.crs or 'not given'}, heights {np.nanmin(r.z):.1f} to "
-            f"{np.nanmax(r.z):.1f}"
-        )
     db = _database(args.database) if args.database else None
-
-    crs = args.crs
-    if crs is None and db is not None and db.metadata.crs:
-        crs = db.metadata.crs
-    if crs is None:
-        projected = [r.crs for r in rasters if r.crs and not r.geographic]
-        if projected and not any(r.geographic for r in rasters):
-            crs = projected[0]
-    if crs is None and any(r.crs for r in rasters):
-        raise CommandError(
-            "give --crs, the projected CRS of the model (e.g. EPSG:32648 for WGS 84 / UTM 48N)"
-        )
-    if crs is not None:
-        crs = rd._crs_text(crs)
-        for r in rasters:
-            if r.crs is None:
-                r.crs = crs
-                print(f"{r.source}: no CRS in the file, taken to be the model CRS {crs}")
+    rasters, crs = _load_rasters(args.files, args.raster_crs, args.crs, db)
 
     if args.rectangle and args.model:
         raise CommandError("give --rectangle or --model, not both")
@@ -394,28 +528,7 @@ def run_from_raster(args: argparse.Namespace) -> int:
         raise CommandError("--padding must be >= 0")
     rectangle = [rectangle[0] - pad, rectangle[1] - pad, rectangle[2] + pad, rectangle[3] + pad]
 
-    spacing = args.spacing
-    if spacing is None:
-        latitude = None
-        if rasters[0].geographic and crs is not None:
-            from pyproj import Transformer
-
-            t = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-            latitude = t.transform(
-                0.5 * (rectangle[0] + rectangle[2]), 0.5 * (rectangle[1] + rectangle[3])
-            )[1]
-        spacing = round(rd.native_spacing(rasters[0], latitude), 1) or rd.native_spacing(rasters[0])
-    z, origin, grid = rd.grid_from_rasters(rasters, rectangle, spacing, crs)
-    if grid["nodes_with_height"] == 0:
-        raise CommandError(
-            "no node of the area lies on the raster: check --crs / --raster-crs and the area"
-        )
-    print(
-        f"grid: {grid['nodes'][0]} x {grid['nodes'][1]} nodes at {spacing:g} m over "
-        f"{', '.join(f'{v:.1f}' for v in grid['rectangle'])}" + (f" in {crs}" if crs else "")
-    )
-    if grid["nodes_without_height"]:
-        print(f"  {grid['nodes_without_height']} nodes without height (off the raster or no data)")
+    z, origin, spacing, grid = _raster_grid(rasters, crs, rectangle, args.spacing)
 
     shift_rule = args.z_shift or ("median" if db is not None else "none")
     shift = 0.0

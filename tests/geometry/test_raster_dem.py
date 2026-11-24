@@ -16,11 +16,13 @@ from bakumine.core.drillholes.importer import DrillholeDatabase, DrillholeMetada
 from bakumine.core.geometry.dtm import dtm_from_grid
 from bakumine.core.geometry.raster_dem import (
     collar_residuals,
+    dem_fill,
     grid_from_rasters,
     native_spacing,
     read_raster,
     residual_summary,
 )
+from bakumine.core.geometry.surface_points import surface_from_points
 
 UTM = "EPSG:32633"
 
@@ -297,3 +299,137 @@ def test_cli_needs_a_crs_for_a_geographic_raster(tmp_path, capsys):
     )
     assert code != 0
     assert "--crs" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ survey + DEM
+
+
+def _segment_distance(p, a, b):
+    """Plan distance from every point of ``p`` (m, 2) to the segment ``a``-``b``."""
+    ab = b - a
+    t = np.clip(((p - a) @ ab) / (ab @ ab), 0.0, 1.0)
+    return np.hypot(*(p - (a + t[:, None] * ab)).T)
+
+
+def _dem_grid(f, offset, spacing=10.0):
+    xs = 500_000.0 + spacing * np.arange(61)
+    ys = 5_540_000.0 + spacing * np.arange(51)
+    return f(*np.meshgrid(xs, ys, indexing="ij")) + offset, (xs[0], ys[0])
+
+
+def test_dem_fill_drops_nodes_near_the_survey_and_ties_the_heights():
+    z, origin = _dem_grid(plane, 4.0)  # the DEM reads 4 m high
+    gx, gy = np.meshgrid(
+        np.arange(500_200.0, 500_300.1, 5.0), np.arange(5_540_150.0, 5_540_250.1, 5.0)
+    )
+    survey = np.column_stack([gx.ravel(), gy.ravel(), plane(gx, gy).ravel()])
+    a, b = np.array([500_050.0, 5_540_420.0]), np.array([500_550.0, 5_540_380.0])
+    line = np.column_stack([[a[0], b[0]], [a[1], b[1]], plane(*np.array([a, b]).T)])
+    points, info = dem_fill(survey, [line], z, origin, 10.0, drop_within=25.0)
+    assert info["z_shift"] == pytest.approx(-4.0) and info["tie"]["max_abs"] < 1e-6
+    # independent count: exact plan distance to every survey point and to the segment
+    nx, ny = z.shape
+    nodes = np.column_stack(
+        [a.ravel() for a in np.meshgrid(origin[0] + 10.0 * np.arange(nx),
+                                        origin[1] + 10.0 * np.arange(ny), indexing="ij")]
+    )  # fmt: skip
+    d_points = np.min(np.hypot(*(nodes[:, None, :] - survey[None, :, :2]).transpose(2, 0, 1)), 1)
+    d_line = _segment_distance(nodes, a, b)
+    near = np.minimum(d_points, d_line)
+    kept_d = np.minimum(
+        np.min(np.hypot(*(points[:, None, :2] - survey[None, :, :2]).transpose(2, 0, 1)), 1),
+        _segment_distance(points[:, :2], a, b),
+    )
+    assert kept_d.min() > 25.0 * 0.99  # nothing kept inside the drop distance
+    assert info["kept"] >= int((near > 25.0).sum())  # nothing beyond it dropped
+    assert info["kept"] <= int((near > 25.0 * 0.99).sum())
+    assert info["kept"] + info["dropped"] == info["nodes"] == nx * ny
+    assert np.allclose(points[:, 2], plane(points[:, 0], points[:, 1]))  # shifted onto the plane
+
+
+def test_survey_and_dem_together_follow_each_where_it_is_right():
+    def hill(e, n):
+        return 300.0 + 40.0 * np.exp(-((e - 500_300.0) ** 2 + (n - 5_540_250.0) ** 2) / 150.0**2)
+
+    def survey_truth(e, n):  # the survey sees a cut the DEM does not
+        return hill(e, n) - np.where(np.hypot(e - 500_300.0, n - 5_540_250.0) < 40.0, 6.0, 0.0)
+
+    z, origin = _dem_grid(hill, -2.0, spacing=10.0)
+    gx, gy = np.meshgrid(
+        np.arange(500_220.0, 500_380.1, 4.0), np.arange(5_540_170.0, 5_540_330.1, 4.0)
+    )
+    survey = np.column_stack([gx.ravel(), gy.ravel(), survey_truth(gx, gy).ravel()])
+    fill, info = dem_fill(survey, None, z, origin, 10.0)
+    assert info["z_shift"] == pytest.approx(2.0, abs=0.1)  # the cut is a minority: median holds
+    surface = surface_from_points([survey, fill]).dtm
+    inside = np.array([[500_300.0, 5_540_250.0], [500_250.0, 5_540_300.0]])
+    assert np.allclose(surface.z_at(*inside.T), survey_truth(*inside.T), atol=0.2)
+    outside = np.array(
+        [[500_080.0, 5_540_050.0], [500_550.0, 5_540_420.0], [500_120.0, 5_540_450.0]]
+    )
+    assert np.allclose(surface.z_at(*outside.T), hill(*outside.T), atol=0.5)
+
+
+def test_dem_fill_needs_a_shift_when_the_survey_is_off_the_dem():
+    z, origin = _dem_grid(plane, 0.0)
+    far = np.array([[400_000.0, 5_000_000.0, 1.0]])
+    with pytest.raises(ValueError, match="cannot be tied"):
+        dem_fill(far, None, z, origin, 10.0)
+    points, info = dem_fill(far, None, z, origin, 10.0, z_shift="none")
+    assert info["tie"] is None and len(points) == z.size
+
+
+def test_cli_from_points_with_raster_merges_survey_collars_and_dem(tmp_path, capsys):
+    cell, nrow, ncol = 10.0, 60, 80
+    x_corner, y_corner = 499_800.0, 5_540_500.0
+    xc = x_corner + cell * (np.arange(ncol) + 0.5)
+    yc = y_corner - cell * (np.arange(nrow) + 0.5)
+    write_geotiff(tmp_path / "dem.tif", plane(xc[None, :], yc[:, None]) + 3.0,
+                  x_corner, y_corner, cell, cell, 32633, geographic=False)  # fmt: skip
+    gx, gy = np.meshgrid(
+        np.arange(500_050.0, 500_150.1, 5.0), np.arange(5_540_100.0, 5_540_200.1, 5.0)
+    )
+    pd.DataFrame({"E": gx.ravel(), "N": gy.ravel(), "RL": plane(gx, gy).ravel()}).to_csv(
+        tmp_path / "survey.csv", index=False
+    )
+    ce, cn = (
+        np.array([500_000.0, 500_250.0, 500_300.0]),
+        np.array([5_540_000.0, 5_540_050.0, 5_540_250.0]),
+    )
+    collar = pd.DataFrame({"hole_id": ["A", "B", "C"], "x": ce, "y": cn, "z": plane(ce, cn)})
+    _database(tmp_path / "db", collar, UTM)
+    code = main(
+        [
+            "surface", "from-points",
+            "--database", str(tmp_path / "db"),
+            "--points", str(tmp_path / "survey.csv"),
+            "--raster", str(tmp_path / "dem.tif"),
+            "--extend-padding", "120",
+            "--drop-within", "15",
+            "--out", str(tmp_path / "topo.obj"),
+            "--summary", str(tmp_path / "s.json"),
+        ]
+    )  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "shift -3.00 m" in out
+    s = json.loads((tmp_path / "s.json").read_text())
+    assert s["dem"]["z_shift"] == pytest.approx(-3.0) and s["dem"]["crs"] == UTM
+    assert s["dem"]["dropped"] > 0 and s["n_extension_points"] == 0
+    from bakumine.core.geometry.dtm import DTM
+    from bakumine.core.geometry.mesh_import import import_mesh
+
+    surface = DTM(import_mesh(tmp_path / "topo.obj", "dtm", 1.0)[0])
+    rng = np.random.default_rng(5)
+    e = rng.uniform(499_900.0, 500_400.0, 200)
+    n = rng.uniform(5_539_910.0, 5_540_350.0, 200)  # inside the outermost cell centres
+    assert np.allclose(surface.z_at(e, n), plane(e, n), atol=1e-4)  # one plane (float32 cells)
+
+
+def test_cli_raster_options_need_a_raster(tmp_path, capsys):
+    collar = pd.DataFrame({"hole_id": list("ABC"), "x": [0.0, 10.0, 0.0], "y": [0.0, 0.0, 10.0],
+                           "z": [1.0, 1.0, 1.0]})  # fmt: skip
+    _database(tmp_path / "db", collar, None)
+    code = main(["surface", "from-points", "--database", str(tmp_path / "db"),
+                 "--drop-within", "10", "--out", str(tmp_path / "t.obj")])  # fmt: skip
+    assert code != 0 and "--drop-within need --raster" in capsys.readouterr().err
