@@ -475,6 +475,32 @@ def _blocks(
 # ------------------------------------------------------------------------------ simulate
 
 
+def _with_cut(
+    muckpile: dict[str, Any], ground: Any, polygon: Any, face_azimuth: float
+) -> dict[str, Any]:
+    """The muckpile grid with ``cut_m``: how far each node of ``z_before`` lies below the
+    natural ``ground`` inside the excavated area of :func:`bakumine.blast.bench.cut_bench`
+    (0 on untouched ground, NaN where the ground is unknown). Without a cut (``ground`` is
+    None) the grid is returned as it is. The viewer draws cut ground as fresh rock, not as
+    the satellite picture of the old surface.
+    """
+    if ground is None:
+        return muckpile
+    nx, ny = (int(v) for v in muckpile["shape"])
+    step = float(muckpile["spacing"])
+    natural = bench.sample_ground(ground, muckpile["origin"], step, (nx, ny)).z
+    before = np.asarray(muckpile["z_before"], dtype=np.float64).reshape(nx, ny)
+    xx, yy = np.meshgrid(
+        muckpile["origin"][0] + step * np.arange(nx),
+        muckpile["origin"][1] + step * np.arange(ny),
+        indexing="ij",
+    )
+    front = bench.front_of_polygon(xx, yy, polygon, face_azimuth, 150.0)
+    cut = np.where(front, np.maximum(natural - before, 0.0), 0.0)
+    cut = np.where(np.isfinite(natural) & np.isfinite(before), cut, np.nan)
+    return {**muckpile, "cut_m": cut.ravel()}
+
+
 def simulate(
     request: SimulationRequest | dict[str, Any],
     ground: float | Any = None,
@@ -863,7 +889,9 @@ def simulate(
         },
         "fragmentation": frag.to_dict(),
         "throw": thrown["throw"],
-        "muckpile": thrown["muckpile"],
+        "muckpile": _with_cut(
+            thrown["muckpile"], ground if cut_depth > 0.05 else None, polygon, req.face_azimuth
+        ),
         "flyrock": fly.to_dict(),
         "airblast": {
             "k": site["ka_kpa"],

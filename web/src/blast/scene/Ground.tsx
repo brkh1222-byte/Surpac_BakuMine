@@ -14,6 +14,7 @@ import { landedFraction, sortedFinite } from '../math'
 import { useBlast } from '../state'
 import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
+import { cutRock, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
 
 /** Triangles of a node grid; cells with a missing node (or rejected by `skip`) are left out. */
 function gridIndex(grid: GridSpec, ok: (i: number) => boolean, skip?: (ix: number, iy: number) => boolean): Uint32Array {
@@ -51,7 +52,7 @@ const TOPOGRAPHY_DROP = 0.5
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v)
 
-/** Brightness of the satellite picture on a slope of `gradient` (rise / run): 1 up to 35 degrees, 0.45 from 60 degrees. */
+/** 1 on a slope of `gradient` (rise / run) up to 35 degrees, falling to 0.45 from 60 degrees: how much of the satellite picture a slope keeps. */
 export function steepShade(gradient: number): number {
   const lo = Math.tan((35 * Math.PI) / 180)
   const hi = Math.tan((60 * Math.PI) / 180)
@@ -81,6 +82,8 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     const g = new BufferGeometry()
     g.setAttribute('position', new BufferAttribute(gridPositions(grid, zb, origin), 3))
     g.setAttribute('color', new BufferAttribute(new Float32Array(n * 3), 3))
+    // How much of the node is drawn as rock, not as the satellite picture (terrain.tsx).
+    g.setAttribute('rock', new BufferAttribute(new Float32Array(n), 1))
     // A cell with a missing node is not drawn (never at z = 0); a node missing only in one state keeps the other.
     g.setIndex(new BufferAttribute(gridIndex(grid, (i) => finite(zb[i]) || finite(za[i])), 1))
     return { g, landed: sortedFinite(bundle.throw.particles.t_land_ms), state: { f: -1, theme: '' } }
@@ -99,8 +102,10 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     built.state.theme = key
     const position = built.g.getAttribute('position') as BufferAttribute
     const color = built.g.getAttribute('color') as BufferAttribute
-    const ground = satellite ? [1, 1, 1] : hexLinear(BLAST_COLORS[theme].ground)
-    const muck = hexLinear(BLAST_COLORS[theme].muck)
+    const rock = built.g.getAttribute('rock') as BufferAttribute
+    const ground = satellite ? hexLinear(ROCK_COLOR) : hexLinear(BLAST_COLORS[theme].ground)
+    const muck = hexLinear(satellite ? MUCK_COLOR : BLAST_COLORS[theme].muck)
+    const cut = grid.cut_m
     const { z_before: zb, z_after: za } = grid
     for (let i = 0; i < position.count; i++) {
       const before = zb[i]
@@ -111,22 +116,25 @@ export function Muckpile({ bundle, origin }: LayerProps) {
       // Where the surface moved, it is broken rock.
       const m = Math.min(1, Math.abs(b - a) / 0.5) * f
       color.setXYZ(i, ground[0] + (muck[0] - ground[0]) * m, ground[1] + (muck[1] - ground[1]) * m, ground[2] + (muck[2] - ground[2]) * m)
+      // Broken rock and cut ground are rock; the rest keeps the picture.
+      rock.setX(i, Math.max(m, cutRock(cut?.[i])))
     }
     if (satellite) {
-      // A picture taken from above smears down a steep face: cut faces are darkened to read as rock.
+      // A picture taken from above smears down a steep face: steep ground is rock too.
       const [nx, ny] = grid.shape
       for (let ix = 0; ix < nx; ix++) {
         for (let iy = 0; iy < ny; iy++) {
           const i = ix * ny + iy
           const zx = position.getZ(Math.min(nx - 1, ix + 1) * ny + iy) - position.getZ(Math.max(0, ix - 1) * ny + iy)
           const zy = position.getZ(ix * ny + Math.min(ny - 1, iy + 1)) - position.getZ(ix * ny + Math.max(0, iy - 1))
-          const shade = steepShade(Math.hypot(zx, zy) / (2 * grid.spacing))
-          if (shade < 1) color.setXYZ(i, color.getX(i) * shade, color.getY(i) * shade, color.getZ(i) * shade)
+          const steep = (1 - steepShade(Math.hypot(zx, zy) / (2 * grid.spacing))) / 0.55
+          if (steep > rock.getX(i)) rock.setX(i, steep)
         }
       }
     }
     position.needsUpdate = true
     color.needsUpdate = true
+    rock.needsUpdate = true
     built.g.computeVertexNormals()
     built.g.computeBoundingSphere()
   })
@@ -134,7 +142,7 @@ export function Muckpile({ bundle, origin }: LayerProps) {
   return (
     <mesh geometry={built.g} renderOrder={2} frustumCulled={false}>
       {satellite ? (
-        <meshBasicMaterial key="satellite" vertexColors map={satellite.texture} side={DoubleSide} transparent={opacity < 1} opacity={opacity} />
+        <TerrainMaterial key="satellite" texture={satellite.texture} opacity={opacity} />
       ) : (
         <meshStandardMaterial key="plain" vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
       )}
@@ -174,7 +182,7 @@ export function ContextGround({ bundle, origin }: LayerProps) {
   return (
     <mesh geometry={geometry}>
       {satellite ? (
-        <meshBasicMaterial key="satellite" map={satellite.texture} side={DoubleSide} />
+        <TerrainMaterial key="satellite" texture={satellite.texture} />
       ) : (
         <meshStandardMaterial key="plain" color={BLAST_COLORS[theme].context} side={DoubleSide} roughness={1} metalness={0} />
       )}
@@ -252,7 +260,7 @@ export function Topography({ bundle, origin }: LayerProps) {
   return (
     <mesh geometry={geometry}>
       {satellite ? (
-        <meshBasicMaterial key="satellite" map={satellite.texture} side={DoubleSide} clippingPlanes={planes} clipIntersection polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
+        <TerrainMaterial key="satellite" texture={satellite.texture} planes={planes} offset />
       ) : (
         <meshStandardMaterial
           key="plain"

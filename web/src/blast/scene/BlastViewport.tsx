@@ -20,6 +20,7 @@ import { Holes } from './Holes'
 import { PpvMap } from './PpvMap'
 import { AirblastRings, FlyrockRings, Monitors } from './Rings'
 import { Throw } from './Throw'
+import { Sky } from './terrain'
 import { Waves } from './Waves'
 
 const FOV = 35
@@ -100,6 +101,7 @@ function Layers({ bundle, origin }: LayerProps) {
   const layers = useBlast((s) => s.layers)
   const source = useBlast((s) => s.source)
   const topography = layers.topography && source === 'api'
+  const realistic = useBlast((s) => s.layers.satellite && s.source === 'api' && s.imagery !== null)
   // Layers fill their buffers in effects: draw once more after every change of the set.
   const invalidate = useThree((s) => s.invalidate)
   useEffect(() => {
@@ -109,6 +111,7 @@ function Layers({ bundle, origin }: LayerProps) {
   })
   return (
     <>
+      {realistic && <Sky />}
       {topography && <Topography bundle={bundle} origin={origin} />}
       {layers.ground && !topography && <ContextGround bundle={bundle} origin={origin} />}
       {layers.damage && <Damage bundle={bundle} origin={origin} />}

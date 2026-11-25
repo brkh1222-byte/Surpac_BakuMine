@@ -900,3 +900,40 @@ URL shorthand: `H/` = `https://help.maptek.com/blastlogic/2026/topics/`, `V/` = 
 - **PointStudio blast tools** beyond fragmentation analysis.
 - **Failed sources:** the miningmagazine.com article on electronic timing and the Orica SHOTPlus page returned 403; the O-Pitblast feature search errored. Competitor notes are therefore partly from general knowledge and marketing pages.
 - **Marketing claims** (9-10% shovel gain, 20% less commodity loss) are vendor statements with no independent evidence.
+
+
+---
+
+## Part 5: The realistic look of the terrain (task B11)
+
+Display only. Nothing here is measured and nothing changes the surface, a volume or a result. Code:
+`web/src/blast/scene/terrain.tsx`; the server only adds `muckpile.cut_m`.
+
+- **Relief shading.** A vertical photograph has the brightness of flat ground. The picture is multiplied by
+  `clamp(1 + 0.85 (n . s - s_z), 0.5, 1.35)`, with `n` the unit normal of the surface and `s` the unit
+  direction to the sun, so flat ground (n = up) keeps the factor 1. The sun is fixed at azimuth 135 degrees
+  (south-east), 45 degrees up: north of the tropics a mid-morning satellite pass has the sun there, so the
+  added shading agrees with the shadows already in the photograph. The true sun angle of the picture is not
+  known (the tile service does not give the acquisition time). Strength and limits are choices.
+- **Fine relief from the picture.** The luminance of the picture times 1.6 m is read as a height and the
+  normal is tilted by its gradient (bump mapping, Blinn 1978; evaluated with screen-space derivatives after
+  Mikkelsen 2010). Dark is not really low: this is a visual cue, not a terrain model.
+- **Grain.** Fractal value noise (4 octaves) modulates the picture by up to +/- 15 % nearer than 450 m, where
+  one pixel of the picture (about 0.9 m here) covers many pixels of the screen.
+- **Rock on cut and broken ground.** `cut_m` = natural ground minus the ground after the bench cut, inside the
+  excavated area. Nodes with more than 0.2 m of cut (fully from 1 m), nodes on slopes steeper than 35 degrees
+  (fully from 60 degrees) and nodes where the muckpile moved the surface are drawn as procedural rock (bands
+  along z, mottling, grit) instead of the photograph of the old surface. The rock colours are choices.
+- **Sky and haze.** A gradient sky; colours fade to the horizon colour by `1 - exp(-d / 12 km)` (about 8 % at
+  1 km).
+- **Zoom without imagery.** The tile service answers a zoom it has no photograph for with one fixed picture.
+  A block of two or more tiles that are all the same bytes is taken as that picture and the next lower zoom is
+  fetched (`imagery.fetch_best`). On the test site zoom 18 has no imagery and zoom 17 (0.86 m per pixel) is
+  used.
+
+Not done: no higher-resolution elevation (the surface is still the project's topography), no imagery or
+terrain beyond the first topography surface, no shadows cast by the terrain, no vegetation or equipment.
+
+References: J. F. Blinn, "Simulation of wrinkled surfaces", SIGGRAPH 1978. M. Mikkelsen, "Bump mapping
+unparametrized surfaces on the GPU", Journal of Graphics, GPU and Game Tools 15(1), 2010. (Both cited from
+memory; page numbers not checked.)

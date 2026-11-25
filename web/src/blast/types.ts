@@ -144,6 +144,8 @@ export interface BlastThrow {
 export interface Muckpile extends GridSpec {
   z_before: (number | null)[]
   z_after: (number | null)[]
+  /** Depth of the bench cut below the natural ground at each node, m (only when a face was cut). */
+  cut_m?: (number | null)[]
 }
 
 export interface Flyrock {

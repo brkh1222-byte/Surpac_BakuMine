@@ -20,6 +20,10 @@ it never decodes an image.
   called: the tile numbers tell the imagery provider where the site is (to about the size
   of one tile), so fetching is an explicit action of the user.
 
+* :func:`fetch_best` steps down in zoom while the server answers with its "no data at this
+  zoom" picture: such a block is recognised by all its tiles being the same bytes
+  (:func:`is_placeholder`), which a photograph of ground never is.
+
 The default source is Esri World Imagery; its terms ask for the attribution in
 :data:`ESRI_ATTRIBUTION` to be shown with the picture.
 """
@@ -42,6 +46,8 @@ __all__ = [
     "ESRI_ATTRIBUTION",
     "ESRI_WORLD_IMAGERY_URL",
     "fetch",
+    "fetch_best",
+    "is_placeholder",
     "plan",
     "tile_path",
     "tile_xy",
@@ -220,3 +226,55 @@ def fetch(
         "cached": states.count("cached"),
         "missing": states.count("missing"),
     }
+
+
+def is_placeholder(tile_plan: dict[str, Any], cache: str | Path) -> bool:
+    """True when the block of ``tile_plan`` holds two or more tiles in ``cache`` and all of
+    them are the same bytes: the server's picture for "no imagery at this zoom", not ground.
+    A block of one tile cannot be judged and gives False.
+    """
+    block = tile_plan["tiles"]
+    zoom = int(tile_plan["zoom"])
+    first: bytes | None = None
+    seen = 0
+    for x in range(block["x0"], block["x0"] + block["nx"]):
+        for y in range(block["y0"], block["y0"] + block["ny"]):
+            path = tile_path(cache, zoom, x, y)
+            if not path.is_file():
+                continue
+            data = path.read_bytes()
+            if first is None:
+                first = data
+            elif data != first:
+                return False
+            seen += 1
+    return seen >= 2
+
+
+def fetch_best(
+    rectangle: Sequence[float],
+    crs: str,
+    cache: str | Path,
+    *,
+    max_tiles: int = 100,
+    max_zoom: int = MAX_ZOOM,
+    url: str = ESRI_WORLD_IMAGERY_URL,
+    opener: Callable[[str], Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """:func:`plan` and :func:`fetch` at the highest zoom that has imagery.
+
+    A zoom whose block is a placeholder (:func:`is_placeholder`) is skipped and the next lower
+    one is tried. Returns the plan, with ``"skipped_zooms"`` listing the zooms without imagery,
+    and the fetch counts of that plan.
+    """
+    skipped: list[int] = []
+    zoom = max_zoom
+    while True:
+        tile_plan = plan(rectangle, crs, max_tiles=max_tiles, max_zoom=zoom)
+        counts = fetch(tile_plan, cache, url=url, opener=opener)
+        if tile_plan["zoom"] == 0 or not is_placeholder(tile_plan, cache):
+            break
+        skipped.append(int(tile_plan["zoom"]))
+        zoom = int(tile_plan["zoom"]) - 1
+    tile_plan["skipped_zooms"] = skipped
+    return tile_plan, counts

@@ -59,6 +59,12 @@ export function LayersPanel() {
               {imagery.fetched && imagery.fetched.missing > 0 ? `; ${imagery.fetched.missing} tiles missing` : ''}.
             </p>
           )}
+          {imagery && (
+            <p className="blast-note" data-testid="blast-imagery-look">
+              Added by the viewer for looks, not measured: relief shading and fine relief from the picture, grain up close, rock on cut and
+              broken ground, sky and haze. The surface itself is unchanged.
+            </p>
+          )}
         </div>
       )}
     </section>

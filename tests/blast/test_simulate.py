@@ -517,6 +517,14 @@ def test_blast_on_a_ground_surface_cuts_a_free_face():
                      np.array(pile["z_before"], dtype=float).reshape(pile["shape"]))  # fmt: skip
     assert float(grid.z_at(100.0, 170.0)) == pytest.approx(d["floor_z"], abs=1e-6)
     assert float(grid.z_at(100.0, 200.0)) == pytest.approx(500.0, abs=0.05)
+    # cut_m: depth below the natural plane 500 + 0.05 (y - 200), in front of the block only
+    cut = Heightmap(tuple(pile["origin"]), pile["spacing"],
+                    np.array(pile["cut_m"], dtype=float).reshape(pile["shape"]))  # fmt: skip
+    assert float(cut.z_at(100.0, 170.0)) == pytest.approx(498.5 - d["floor_z"], abs=1e-6)
+    assert float(cut.z_at(100.0, 205.0)) == 0.0  # on the block
+    assert float(cut.z_at(100.0 - 45.0, 170.0)) == 0.0  # beside the cut
+    assert np.nanmin(cut.z) == 0.0
+    assert "cut_m" not in simulate(small(particles=300))["muckpile"]  # synthetic bench: no cut
     # volume: polygon area x mean bench height
     assert out["summary"]["volume_m3"] == pytest.approx(2100.0 * d["bench_height"], rel=1e-12)
     assert d["bench_height"] == pytest.approx(10.0, abs=0.3)

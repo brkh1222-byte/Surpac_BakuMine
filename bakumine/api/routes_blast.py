@@ -44,6 +44,8 @@ DESIGN_FILE = "latest_design.json"
 IMAGERY_FOLDER = "imagery"
 IMAGERY_PLAN = "plan.json"
 IMAGERY_MAX_TILES = 400
+# Default block: 16 x 16 tiles of 256 px fill the 4096 px mosaic the viewer builds.
+IMAGERY_DEFAULT_TILES = 256
 
 
 def _folder(source: SceneSource) -> Path | None:
@@ -156,7 +158,7 @@ def get_imagery(source: Source) -> dict[str, Any]:
 
 @router.post("/imagery")
 def post_imagery(body: Json, source: Source) -> dict[str, Any]:
-    """Body: ``{"crs": "EPSG:...", "rectangle": [xmin, ymin, xmax, ymax], "max_tiles": 100}``;
+    """Body: ``{"crs": "EPSG:...", "rectangle": [xmin, ymin, xmax, ymax], "max_tiles": 256}``;
     ``crs`` defaults to the drillhole database's, ``rectangle`` to the topography's extent."""
     folder = _folder(source)
     if folder is None:
@@ -171,12 +173,13 @@ def post_imagery(body: Json, source: Source) -> dict[str, Any]:
         if rectangle is None:
             bounds = project_site(folder, _optional_id(body, "topo"))[0].bounds
             rectangle = [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]]
-        max_tiles = int(body.get("max_tiles", 100))
+        max_tiles = int(body.get("max_tiles", IMAGERY_DEFAULT_TILES))
         if not 1 <= max_tiles <= IMAGERY_MAX_TILES:
             raise ValueError(f"max_tiles must be between 1 and {IMAGERY_MAX_TILES}")
-        plan = imagery.plan([float(v) for v in rectangle], str(crs), max_tiles=max_tiles)
         target = folder / BLAST_FOLDER / IMAGERY_FOLDER
-        counts = imagery.fetch(plan, target)
+        plan, counts = imagery.fetch_best(
+            [float(v) for v in rectangle], str(crs), target, max_tiles=max_tiles
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, str(exc)) from None
     if counts["downloaded"] + counts["cached"] == 0:

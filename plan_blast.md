@@ -87,7 +87,7 @@ JSON written by `simulate`, read by the viewer. Arrays are plain lists; coordina
   "throw":   { "g": 9.81, "particles": { p0:[[x,y,z]...], v0:[[vx,vy,vz]...], t0_ms:[...], t_land_ms:[...],
                p_land:[[x,y,z]...], p_rest:[[x,y,z]...], size_m:[...], kind:[0 muck | 1 flyrock] } },
                # viewer: p(t) = p0 + v0*dt - g/2*dt^2 (z) for t0 <= t <= t_land, then eased to p_rest
-  "muckpile": { origin, spacing, shape, z_before:[...], z_after:[...] },
+  "muckpile": { origin, spacing, shape, z_before:[...], z_after:[...], cut_m:[...] },   # cut_m only when a face was cut (B11)
   "flyrock": { face_burst_m, cratering_m, stemming_ejection_m, max_range_m, clearance_m, safety_factor },
   "airblast": { k, a, rings: [ { radius_m, pa, dbl } ] },
   "monitors": [ { name, xyz, distance_m, charge_kg, scaled_distance, ppv_mm_s, limit_mm_s, ok,
@@ -115,6 +115,7 @@ that are not finite are written as `null`.
 | B8 | Integration on a real model (git-ignored), screenshots, STATUS | orchestrator | B5, B6 | simulation on one client deposit runs; honest limits listed |
 | B9 | Maptek BlastLogic feature study and gap analysis (`research_blast.md` part 4) | orchestrator + agent | - | public sources only, a source per claim, unverified items listed |
 | B10 | Satellite imagery draped on the blast terrain (`blast/imagery.py`, `/blast/imagery`, viewer) | orchestrator | B6 | tile numbers against the published formula and pyproj's Web Mercator; viewer interpolation within 0.05 px of exact; nothing fetched unless asked; vitest for the texture coordinates |
+| B11 | Realistic terrain look (`web/src/blast/scene/terrain.tsx`, `muckpile.cut_m`, `imagery.fetch_best`): relief shading, fine relief and grain, rock on cut / broken ground, sky and haze, zoom fallback | orchestrator | B10 | shade = 1 on flat ground and the analytic value on a 30 degree slope; haze law; cut depth against a plane; a zoom answered with one repeated picture is skipped; seen in the browser on a real site |
 
 Parallel waves: W1 = B2, B3, B4, B6 (fixture-driven), B7 research. W2 = B5. W3 = B6 wiring to the API, B8.
 Agents do not commit and do not run the full `make check`; they run their own tests and ruff on their files.

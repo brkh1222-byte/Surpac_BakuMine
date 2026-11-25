@@ -159,6 +159,30 @@ def test_fetch_downloads_once_and_reports_missing_tiles(tmp_path):
         imagery.fetch(p, tmp_path / "other", opener=broken)
 
 
+def test_fetch_best_steps_down_past_zooms_without_imagery(tmp_path):
+    top = imagery.plan(RECT, CRS, max_tiles=40)["zoom"]
+    asked: list[int] = []
+
+    def opener(url):
+        zoom = int(url.split("/tile/")[1].split("/")[0])
+        asked.append(zoom)
+        # The two highest zooms answer every tile with one and the same picture.
+        return _Answer(b"no data" if zoom > top - 2 else b"ground " + url.encode())
+
+    p, counts = imagery.fetch_best(RECT, CRS, tmp_path, max_tiles=40, opener=opener)
+    assert p["zoom"] == top - 2 and p["skipped_zooms"] == [top, top - 1]
+    assert counts["downloaded"] == p["tiles"]["nx"] * p["tiles"]["ny"] and counts["missing"] == 0
+    assert not imagery.is_placeholder(p, tmp_path)
+    assert imagery.is_placeholder(imagery.plan(RECT, CRS, max_tiles=40), tmp_path)
+    assert sorted(set(asked), reverse=True) == [top, top - 1, top - 2]
+
+    # One tile cannot be judged: it is kept.
+    one = imagery.plan(RECT, CRS, max_tiles=1)
+    imagery.fetch(one, tmp_path / "one", opener=lambda url: _Answer(b"no data"))
+    assert one["tiles"]["nx"] * one["tiles"]["ny"] == 1
+    assert not imagery.is_placeholder(one, tmp_path / "one")
+
+
 @pytest.fixture
 def served(tmp_path):
     i = np.arange(31)
@@ -181,7 +205,7 @@ def test_api_fetches_only_when_asked(served, monkeypatch):
 
     def opener(url):
         calls.append(url)
-        return _Answer(b"jpeg-bytes")
+        return _Answer(b"jpeg-bytes " + url.encode())  # every tile its own picture
 
     monkeypatch.setattr(imagery, "_open", opener)
 
@@ -204,7 +228,8 @@ def test_api_fetches_only_when_asked(served, monkeypatch):
     assert (folder / "blast" / "imagery" / "plan.json").is_file()
 
     tile = client.get(f"{API}/imagery/tile/{plan['zoom']}/{block['y0']}/{block['x0']}")
-    assert tile.status_code == 200 and tile.content == b"jpeg-bytes"
+    assert tile.status_code == 200 and tile.content.startswith(b"jpeg-bytes ")
+    assert plan["skipped_zooms"] == []
     assert tile.headers["content-type"] == "image/jpeg"
     assert client.get(f"{API}/imagery").json()["plan"] == plan
     assert client.post(f"{API}/imagery", json={"crs": CRS, "max_tiles": 0}).status_code == 400
