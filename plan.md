@@ -211,6 +211,34 @@ From a web review of public Surpac material (course catalogues, tutorials, the 1
 - [x] **P8.T17 Elevation files in the viewer:** Surfaces panel "Topography from an elevation file" (upload GeoTIFF / ASCII grid, file and model CRS, area, spacing, vertical shift, collar check with suspect collars) and elevation files accepted in "Topography from points" as the DEM around the data; endpoint `POST /ops/surfaces/from-raster`, `raster` block in from-points, job-log replay to the CLI.
 - [ ] **P8.T13 Mineralised shell at a geological boundary.** On the real gold project the report grade is reproduced by a shell boundary below the reporting cut-off, not by the reporting cut-off applied per hole: let the shell cut-off differ from the reporting cut-off in the workflow panels, and add class rules by drill spacing as national reports state them.
 
+---
+
+### Phase 9 — Geology model: rock units, weathering surfaces, faults beside the ore (owner's go 2026-11-25)
+
+Final product: topography + accurate blocks + the underground layer by layer (possibly offset by faults).
+Theory: `research.md` 5.7. File formats, signatures, file ownership per task and the synthetic truth:
+`geology_contracts.md`. Every geology build writes a provenance record: real data used / assumed by the
+software / inputs still needed.
+
+- [x] **P9.T1 Theory and contracts.** `research.md` 5.7 and `geology_contracts.md`.
+- [ ] **P9.T2 Synthetic layered deposit with truth** (`bakumine synth --preset layered | layered-small`).
+- [ ] **P9.T3 Unit dictionary and provenance record**, `geology units init | check`.
+- [ ] **P9.T4 2-D kriging with inequality data** (exact picks, lower and upper bounds), checked against PyKrige and a quadratic-programme solver.
+- [ ] **P9.T5 Viewer: 20 category colours and colour maps per code.**
+- [ ] **P9.T6 Unit picks per hole with bounds.**
+- [ ] **P9.T7 Multi-unit rock model (largest field), grid sampling, meshes, save / load.**
+- [ ] **P9.T8 Fault surfaces and fault blocks** (inferred from logged blocks, or imported).
+- [ ] **P9.T9 Cover / weathering surfaces**, `geology surface`.
+- [ ] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
+- [ ] **P9.T11 Hole-out cross-validation for geology.**
+- [ ] **P9.T12 Geology constraint, project kind `geology`, block coding** (`lith`, `weathering`, `fault_block`, `density`).
+- [ ] **P9.T13 Rock model per fault block, throw diagnostic.**
+- [ ] **P9.T14 Build spec, `geology build`, API, job-log replay, scene manifest.**
+- [ ] **P9.T15 Viewer Geology group and panel** (with the provenance tables).
+- [ ] **P9.T16 Synthetic gate:** the whole chain through the CLI against the targets in `geology_contracts.md` 14.
+- [ ] **P9.T17-T19 Real deposits** (git-ignored data and notes; nothing of them in tracked files).
+- [ ] **P9.T20 STATUS, README, research update.**
+
 ## 5. Dependency map
 
 ```
