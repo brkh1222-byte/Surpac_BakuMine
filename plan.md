@@ -231,7 +231,7 @@ software / inputs still needed.
 - [x] **P9.T9 Cover / weathering surfaces**, `geology surface`.
 - [x] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
 - [x] **P9.T11 Hole-out cross-validation for geology.**
-- [ ] **P9.T12 Geology constraint, project kind `geology`, block coding** (`lith`, `weathering`, `fault_block`, `density`).
+- [x] **P9.T12 Geology constraint, project kind `geology`, block coding** (`lith`, `weathering`, `fault_block`, `density`).
 - [ ] **P9.T13 Rock model per fault block, throw diagnostic.**
 - [ ] **P9.T14 Build spec, `geology build`, API, job-log replay, scene manifest.**
 - [ ] **P9.T15 Viewer Geology group and panel** (with the provenance tables).

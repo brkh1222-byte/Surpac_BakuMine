@@ -45,6 +45,13 @@ A :class:`Constraint` answers two questions:
     conservative but can report ``STRADDLE`` where the parts' boundaries
     cancel.
 
+    The one exception is :class:`GeologyConstraint`: it samples the labels
+    of a geology model at the 8 corners and the centre of each box and is
+    **not conservative** (research.md 5.7.6). A body thinner than a box can
+    pass between the 9 sample points and the box is then reported
+    ``INSIDE`` / ``OUTSIDE`` although the body cuts it. A combination that
+    contains a geology constraint is not conservative either.
+
 Primitives
 ----------
 ====================  =====================================================
@@ -61,6 +68,8 @@ Primitives
 :class:`RangeConstraint`    x / y / z coordinate ranges (bench / elevation
                             range) and i / j / k index ranges
 :class:`BlockIdConstraint`  an explicit set of block ids
+:class:`GeologyConstraint`  the label of a geology model (rock unit,
+                            weathering zone or fault block) is in a set
 ====================  =====================================================
 
 Sides are complementary: ``below`` is exactly ``not above`` and ``outside``
@@ -85,6 +94,8 @@ written into the JSON: a DTM or solid is referred to **by name**, and the
 name is turned into geometry by a *resolver* passed to ``mask`` /
 ``classify_boxes`` (:class:`GeometryResolver`; :class:`DictResolver` and
 :class:`FileResolver` are provided, and a project system can supply its own).
+A geology model is referred to by name in the same way; the resolver then
+also needs a ``geology(name)`` method (both provided resolvers have one).
 Planes, ranges, block ids and polygons given as coordinates are embedded.
 """
 
@@ -123,6 +134,7 @@ __all__ = [
     "DictResolver",
     "DtmConstraint",
     "FileResolver",
+    "GeologyConstraint",
     "GeometryResolver",
     "Not",
     "Or",
@@ -159,6 +171,12 @@ class GeometryResolver(Protocol):
 
     Implement these three methods to plug in a project system. Each raises
     ``KeyError`` (or :class:`ConstraintError`) for an unknown name.
+
+    A resolver that also serves :class:`GeologyConstraint` has a fourth
+    method ``geology(name)``, which returns an object with
+    ``labels(points, layer, exact=False)`` and ``categories(layer)``. It is
+    looked up with ``getattr`` and is not part of this protocol, so
+    resolvers written before the geology constraint stay valid.
     """
 
     def dtm(self, name: str) -> DTM: ...
@@ -176,10 +194,12 @@ class DictResolver:
         dtms: Mapping[str, DTM] | None = None,
         solids: Mapping[str, Mesh] | None = None,
         polygons: Mapping[str, Any] | None = None,
+        geologies: Mapping[str, Any] | None = None,
     ):
         self.dtms = dict(dtms or {})
         self.solids = dict(solids or {})
         self.polygons = dict(polygons or {})
+        self.geologies = dict(geologies or {})
 
     def dtm(self, name: str) -> DTM:
         return self.dtms[name]
@@ -190,15 +210,19 @@ class DictResolver:
     def polygon(self, name: str) -> np.ndarray:
         return np.asarray(self.polygons[name], dtype=np.float64)
 
+    def geology(self, name: str) -> Any:
+        return self.geologies[name]
+
 
 class FileResolver:
     """Resolver that loads geometry from numpy files in one directory.
 
     ``solid("ore")`` and ``dtm("topo")`` read ``<name>_vertices.npy`` and
     ``<name>_faces.npy``; ``polygon("pit")`` reads ``<name>.npy`` ((n, 2) or
-    (n, 3)). Names are plain file stems (letters, digits, ``_``, ``-``,
-    ``.``); anything that could leave the directory is rejected. Loaded
-    objects are cached.
+    (n, 3)). ``geology("demo")`` loads the geology model folder
+    ``demo.geology/``. Names are plain file stems (letters, digits, ``_``,
+    ``-``, ``.``); anything that could leave the directory is rejected.
+    Loaded objects are cached.
     """
 
     _NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*\Z")
@@ -238,6 +262,20 @@ class FileResolver:
             self._cache[key] = np.load(self._path(name, ".npy"), allow_pickle=False)
         return self._cache[key]
 
+    def geology(self, name: str) -> Any:
+        """The geology model in ``<directory>/<name>.geology/`` (loaded once)."""
+        key = ("geology", name)
+        if key not in self._cache:
+            if not isinstance(name, str) or not self._NAME.match(name) or ".." in name:
+                raise ConstraintError(f"invalid geology name {name!r}")
+            folder = self.directory / f"{name}.geology"
+            if not folder.is_dir():
+                raise KeyError(f"geology {name!r}: {folder} not found")
+            from bakumine.core.geology.model import GeologyModel  # lazy: a heavy import
+
+            self._cache[key] = GeologyModel.load(folder)
+        return self._cache[key]
+
 
 def _resolve(ref: Any, kind: str, resolver: Any) -> Any:
     if not isinstance(ref, str):
@@ -251,6 +289,27 @@ def _resolve(ref: Any, kind: str, resolver: Any) -> Any:
         return getattr(resolver, kind)(ref)
     except KeyError as exc:
         raise ConstraintError(f"unknown {kind} {ref!r}: {exc}") from None
+
+
+def _resolve_geology(ref: Any, resolver: Any) -> Any:
+    """The geology model of a :class:`GeologyConstraint`: the object itself or by name."""
+    if not isinstance(ref, str):
+        return ref
+    if resolver is None:
+        raise ConstraintError(
+            f"the constraint refers to the geology model {ref!r} by name; pass a resolver to "
+            "look it up (command line: --geometry-dir with the folder <name>.geology)"
+        )
+    lookup = getattr(resolver, "geology", None)
+    if lookup is None:
+        raise ConstraintError(
+            f"the resolver {type(resolver).__name__} cannot look up geology models "
+            f"(no geology(name) method); needed for {ref!r}"
+        )
+    try:
+        return lookup(ref)
+    except KeyError as exc:
+        raise ConstraintError(f"unknown geology {ref!r}: {exc}") from None
 
 
 def _reference(ref: Any, kind: str) -> str:
@@ -1272,6 +1331,145 @@ class BlockIdConstraint(Constraint):
     @classmethod
     def _from_dict(cls, data):
         return cls(data["ids"])
+
+
+class GeologyConstraint(Constraint):
+    """Blocks whose label in one layer of a geology model is in a set of categories.
+
+    Parameters
+    ----------
+    model : name of a geology model (looked up with ``resolver.geology(name)``), or
+        the model itself: any object with ``labels(points, layer, exact=False)``
+        (integer labels of world points ``(n, 3)``: the index into
+        ``categories(layer)``, -1 = no label) and ``categories(layer)``. With an
+        object the constraint cannot be saved.
+    layer : ``"lith"`` (rock units, cover, ``AIR``), ``"weathering"`` or
+        ``"fault_block"``.
+    values : the categories that count as inside, e.g. ``["SST", "SLT"]``. A
+        category the layer does not have raises :class:`ConstraintError` when the
+        constraint is evaluated.
+    side : ``"inside"`` (label in ``values``) or ``"outside"`` (the complement,
+        which includes the points without a label).
+    boundaries : how :meth:`classify_boxes` reports a box whose sample points
+        carry different labels. ``False`` (default): ``STRADDLE`` only when some,
+        but not all, of them are in ``values``. ``True``: ``STRADDLE`` whenever
+        their labels differ at all, also between two categories that are both in
+        or both out of ``values``. Sub-blocking on such a constraint refines along
+        **every** boundary of the layer in one pass (research.md 5.7.6); ``mask``
+        is not affected. Written to JSON only when true.
+
+    ``mask``: the label of the block centroid (world coordinates) is in ``values``.
+
+    ``classify_boxes``: the labels at the 8 corners and at the centre of each box
+    (model frame -> world with :meth:`BlockModelDefinition.local_to_world`): all 9 in
+    ``values`` gives ``INSIDE``, none ``OUTSIDE``, otherwise ``STRADDLE``. Unlike
+    every other geometric constraint this is **not conservative**: a body thinner
+    than the box can pass between the 9 points, so a dyke thinner than a parent
+    block can be missed by the sub-blocking in places, and a block reported
+    ``INSIDE`` can contain a sliver of another category. The centroid rule of
+    ``mask`` is not affected: what is lost is resolution, not consistency.
+
+    JSON: ``{"type": "geology", "model": "demo", "layer": "lith", "in": ["SST"],
+    "side": "inside"}``.
+    """
+
+    type_name = "geology"
+
+    _LAYERS: ClassVar[tuple[str, ...]] = ("lith", "weathering", "fault_block")
+
+    def __init__(
+        self,
+        model: str | Any,
+        layer: str = "lith",
+        values: Iterable[str] = (),
+        side: str = "inside",
+        *,
+        boundaries: bool = False,
+    ):
+        if not isinstance(model, str) and not (
+            callable(getattr(model, "labels", None))
+            and callable(getattr(model, "categories", None))
+        ):
+            raise ConstraintError(
+                "model must be the name of a geology model or an object with "
+                "labels(points, layer) and categories(layer)"
+            )
+        if layer not in self._LAYERS:
+            raise ConstraintError(f"layer must be one of {self._LAYERS}, got {layer!r}")
+        listed = [values] if isinstance(values, str) else list(values)
+        if not listed or not all(isinstance(v, str) for v in listed):
+            raise ConstraintError("values must be one or more category names")
+        if len(set(listed)) != len(listed):
+            raise ConstraintError("values lists a category twice")
+        self.model = model
+        self.layer = layer
+        self.values = tuple(listed)
+        self.side = _side(side, ("inside", "outside"))
+        self.boundaries = bool(boundaries)
+
+    def _labels(self, geology: Any, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(labels, label in ``values``) at world points ``(n, 3)``."""
+        categories = list(geology.categories(self.layer))
+        unknown = [v for v in self.values if v not in categories]
+        if unknown:
+            raise ConstraintError(
+                f"the geology layer {self.layer!r} has no categor"
+                f"{'y' if len(unknown) == 1 else 'ies'} {', '.join(map(repr, unknown))}; "
+                f"it has: {', '.join(categories)}"
+            )
+        labels = np.asarray(geology.labels(points, self.layer, exact=False))
+        if labels.shape != (len(points),):
+            raise ConstraintError(
+                f"the geology model returned labels of shape {labels.shape} for "
+                f"{len(points)} points"
+            )
+        wanted = np.array([categories.index(v) for v in self.values], dtype=np.int64)
+        return labels, np.isin(labels, wanted)
+
+    def mask(self, model, resolver=None):
+        geology = _resolve_geology(self.model, resolver)
+        _, inside = self._labels(geology, model.centroids())
+        return inside if self.side == "inside" else ~inside
+
+    def classify_boxes(self, definition, lo, hi, resolver=None):
+        geology = _resolve_geology(self.model, resolver)
+        lo, hi = _boxes(lo, hi)
+        points = np.empty((len(lo), 9, 3), dtype=np.float64)
+        points[:, :8] = definition.box_corners(lo, hi)
+        points[:, 8] = definition.local_to_world(0.5 * (lo + hi))
+        labels, inside = self._labels(geology, points.reshape(-1, 3))
+        inside = inside.reshape(-1, 9)
+        status = np.zeros(len(lo), dtype=np.int8)
+        status[inside.all(axis=1)] = INSIDE
+        status[~inside.any(axis=1)] = OUTSIDE
+        if self.side == "outside":
+            status = -status
+        if self.boundaries:
+            labels = labels.reshape(-1, 9)
+            status[(labels != labels[:, :1]).any(axis=1)] = STRADDLE
+        return status
+
+    def to_dict(self):
+        out = {
+            "type": self.type_name,
+            "model": _reference(self.model, "geology model"),
+            "layer": self.layer,
+            "in": list(self.values),
+            "side": self.side,
+        }
+        if self.boundaries:
+            out["boundaries"] = True
+        return out
+
+    @classmethod
+    def _from_dict(cls, data):
+        return cls(
+            data["model"],
+            data.get("layer", "lith"),
+            data["in"],
+            data.get("side", "inside"),
+            boundaries=bool(data.get("boundaries", False)),
+        )
 
 
 # --------------------------------------------------------------------------

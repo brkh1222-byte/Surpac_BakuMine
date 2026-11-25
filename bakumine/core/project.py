@@ -8,6 +8,7 @@
     solids/                 closed solids (OBJ)
     models/                 block model folders (``blockmodel.storage``)
     constraints/            constraint JSON files
+    geology/                geology model folders (``geology.model.GeologyModel.save``)
 
 ``path`` in the registry is relative to the project folder and always uses ``/``. Adding
 an object copies the file or folder into the project, byte for byte, so data read back are
@@ -48,6 +49,7 @@ KIND_FOLDERS: dict[str, str] = {
     "solid": "solids",
     "model": "models",
     "constraint": "constraints",
+    "geology": "geology",
 }
 KINDS = tuple(KIND_FOLDERS)
 
