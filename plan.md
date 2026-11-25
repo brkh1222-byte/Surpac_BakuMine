@@ -227,7 +227,7 @@ software / inputs still needed.
 - [x] **P9.T5 Viewer: 20 category colours and colour maps per code.**
 - [x] **P9.T6 Unit picks per hole with bounds.**
 - [x] **P9.T7 Multi-unit rock model (largest field), grid sampling, meshes, save / load.**
-- [ ] **P9.T8 Fault surfaces and fault blocks** (inferred from logged blocks, or imported).
+- [x] **P9.T8 Fault surfaces and fault blocks** (inferred from logged blocks, or imported).
 - [ ] **P9.T9 Cover / weathering surfaces**, `geology surface`.
 - [ ] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
 - [ ] **P9.T11 Hole-out cross-validation for geology.**
