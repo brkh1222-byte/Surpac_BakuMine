@@ -13,13 +13,63 @@
  */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
-import { Color, DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, NormalBlending, PlaneGeometry, ShaderMaterial } from 'three'
+import { Color, DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, NormalBlending, PlaneGeometry, ShaderMaterial, Vector3 } from 'three'
 import { useBlast } from '../state'
 import type { LayerProps } from './common'
 import { depthBelowCollars, DUST_DRAG_S, DUST_RISE, DUST_WIND, hash01, SOIL_THICKNESS_M } from './realism'
+import { SUN } from './terrain'
 
 const SOIL_DUST = '#b9a585'
 const ROCK_DUST = '#aaa49a'
+
+/**
+ * The shadow of a puff: the same centre and radius, slid along the sun's ray down to the
+ * height the puff started from (the ground there) and laid flat. A thin, soft, dark disc;
+ * many of them add up to the shadow of the cloud.
+ */
+const SHADOW_VERTEX = /* glsl */ `
+attribute vec3 aStart;
+attribute vec3 aVelocity;
+attribute vec4 aLife;
+attribute vec4 aTint;
+uniform float uTime;
+uniform float uTau;
+uniform vec3 uDrift;
+uniform vec3 uSun;
+varying vec2 vCorner;
+varying float vAge;
+varying float vOpacity;
+void main() {
+  float dt = (uTime - aLife.x) / 1000.0;
+  vCorner = position.xy * 2.0;
+  vAge = dt / aLife.y;
+  vOpacity = aTint.a;
+  if (dt <= 0.0 || dt >= aLife.y) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+  float lag = uTau * (1.0 - exp(-dt / uTau));
+  vec3 centre = aStart + aVelocity * lag + uDrift * (dt - lag);
+  float radius = aLife.z + aLife.w * sqrt(dt);
+  float height = max(centre.z - aStart.z, 0.0);
+  vec3 ground = vec3(centre.xy - uSun.xy / uSun.z * height, aStart.z + 0.35);
+  ground.xy += position.xy * 2.0 * radius;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(ground, 1.0);
+}
+`
+const SHADOW_FRAGMENT = /* glsl */ `
+varying vec2 vCorner;
+varying float vAge;
+varying float vOpacity;
+void main() {
+  float r = length(vCorner);
+  if (r >= 1.0) discard;
+  float life = smoothstep(0.0, 0.04, vAge) * (1.0 - smoothstep(0.35, 1.0, vAge));
+  float alpha = 0.3 * vOpacity * life * smoothstep(1.0, 0.2, r);
+  if (alpha < 0.002) discard;
+  gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
+}
+`
 
 const VERTEX = /* glsl */ `
 attribute vec3 aStart;
@@ -220,6 +270,26 @@ export function Dust({ bundle, origin }: LayerProps) {
     const out = new Mesh(geometry, material)
     out.frustumCulled = false
     out.renderOrder = 6
+    const shadowMaterial = new ShaderMaterial({
+      vertexShader: SHADOW_VERTEX,
+      fragmentShader: SHADOW_FRAGMENT,
+      uniforms: {
+        uTime: material.uniforms.uTime,
+        uTau: material.uniforms.uTau,
+        uDrift: material.uniforms.uDrift,
+        uSun: { value: new Vector3(...SUN).normalize() },
+      },
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    })
+    const shadow = new Mesh(geometry, shadowMaterial)
+    shadow.frustumCulled = false
+    shadow.renderOrder = 5
+    out.add(shadow)
     quad.dispose()
     return out
   }, [bundle, origin])
@@ -228,6 +298,7 @@ export function Dust({ bundle, origin }: LayerProps) {
     return () => {
       mesh.geometry.dispose()
       ;(mesh.material as ShaderMaterial).dispose()
+      for (const child of mesh.children) ((child as Mesh).material as ShaderMaterial).dispose()
     }
   }, [mesh, invalidate])
   useFrame(() => {

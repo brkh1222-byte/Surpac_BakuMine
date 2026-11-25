@@ -998,6 +998,22 @@ Second pass (task B14):
 - **Dust edge.** The lower edge of a puff thins out, which hides most of the hard line where it met the ground.
 - **Camera.** In the site view the camera cannot go below 1.6 m above the topography.
 
-Not done: dust casts no shadow and is not lit by the flash; machines do not move; the terrain is still
+Third pass (task B15):
+
+- **Dust shadow.** Every puff also draws a thin dark disc on the ground: its centre slid along the sun's ray down
+  to the height the puff started from, with the puff's radius. The discs add up to the shadow of the cloud. The
+  ground under the cloud is taken as level at the start height, so on a slope the shadow is slightly misplaced.
+- **Machines move.** While the blast plays the upper structure of each excavator swings up to 7 degrees and its
+  bucket curls up to 9 degrees, slowly, as sines of the player time with a phase per machine. Invented idle
+  motion; boom and stick stay put.
+- **Ground up close.** Within 150 m the picture gets patches of gravel (greyer, rougher) and sand (paler, with
+  ripples), small bright stones, and about 7000 dry grass tufts of 10 to 35 cm, half of them around the machines.
+  All from fixed noise; none of it is surveyed.
+- **Sound, measured.** The rumble rendered off-line (`rumbleCheck`): peak 0.94 of full scale at the loudest
+  setting, above a tenth of its peak for 1.25 s, 78 % of its energy below 200 Hz. In the browser it played once
+  when the player time passed the computed arrival (2.44 s at 828 m), with the audio context running. How it
+  sounds on a given loudspeaker was not judged by ear.
+
+Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

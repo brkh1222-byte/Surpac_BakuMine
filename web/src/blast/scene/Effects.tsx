@@ -197,7 +197,7 @@ export function StayAboveGround({ origin }: Pick<LayerProps, 'origin'>) {
 }
 
 /** A rumble made in the browser: filtered noise with a slow decay over a falling low tone. */
-function rumble(context: AudioContext, loudness: number): void {
+function rumble(context: BaseAudioContext, loudness: number): void {
   const now = context.currentTime
   const seconds = 2.6
   const buffer = context.createBuffer(1, Math.floor(context.sampleRate * seconds), context.sampleRate)
@@ -217,7 +217,7 @@ function rumble(context: AudioContext, loudness: number): void {
   const gain = context.createGain()
   gain.gain.setValueAtTime(0.0001, now)
   gain.gain.exponentialRampToValueAtTime(loudness, now + 0.04)
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + seconds)
+  gain.gain.exponentialRampToValueAtTime(loudness * 0.02, now + seconds)
   noise.connect(filter).connect(gain).connect(context.destination)
   noise.start(now)
   const tone = context.createOscillator()
@@ -230,6 +230,39 @@ function rumble(context: AudioContext, loudness: number): void {
   tone.connect(toneGain).connect(context.destination)
   tone.start(now)
   tone.stop(now + 1.6)
+}
+
+/**
+ * The rumble rendered off-line and measured, to check the signal without loudspeakers:
+ * peak and RMS level, how long it stays above a tenth of its peak, and the share of its
+ * energy below 200 Hz (by a one-pole low-pass, cut-off 200 Hz).
+ */
+export async function rumbleCheck(loudness = 0.5): Promise<{ peak: number; rms: number; seconds: number; lowShare: number }> {
+  const rate = 44100
+  const context = new OfflineAudioContext(1, rate * 3, rate)
+  rumble(context, loudness)
+  const samples = (await context.startRendering()).getChannelData(0)
+  let peak = 0
+  let energy = 0
+  let low = 0
+  let last = 0
+  let state = 0
+  const k = 1 - Math.exp((-2 * Math.PI * 200) / rate)
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i]
+    peak = Math.max(peak, Math.abs(v))
+    energy += v * v
+    state += k * (v - state)
+    low += state * state
+  }
+  for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i]) > 0.1 * peak) last = i
+  return { peak, rms: Math.sqrt(energy / samples.length), seconds: last / rate, lowShare: energy > 0 ? low / energy : 0 }
+}
+
+/** What the sound did last, for a check from the browser console (development builds). */
+export const soundLog: { played: number; contextState: string; distance: number; arrivalMs: number } = { played: 0, contextState: 'none', distance: 0, arrivalMs: 0 }
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  Object.assign(window, { __blastSound: { check: rumbleCheck, log: soundLog } })
 }
 
 /** Plays the rumble once per run, when the player time passes the arrival of the sound at the camera. */
@@ -251,6 +284,10 @@ export function BlastSound({ bundle, origin }: LayerProps) {
         void s.context.resume()
         // Quieter with distance (inverse distance from 100 m), never silent.
         rumble(s.context, Math.min(0.5, Math.max(0.08, 0.5 * (100 / Math.max(100, distance)))))
+        soundLog.played += 1
+        soundLog.contextState = s.context.state
+        soundLog.distance = distance
+        soundLog.arrivalMs = arrival
       } catch {
         // No audio device or not allowed: the view stays silent.
       }

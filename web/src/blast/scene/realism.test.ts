@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   blastCentre, depthBelowCollars, DUST_DRAG_S, DUST_RISE, DUST_WIND, dustCentre, dustRadius, EQUIPMENT_MARGIN_M, equipmentSites, fragmentOffset,
-  fragmentSize, hash01, SHAKE_DECAY_MS, shakeEnvelope,
+  fragmentSize, hash01, machineIdle, SHAKE_DECAY_MS, shakeEnvelope,
 } from './realism'
 import { heightSampler } from './topography'
 
@@ -129,6 +129,26 @@ describe('camera tremble', () => {
     expect(shakeEnvelope([0], 160, 800, cp)).toBeCloseTo(150 / 800, 12)
     expect(shakeEnvelope([0], 159, 800, cp)).toBe(0)
     expect(shakeEnvelope([], 1000, 100, cp)).toBe(0)
+  })
+})
+
+describe('waiting machines', () => {
+  it('swing and curl stay small, repeat with the time and differ between machines', () => {
+    const deg = Math.PI / 180
+    let swing = 0
+    let curl = 0
+    for (let t = 0; t <= 60; t += 0.05) {
+      const pose = machineIdle(t, 2.3)
+      swing = Math.max(swing, Math.abs(pose.swing))
+      curl = Math.max(curl, Math.abs(pose.curl))
+    }
+    expect(swing).toBeLessThanOrEqual(7 * deg + 1e-12)
+    expect(swing).toBeGreaterThan(6.9 * deg)
+    expect(curl).toBeLessThanOrEqual(9 * deg + 1e-12)
+    expect(curl).toBeGreaterThan(8.9 * deg)
+    expect(machineIdle(3.2, 0)).toEqual(machineIdle(3.2, 0))
+    expect(machineIdle(3.2, 0).swing).not.toBeCloseTo(machineIdle(3.2, 2.3).swing, 3)
+    expect(machineIdle(0, 0).swing).toBe(0)
   })
 })
 

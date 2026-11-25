@@ -131,6 +131,18 @@ export interface EquipmentSite {
   swing: number
 }
 
+/**
+ * Pose of a waiting machine `seconds` into the run: a slow swing of the upper structure
+ * (up to 7 degrees) and curl of the bucket (up to 9 degrees), two sines with a phase per
+ * machine so the two do not move together. Invented motion, to show the machines are alive.
+ */
+export function machineIdle(seconds: number, phase: number): { swing: number; curl: number } {
+  return {
+    swing: ((7 * Math.PI) / 180) * Math.sin(0.55 * seconds + phase),
+    curl: ((9 * Math.PI) / 180) * Math.sin(0.9 * seconds + 1.7 * phase + 0.6),
+  }
+}
+
 /** Centre of the blast in plan: the mean of the hole collars (the muckpile origin without holes). */
 export function blastCentre(bundle: Pick<BlastBundle, 'timeline' | 'muckpile'>): [number, number, number] {
   const holes = bundle.timeline.holes

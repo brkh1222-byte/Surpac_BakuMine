@@ -6,13 +6,15 @@
  *
  * The parts are side profiles (track loop, house, cab, gooseneck boom, stick, bucket)
  * extruded across the machine with bevelled edges, plus hydraulic rams between their
- * joints. Local axes: x forward, y left, z up, standing on z = 0.
+ * joints. Local axes: x forward, y left, z up, standing on z = 0. While the blast plays the
+ * machines idle: the upper structure swings a few degrees and the bucket curls.
  */
-import { useThree } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { DirectionalLight, ExtrudeGeometry, Shape, type BufferGeometry, type Group } from 'three'
 import type { LayerProps } from './common'
-import { equipmentSites } from './realism'
+import { useBlast } from '../state'
+import { equipmentSites, machineIdle } from './realism'
 import { SUN } from './terrain'
 import { useTopography } from './topography'
 
@@ -178,7 +180,9 @@ function Track({ y, parts }: { y: number; parts: Parts }) {
 }
 
 /** One excavator. `swing` turns the upper structure against the tracks. */
-export function Excavator({ swing = 0, parts }: { swing?: number; parts: Parts }) {
+export function Excavator({ swing = 0, phase = 0, parts }: { swing?: number; phase?: number; parts: Parts }) {
+  const upper = useRef<Group>(null)
+  const bucket = useRef<Group>(null)
   // Joint angles of the side view, counter-clockwise from forward.
   const boomAngle = (40 * Math.PI) / 180
   const stickAngle = boomAngle - (118 * Math.PI) / 180
@@ -188,6 +192,14 @@ export function Excavator({ swing = 0, parts }: { swing?: number; parts: Parts }
   const bucketPivot = add(stickPivot, rotate([3.1, 0], stickAngle))
   const onBoom = (p: Xz) => add(boomPivot, rotate(p, boomAngle))
   const onStick = (p: Xz) => add(stickPivot, rotate(p, stickAngle))
+  // The operator is waiting: the upper structure swings a few degrees and the bucket curls,
+  // slowly, as a function of the player time (so scrubbing shows the same pose again).
+  useFrame(() => {
+    const seconds = useBlast.getState().t / 1000
+    const idle = machineIdle(seconds, phase)
+    if (upper.current) upper.current.rotation.z = swing + idle.swing
+    if (bucket.current) bucket.current.rotation.y = -(bucketAngle + idle.curl)
+  })
   return (
     <group>
       <Track y={1.28} parts={parts} />
@@ -201,7 +213,7 @@ export function Excavator({ swing = 0, parts }: { swing?: number; parts: Parts }
         <cylinderGeometry args={[0.9, 0.95, 0.24, 28]} />
         <meshStandardMaterial color={STEEL} roughness={0.6} metalness={0.5} />
       </mesh>
-      <group position={[0, 0, 1.02]} rotation={[0, 0, swing]}>
+      <group ref={upper} position={[0, 0, 1.02]} rotation={[0, 0, swing]}>
         <mesh geometry={parts.house}>
           <meshStandardMaterial color={YELLOW} roughness={0.5} metalness={0.15} />
         </mesh>
@@ -268,7 +280,7 @@ export function Excavator({ swing = 0, parts }: { swing?: number; parts: Parts }
               <meshStandardMaterial color={YELLOW} roughness={0.5} metalness={0.15} />
             </mesh>
           </group>
-          <group position={[bucketPivot[0], 0, bucketPivot[1]]} rotation={[0, -bucketAngle, 0]}>
+          <group ref={bucket} position={[bucketPivot[0], 0, bucketPivot[1]]} rotation={[0, -bucketAngle, 0]}>
             <mesh geometry={parts.bucket}>
               <meshStandardMaterial color={STEEL} roughness={0.55} metalness={0.6} />
             </mesh>
@@ -358,7 +370,7 @@ export function Equipment({ bundle, origin }: LayerProps) {
       <group ref={machines}>
         {sites.map((s, i) => (
           <group key={i} position={[s.x - origin[0], s.y - origin[1], s.z - origin[2]]} rotation={[0, 0, s.heading]}>
-            <Excavator swing={s.swing} parts={parts} />
+            <Excavator swing={s.swing} phase={i * 2.3} parts={parts} />
           </group>
         ))}
       </group>

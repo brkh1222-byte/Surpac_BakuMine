@@ -141,10 +141,21 @@ void main() {
   float near = 1.0 - smoothstep(25.0, 150.0, vDist);
   float speck = smoothstep(0.74, 0.84, vnoise(vPos * 5.5)) * near;
   base *= 1.0 - 0.32 * speck;
+  // Patches of gravel (greyer, rougher) and of sand (paler, smoother) a few metres across,
+  // fine sand ripples, and small bright stones: within 150 m only.
+  float soil = fbm(vPos * 0.23 + 3.7);
+  float gravel = smoothstep(0.52, 0.66, soil) * near;
+  float sand = smoothstep(0.48, 0.34, soil) * near;
+  float lum = dot(base, vec3(0.299, 0.587, 0.114));
+  base = mix(base, vec3(lum) * vec3(0.98, 0.96, 0.93), 0.35 * gravel);
+  base = mix(base, base * vec3(1.1, 1.06, 0.98), 0.5 * sand);
+  float pebble = smoothstep(0.8, 0.9, vnoise(vPos * 9.0 + 5.1)) * near * (0.4 + gravel);
+  base = mix(base, vec3(0.62, 0.6, 0.56), 0.45 * pebble);
+  float ripple = sin(dot(vPos.xy, vec2(2.3, 1.1)) + 4.0 * fbm(vPos * 0.6)) * sand;
 
   // Fine relief: the brightness of the picture as a height of "bump" metres, plus near the
   // camera a rough ground of the same noise as the grain (a few centimetres) and the pebbles.
-  float h = dot(base, vec3(0.299, 0.587, 0.114)) * bump + near * (0.22 * grain + 0.05 * speck + 0.04 * vnoise(vPos * 14.0));
+  float h = dot(base, vec3(0.299, 0.587, 0.114)) * bump + near * (0.22 * grain + 0.05 * speck + 0.04 * vnoise(vPos * 14.0) + 0.07 * pebble + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0));
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
