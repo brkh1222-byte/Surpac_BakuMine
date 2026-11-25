@@ -235,7 +235,7 @@ software / inputs still needed.
 - [x] **P9.T13 Rock model per fault block, throw diagnostic.**
 - [x] **P9.T14 Build spec, `geology build`, API, job-log replay, scene manifest.**
 - [x] **P9.T15 Viewer Geology group and panel** (with the provenance tables).
-- [ ] **P9.T16 Synthetic gate:** the whole chain through the CLI against the targets in `geology_contracts.md` 14.
+- [x] **P9.T16 Synthetic gate:** the whole chain through the CLI against the targets in `geology_contracts.md` 14.
 - [ ] **P9.T17-T19 Real deposits** (git-ignored data and notes; nothing of them in tracked files).
 - [ ] **P9.T20 STATUS, README, research update.**
 

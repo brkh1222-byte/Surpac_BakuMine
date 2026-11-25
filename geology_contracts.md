@@ -1101,3 +1101,17 @@ disclosed in the progress log.
 | Volume per lith unit after coding against `truth.json` | within 5 % | T12, T16 |
 | Agreement with LoopStructural on the unfaulted sequence | >= 95 % of grid points | T10 |
 | Hole-out accuracy (10 folds) | reported; >= 0.85 | T11, T16 |
+
+Recorded results of the gate (T16, 2026-11-25; `tests/geology/test_geology_gate.py`, CLI only):
+- No target was changed. Coded volumes are asserted twice, whole box (the contract's reading, against
+  `truth.json`) and inside the drilled hull; a miss is a strict xfail with the measured number.
+- Misses on layered-small: whole-box volume of AND (-6.2 %) and DIO (+29.5 %), both extrapolation beyond the
+  holes; DIO inside the hull (-8.8 %), a rock-model miss.
+- Misses on the full preset, first measured here: SST/SLT contact RMS 10.29 m (median error 0.97 m; on 8 % of
+  the columns, in a band along the down-dip edge of the drilling where the contact is near the hole bottoms, the
+  contact is 10 to 68 m too deep; 2.18 m without them); the build's throw diagnostic -12.5 m (independent
+  measurement 34.3 m); whole-box volumes of SST, SLT, AND, DIO, GRD (extrapolation); DIO inside the hull (-8.1 %).
+- The 8 m dyke needs `blockmodel create --max-depth 3` (1.25 m sub-blocks) to code within 5 %; at depth 2 it is
+  +10 %.
+- Open: the deep-contact band and the throw diagnostic on the full preset are not root-caused.
+
