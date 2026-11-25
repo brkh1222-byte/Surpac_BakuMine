@@ -2087,3 +2087,22 @@ input {
 }
 
 /* ==== end Blast BakuMine ============================================================ */
+
+.blast-imagery {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.blast-imagery h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.blast-imagery label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.blast-imagery .blast-note {
+  margin: 0;
+}

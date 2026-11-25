@@ -7,12 +7,18 @@ export function LayersPanel() {
   const opacity = useBlast((s) => s.groundOpacity)
   const source = useBlast((s) => s.source)
   const fragmentScale = useBlast((s) => s.fragmentScale)
+  const imagery = useBlast((s) => s.imagery)
+  const imageryCrs = useBlast((s) => s.imageryCrs)
+  const imageryPossible = useBlast((s) => s.imageryPossible)
+  const imageryStatus = useBlast((s) => s.imageryStatus)
+  const imageryError = useBlast((s) => s.imageryError)
   const s = useBlast.getState()
+  const shown = (id: string) => (id !== 'topography' || source === 'api') && (id !== 'satellite' || imagery !== null)
   return (
     <section className="blast-section">
       <h3>Layers</h3>
       <div className="blast-layers">
-        {LAYERS.filter((l) => l.id !== 'topography' || source === 'api').map((l) => (
+        {LAYERS.filter((l) => shown(l.id)).map((l) => (
           <label key={l.id}>
             <input type="checkbox" data-testid={`blast-layer-${l.id}`} checked={layers[l.id]} onChange={(e) => s.setLayer(l.id, e.target.checked)} /> {l.label}
           </label>
@@ -29,6 +35,32 @@ export function LayersPanel() {
           <input type="range" min={1} max={20} step={1} value={fragmentScale} data-testid="blast-fragment-scale" onChange={(e) => s.setFragmentScale(Number(e.target.value))} />
         </label>
       </div>
+      {source === 'api' && imageryPossible && (
+        <div className="blast-imagery" data-testid="blast-imagery">
+          <h4>Satellite imagery</h4>
+          <label>
+            Coordinate system
+            <input
+              type="text"
+              value={imageryCrs}
+              placeholder="EPSG:32633"
+              data-testid="blast-imagery-crs"
+              onChange={(e) => s.setImageryCrs(e.target.value)}
+            />
+          </label>
+          <button type="button" data-testid="blast-imagery-fetch" disabled={imageryStatus === 'loading'} onClick={() => void s.fetchImagery()}>
+            {imageryStatus === 'loading' ? 'Fetching…' : imagery ? 'Fetch again' : 'Fetch satellite imagery'}
+          </button>
+          <p className="blast-note">Fetching sends the site's location (map tile numbers) to Esri. Nothing is sent until you press the button.</p>
+          {imageryError && <p className="blast-note blast-note-warn">{imageryError}</p>}
+          {imagery && (
+            <p className="blast-note">
+              {imagery.attribution}. About {imagery.metres_per_pixel.toFixed(1)} m per pixel
+              {imagery.fetched && imagery.fetched.missing > 0 ? `; ${imagery.fetched.missing} tiles missing` : ''}.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   )
 }

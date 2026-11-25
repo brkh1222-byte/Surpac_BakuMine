@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { loadDefaults, loadResult, simulate as apiSimulate, type Loaded } from './api'
 import { DEFAULT_DESIGN, makeDemoBundle } from './fixture'
+import { fetchImagery as apiFetchImagery, loadImagery as apiLoadImagery, type ImageryPlan } from './imagery'
 import { lastFire, timelineEnd } from './math'
 import type { BlastBundle, DesignParams } from './types'
 
@@ -22,6 +23,7 @@ export const LAYERS = [
   { id: 'airblast', label: 'Airblast rings' },
   { id: 'monitors', label: 'Monitors' },
   { id: 'topography', label: 'Project topography' },
+  { id: 'satellite', label: 'Satellite imagery' },
 ] as const
 
 export type LayerId = (typeof LAYERS)[number]['id']
@@ -55,7 +57,19 @@ export interface BlastState {
   /** Fragments drawn this many times their size. */
   fragmentScale: number
 
+  /** Satellite imagery of the project (null until fetched once). */
+  imagery: ImageryPlan | null
+  /** Coordinate system typed for the imagery fetch (prefilled from the project). */
+  imageryCrs: string
+  /** The API serves a project, so imagery can be fetched. */
+  imageryPossible: boolean
+  imageryStatus: 'idle' | 'loading'
+  imageryError: string | null
+
   setLoaded: (loaded: Loaded) => void
+  loadImagery: () => Promise<void>
+  fetchImagery: () => Promise<void>
+  setImageryCrs: (crs: string) => void
   load: (demoOnly: boolean) => Promise<void>
   simulate: () => Promise<void>
   patchDesign: (patch: Partial<DesignParams>) => void
@@ -89,11 +103,36 @@ export const useBlast = create<BlastState>((set, get) => ({
 
   layers: {
     ground: true, holes: true, labels: true, allLabels: false, waves: true, ppv: false, damage: true, throw: true,
-    flyrock: true, airblast: false, monitors: true, topography: true,
+    flyrock: true, airblast: false, monitors: true, topography: true, satellite: true,
   },
   exaggerateHoles: true,
   groundOpacity: 1,
   fragmentScale: 1,
+
+  imagery: null,
+  imageryCrs: '',
+  imageryPossible: false,
+  imageryStatus: 'idle',
+  imageryError: null,
+
+  loadImagery: async () => {
+    try {
+      const state = await apiLoadImagery()
+      set((s) => ({ imagery: state.plan, imageryPossible: state.project, imageryCrs: s.imageryCrs || state.crs || '' }))
+    } catch {
+      set({ imagery: null, imageryPossible: false })
+    }
+  },
+  fetchImagery: async () => {
+    set({ imageryStatus: 'loading', imageryError: null })
+    try {
+      const state = await apiFetchImagery(get().imageryCrs)
+      set((s) => ({ imagery: state.plan, imageryStatus: 'idle', imageryCrs: state.crs ?? s.imageryCrs, layers: { ...s.layers, satellite: true } }))
+    } catch (error) {
+      set({ imageryStatus: 'idle', imageryError: error instanceof Error ? error.message : String(error) })
+    }
+  },
+  setImageryCrs: (imageryCrs) => set({ imageryCrs }),
 
   setLoaded: ({ bundle, source, reason }) =>
     set({ bundle, source, reason, status: 'ready', error: null, t: 0, playing: false, tEnd: timelineEnd(bundle), lastFire: lastFire(bundle) }),
@@ -107,6 +146,7 @@ export const useBlast = create<BlastState>((set, get) => ({
     const defaults = await loadDefaults()
     if (defaults) set({ design: defaults })
     get().setLoaded(await loadResult(get().design))
+    void get().loadImagery()
   },
 
   simulate: async () => {

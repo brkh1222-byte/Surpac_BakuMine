@@ -3,6 +3,10 @@
     GET  /blast/defaults    default request for the open project (or the demo bench)
     POST /blast/simulate    request JSON -> result bundle (plan_blast.md section 3)
     GET  /blast/result      the latest saved bundle of the open project, 404 when none
+    GET  /blast/imagery     satellite imagery of the project: the saved tile plan, or what is needed
+    POST /blast/imagery     download satellite tiles over the topography (an explicit action:
+                            the tile numbers tell the imagery provider where the site is)
+    GET  /blast/imagery/tile/{z}/{y}/{x}   one downloaded tile (never fetched on demand)
 
 When the server serves a project with a topography, the blast is put on it (the first
 ``dtm`` object, or the one named by ``topo`` in the body) and the damage is computed for
@@ -23,10 +27,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from bakumine.api.project_source import ProjectSceneSource
 from bakumine.api.routes_ops import Json, Source
 from bakumine.api.scene import SceneSource
+from bakumine.blast import imagery
 from bakumine.blast import simulate as sim
 from bakumine.blast.bench import project_site
 
@@ -35,6 +41,9 @@ router = APIRouter(prefix="/api/v1/blast", tags=["blast"])
 BLAST_FOLDER = "blast"
 RESULT_FILE = "latest.json"
 DESIGN_FILE = "latest_design.json"
+IMAGERY_FOLDER = "imagery"
+IMAGERY_PLAN = "plan.json"
+IMAGERY_MAX_TILES = 400
 
 
 def _folder(source: SceneSource) -> Path | None:
@@ -107,3 +116,84 @@ def get_result(source: Source) -> dict[str, Any]:
         return json.loads(file.read_text(encoding="utf-8"))
     except ValueError:
         raise HTTPException(404, "the saved blast result cannot be read: run it again") from None
+
+
+def _database_crs(folder: Path) -> str | None:
+    """The coordinate system of the project's first drillhole database, when it states one."""
+    from bakumine.core.drillholes.importer import load_database
+    from bakumine.core.project import Project
+
+    project = Project.open(folder)
+    for obj in project.list("database"):
+        try:
+            crs = load_database(project.path_of(obj)).metadata.crs
+        except (OSError, ValueError):
+            continue
+        if crs:
+            return str(crs)
+    return None
+
+
+def _imagery_plan(folder: Path) -> dict[str, Any] | None:
+    file = folder / BLAST_FOLDER / IMAGERY_FOLDER / IMAGERY_PLAN
+    if not file.is_file():
+        return None
+    try:
+        return json.loads(file.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+
+
+@router.get("/imagery")
+def get_imagery(source: Source) -> dict[str, Any]:
+    folder = _folder(source)
+    if folder is None:
+        return {"available": False, "plan": None, "crs": None, "project": False}
+    plan = _imagery_plan(folder)
+    crs = plan["crs"] if plan else _database_crs(folder)
+    return {"available": plan is not None, "plan": plan, "crs": crs, "project": True}
+
+
+@router.post("/imagery")
+def post_imagery(body: Json, source: Source) -> dict[str, Any]:
+    """Body: ``{"crs": "EPSG:...", "rectangle": [xmin, ymin, xmax, ymax], "max_tiles": 100}``;
+    ``crs`` defaults to the drillhole database's, ``rectangle`` to the topography's extent."""
+    folder = _folder(source)
+    if folder is None:
+        raise HTTPException(400, "satellite imagery needs an open project with real coordinates")
+    try:
+        crs = body.get("crs") or _database_crs(folder)
+        if not crs:
+            raise ValueError(
+                "the project does not state its coordinate system: give one, e.g. EPSG:32633"
+            )
+        rectangle = body.get("rectangle")
+        if rectangle is None:
+            bounds = project_site(folder, _optional_id(body, "topo"))[0].bounds
+            rectangle = [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]]
+        max_tiles = int(body.get("max_tiles", 100))
+        if not 1 <= max_tiles <= IMAGERY_MAX_TILES:
+            raise ValueError(f"max_tiles must be between 1 and {IMAGERY_MAX_TILES}")
+        plan = imagery.plan([float(v) for v in rectangle], str(crs), max_tiles=max_tiles)
+        target = folder / BLAST_FOLDER / IMAGERY_FOLDER
+        counts = imagery.fetch(plan, target)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from None
+    if counts["downloaded"] + counts["cached"] == 0:
+        raise HTTPException(400, "the imagery server has no tiles for this area")
+    plan["fetched"] = counts
+    _write_atomic(target / IMAGERY_PLAN, json.dumps(plan, allow_nan=False))
+    return {"available": True, "plan": plan, "crs": plan["crs"], "project": True}
+
+
+@router.get("/imagery/tile/{z}/{y}/{x}")
+def get_imagery_tile(z: int, y: int, x: int, source: Source) -> FileResponse:
+    folder = _folder(source)
+    file = (
+        None
+        if folder is None
+        else imagery.tile_path(folder / BLAST_FOLDER / IMAGERY_FOLDER, z, x, y)
+    )
+    if file is None or not file.is_file():
+        raise HTTPException(404, "this tile was not downloaded")
+    return FileResponse(file, media_type="image/jpeg")

@@ -5,10 +5,11 @@
  */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
-import { BufferAttribute, BufferGeometry, DoubleSide, Plane, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, DoubleSide, Plane, Vector3, type Texture } from 'three'
 import { fetchManifest, fetchMesh, type MeshData } from '../../api/client'
 import { worldToScene } from '../../scene/origin'
 import { useViewer } from '../../state/store'
+import { uvArray, useSatelliteTexture, type ImageryPlan } from '../imagery'
 import { landedFraction, sortedFinite } from '../math'
 import { useBlast } from '../state'
 import type { GridSpec } from '../types'
@@ -50,10 +51,29 @@ const TOPOGRAPHY_DROP = 0.5
 
 const finite = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v)
 
+/** Brightness of the satellite picture on a slope of `gradient` (rise / run): 1 up to 35 degrees, 0.45 from 60 degrees. */
+export function steepShade(gradient: number): number {
+  const lo = Math.tan((35 * Math.PI) / 180)
+  const hi = Math.tan((60 * Math.PI) / 180)
+  const t = Math.min(1, Math.max(0, (gradient - lo) / (hi - lo)))
+  return 1 - 0.55 * t * t * (3 - 2 * t)
+}
+
+/** The satellite mosaic and its plan while the layer is on and the tiles are loaded. */
+function useSatellite(): { plan: ImageryPlan; texture: Texture } | null {
+  const plan = useBlast((s) => s.imagery)
+  const on = useBlast((s) => s.layers.satellite && s.source === 'api')
+  const invalidate = useThree((s) => s.invalidate)
+  const texture = useSatelliteTexture(plan, on)
+  useEffect(() => invalidate(), [texture, invalidate])
+  return useMemo(() => (plan && texture ? { plan, texture } : null), [plan, texture])
+}
+
 export function Muckpile({ bundle, origin }: LayerProps) {
   const theme = useViewer((s) => s.theme)
   const opacity = useBlast((s) => s.groundOpacity)
   const grid = bundle.muckpile
+  const satellite = useSatellite()
 
   const built = useMemo(() => {
     const { z_before: zb, z_after: za } = grid
@@ -66,15 +86,20 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     return { g, landed: sortedFinite(bundle.throw.particles.t_land_ms), state: { f: -1, theme: '' } }
   }, [grid, origin, bundle])
   useEffect(() => () => built.g.dispose(), [built])
+  useEffect(() => {
+    if (satellite) built.g.setAttribute('uv', new BufferAttribute(uvArray(satellite.plan, built.g.getAttribute('position').array, origin), 2))
+    built.state.f = -1 // recolour: the ground is white under the picture
+  }, [built, satellite, origin])
 
   useFrame(() => {
     const f = landedFraction(built.landed, useBlast.getState().t)
-    if (f === built.state.f && theme === built.state.theme) return
+    const key = satellite ? `${theme}+satellite` : theme
+    if (f === built.state.f && key === built.state.theme) return
     built.state.f = f
-    built.state.theme = theme
+    built.state.theme = key
     const position = built.g.getAttribute('position') as BufferAttribute
     const color = built.g.getAttribute('color') as BufferAttribute
-    const ground = hexLinear(BLAST_COLORS[theme].ground)
+    const ground = satellite ? [1, 1, 1] : hexLinear(BLAST_COLORS[theme].ground)
     const muck = hexLinear(BLAST_COLORS[theme].muck)
     const { z_before: zb, z_after: za } = grid
     for (let i = 0; i < position.count; i++) {
@@ -87,6 +112,19 @@ export function Muckpile({ bundle, origin }: LayerProps) {
       const m = Math.min(1, Math.abs(b - a) / 0.5) * f
       color.setXYZ(i, ground[0] + (muck[0] - ground[0]) * m, ground[1] + (muck[1] - ground[1]) * m, ground[2] + (muck[2] - ground[2]) * m)
     }
+    if (satellite) {
+      // A picture taken from above smears down a steep face: cut faces are darkened to read as rock.
+      const [nx, ny] = grid.shape
+      for (let ix = 0; ix < nx; ix++) {
+        for (let iy = 0; iy < ny; iy++) {
+          const i = ix * ny + iy
+          const zx = position.getZ(Math.min(nx - 1, ix + 1) * ny + iy) - position.getZ(Math.max(0, ix - 1) * ny + iy)
+          const zy = position.getZ(ix * ny + Math.min(ny - 1, iy + 1)) - position.getZ(ix * ny + Math.max(0, iy - 1))
+          const shade = steepShade(Math.hypot(zx, zy) / (2 * grid.spacing))
+          if (shade < 1) color.setXYZ(i, color.getX(i) * shade, color.getY(i) * shade, color.getZ(i) * shade)
+        }
+      }
+    }
     position.needsUpdate = true
     color.needsUpdate = true
     built.g.computeVertexNormals()
@@ -95,7 +133,11 @@ export function Muckpile({ bundle, origin }: LayerProps) {
 
   return (
     <mesh geometry={built.g} renderOrder={2} frustumCulled={false}>
-      <meshStandardMaterial vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
+      {satellite ? (
+        <meshBasicMaterial key="satellite" vertexColors map={satellite.texture} side={DoubleSide} transparent={opacity < 1} opacity={opacity} />
+      ) : (
+        <meshStandardMaterial key="plain" vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
+      )}
     </mesh>
   )
 }
@@ -103,6 +145,7 @@ export function Muckpile({ bundle, origin }: LayerProps) {
 /** The PPV grid's surface as plain ground around the muckpile patch. */
 export function ContextGround({ bundle, origin }: LayerProps) {
   const theme = useViewer((s) => s.theme)
+  const satellite = useSatellite()
   const geometry = useMemo(() => {
     const grid = bundle.ppv_surface
     const m = bundle.muckpile
@@ -124,12 +167,17 @@ export function ContextGround({ bundle, origin }: LayerProps) {
       ),
     )
     g.computeVertexNormals()
+    if (satellite) g.setAttribute('uv', new BufferAttribute(uvArray(satellite.plan, g.getAttribute('position').array, origin), 2))
     return g
-  }, [bundle, origin])
+  }, [bundle, origin, satellite])
   useEffect(() => () => geometry.dispose(), [geometry])
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color={BLAST_COLORS[theme].context} side={DoubleSide} roughness={1} metalness={0} />
+      {satellite ? (
+        <meshBasicMaterial key="satellite" map={satellite.texture} side={DoubleSide} />
+      ) : (
+        <meshStandardMaterial key="plain" color={BLAST_COLORS[theme].context} side={DoubleSide} roughness={1} metalness={0} />
+      )}
     </mesh>
   )
 }
@@ -138,6 +186,7 @@ export function ContextGround({ bundle, origin }: LayerProps) {
 export function Topography({ bundle, origin }: LayerProps) {
   const theme = useViewer((s) => s.theme)
   const invalidate = useThree((s) => s.invalidate)
+  const satellite = useSatellite()
   const [mesh, setMesh] = useState<MeshData | null>(null)
 
   useEffect(() => {
@@ -172,8 +221,9 @@ export function Topography({ bundle, origin }: LayerProps) {
     g.setIndex(new BufferAttribute(mesh.faces, 1))
     if (mesh.normals) g.setAttribute('normal', new BufferAttribute(mesh.normals, 3))
     else g.computeVertexNormals()
+    if (satellite) g.setAttribute('uv', new BufferAttribute(uvArray(satellite.plan, position, origin), 2))
     return g
-  }, [mesh, origin])
+  }, [mesh, origin, satellite])
   useEffect(() => {
     invalidate()
     return () => geometry?.dispose()
@@ -201,17 +251,22 @@ export function Topography({ bundle, origin }: LayerProps) {
   if (!geometry) return null
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial
-        color={BLAST_COLORS[theme].context}
-        side={DoubleSide}
-        roughness={1}
-        metalness={0}
-        clippingPlanes={planes}
-        clipIntersection
-        polygonOffset
-        polygonOffsetFactor={2}
-        polygonOffsetUnits={2}
-      />
+      {satellite ? (
+        <meshBasicMaterial key="satellite" map={satellite.texture} side={DoubleSide} clippingPlanes={planes} clipIntersection polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
+      ) : (
+        <meshStandardMaterial
+          key="plain"
+          color={BLAST_COLORS[theme].context}
+          side={DoubleSide}
+          roughness={1}
+          metalness={0}
+          clippingPlanes={planes}
+          clipIntersection
+          polygonOffset
+          polygonOffsetFactor={2}
+          polygonOffsetUnits={2}
+        />
+      )}
     </mesh>
   )
 }

@@ -113,6 +113,8 @@ that are not finite are written as `null`.
 | B6 | Web tab "Blast BakuMine" | agent | B1 (fixture), B5 | vitest for the animation math (wave radius, particle position, colour scales); tab loads the demo bundle and plays; typecheck |
 | B7 | Research doc `research_blast.md` + Claude Doc | orchestrator + agent | - | formulas cited; doc filled |
 | B8 | Integration on a real model (git-ignored), screenshots, STATUS | orchestrator | B5, B6 | simulation on one client deposit runs; honest limits listed |
+| B9 | Maptek BlastLogic feature study and gap analysis (`research_blast.md` part 4) | orchestrator + agent | - | public sources only, a source per claim, unverified items listed |
+| B10 | Satellite imagery draped on the blast terrain (`blast/imagery.py`, `/blast/imagery`, viewer) | orchestrator | B6 | tile numbers against the published formula and pyproj's Web Mercator; viewer interpolation within 0.05 px of exact; nothing fetched unless asked; vitest for the texture coordinates |
 
 Parallel waves: W1 = B2, B3, B4, B6 (fixture-driven), B7 research. W2 = B5. W3 = B6 wiring to the API, B8.
 Agents do not commit and do not run the full `make check`; they run their own tests and ruff on their files.
