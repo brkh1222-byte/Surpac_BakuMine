@@ -15,12 +15,16 @@ import type { BlastBundle } from '../types'
 import { Legends } from '../ui/Legends'
 import { blastView, bundleOrigin, type LayerProps } from './common'
 import { Damage } from './Damage'
+import { Dust } from './Dust'
+import { Equipment } from './Equipment'
 import { ContextGround, Muckpile, Topography } from './Ground'
 import { Holes } from './Holes'
 import { PpvMap } from './PpvMap'
 import { AirblastRings, FlyrockRings, Monitors } from './Rings'
 import { Throw } from './Throw'
-import { Sky } from './terrain'
+import { blastCentre, equipmentSites } from './realism'
+import { Scatter } from './Scatter'
+import { Sky, SUN } from './terrain'
 import { Waves } from './Waves'
 
 const FOV = 35
@@ -71,11 +75,34 @@ function Camera({ bundle, origin }: LayerProps) {
       blastView.fitDistance = distance
       invalidate()
     }
+    // From behind the excavators, at eye height above them, looking at the blast.
+    const safeView = () => {
+      const sites = equipmentSites(bundle)
+      const ground = blastView.groundAt
+      if (sites.length === 0 || !ground) return
+      const [bx, by, bz] = blastCentre(bundle)
+      const mx = sites.reduce((a, s) => a + s.x, 0) / sites.length
+      const my = sites.reduce((a, s) => a + s.y, 0) / sites.length
+      const d = Math.hypot(mx - bx, my - by) || 1
+      const x = mx + ((mx - bx) / d) * 30
+      const y = my + ((my - by) / d) * 30
+      const z = ground(x, y)
+      if (!Number.isFinite(z)) return
+      camera.position.set(x - origin[0], y - origin[1], z + 6.5 - origin[2])
+      camera.near = 0.5
+      camera.far = Math.max(5e4, d * 200)
+      camera.updateProjectionMatrix()
+      controls.target.set(bx - origin[0], by - origin[1], bz - origin[2])
+      controls.update()
+      invalidate()
+    }
     blastView.fit = fit
+    blastView.safeView = safeView
     fit()
     return () => {
       controls.dispose()
       if (blastView.fit === fit) blastView.fit = null
+      if (blastView.safeView === safeView) blastView.safeView = null
     }
   }, [camera, gl, invalidate, bundle, origin])
   return null
@@ -95,6 +122,26 @@ function Clock() {
     useBlast.setState({ t: next.t, playing: next.playing })
   }, -1)
   return null
+}
+
+/** Diagram lighting, or with the satellite picture a sun where the terrain shading has it and sky light. */
+function Lights() {
+  const site = useBlast((s) => s.layers.satellite && s.source === 'api' && s.imagery !== null)
+  if (!site) {
+    return (
+      <>
+        <ambientLight intensity={1.0} />
+        <directionalLight position={[-1, -0.15, 0.75]} intensity={2.3} />
+        <directionalLight position={[0.7, 0.9, 0.25]} intensity={0.55} />
+      </>
+    )
+  }
+  return (
+    <>
+      <hemisphereLight args={['#dfe9f5', '#8a7a62', 1.25]} position={[0, 0, 1]} />
+      <directionalLight position={[SUN[0], SUN[1], SUN[2]]} intensity={2.6} color="#fff3df" />
+    </>
+  )
 }
 
 function Layers({ bundle, origin }: LayerProps) {
@@ -117,6 +164,9 @@ function Layers({ bundle, origin }: LayerProps) {
       {layers.damage && <Damage bundle={bundle} origin={origin} />}
       {layers.holes && <Holes bundle={bundle} origin={origin} />}
       {layers.throw && <Throw bundle={bundle} origin={origin} />}
+      {topography && layers.equipment && <Equipment bundle={bundle} origin={origin} />}
+      {topography && layers.scatter && <Scatter bundle={bundle} origin={origin} />}
+      {layers.dust && layers.throw && <Dust bundle={bundle} origin={origin} />}
       {layers.ground && <Muckpile bundle={bundle} origin={origin} />}
       {layers.ppv && <PpvMap bundle={bundle} origin={origin} />}
       {layers.waves && <Waves bundle={bundle} origin={origin} />}
@@ -138,11 +188,9 @@ export function BlastViewport() {
 
   return (
     <div className="blast-viewport" data-testid="blast-viewport">
-      <Canvas flat frameloop="demand" dpr={[1, 2]} gl={{ antialias: true, localClippingEnabled: true }} camera={{ fov: FOV, near: 0.5, far: 1e5, up: [0, 0, 1], position: [80, -120, 80] }}>
+      <Canvas flat shadows frameloop="demand" dpr={[1, 2]} gl={{ antialias: true, localClippingEnabled: true }} camera={{ fov: FOV, near: 0.5, far: 1e5, up: [0, 0, 1], position: [80, -120, 80] }}>
         <color attach="background" args={[SCENE_COLORS[theme].background]} />
-        <ambientLight intensity={1.0} />
-        <directionalLight position={[-1, -0.15, 0.75]} intensity={2.3} />
-        <directionalLight position={[0.7, 0.9, 0.25]} intensity={0.55} />
+        <Lights />
         <Clock />
         {bundle && origin && (
           <>
@@ -162,6 +210,11 @@ export function BlastViewport() {
         <button type="button" data-testid="blast-fit" title="Frame the blast" onClick={() => blastView.fit?.()}>
           Fit to blast
         </button>
+        {source === 'api' && (
+          <button type="button" data-testid="blast-safe-view" title="Stand behind the excavators in the safe zone and look at the blast" onClick={() => blastView.safeView?.()}>
+            Safe-zone view
+          </button>
+        )}
         {status === 'loading' && (
           <span className="blast-badge" data-testid="blast-loading">
             <i className="blast-spinner" aria-hidden="true" />

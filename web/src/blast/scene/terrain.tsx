@@ -8,6 +8,8 @@
  * - fine relief from the picture: the brightness of the picture is read as a small height
  *   (the "bump map" of Blinn 1978, with the screen-space derivatives of Mikkelsen 2010), so
  *   bushes, rills and tracks catch the light;
+ * - sharpening: an unsharp mask on the picture (the picture plus 0.9 of its difference
+ *   from the mean of four neighbours 1.5 pixels away);
  * - grain: fractal value noise multiplied in at close range, where one pixel of the picture
  *   covers more than one pixel of the screen;
  * - fresh rock: ground that was cut (the bench face and floor) or broken (the muckpile) is
@@ -17,7 +19,7 @@
  */
 import { useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
-import { BackSide, Color, DoubleSide, ShaderMaterial, Vector3, type Plane, type Texture } from 'three'
+import { BackSide, Color, DoubleSide, ShaderMaterial, Vector2, Vector3, type Plane, type Texture } from 'three'
 
 /** Direction to the sun, scene axes (x east, y north, z up). */
 export const SUN: readonly [number, number, number] = [0.5, -0.5, Math.SQRT1_2]
@@ -25,7 +27,7 @@ export const SUN: readonly [number, number, number] = [0.5, -0.5, Math.SQRT1_2]
 export const HAZE_LENGTH = 12000
 /** Fresh rock of a cut and broken rock of the muckpile (sRGB hex). */
 export const ROCK_COLOR = '#8f877a'
-export const MUCK_COLOR = '#aaa091'
+export const MUCK_COLOR = '#958c7e'
 const HORIZON = '#cfd6da'
 const ZENITH = '#4f86c6'
 const BELOW = '#8f8672'
@@ -107,6 +109,8 @@ uniform vec3 haze;
 uniform float hazeLength;
 uniform float opacity;
 uniform float bump;
+uniform vec2 texel;
+uniform float sharpen;
 varying vec2 vUv;
 varying vec3 vPos;
 varying vec3 vNormal;
@@ -124,6 +128,10 @@ void main() {
 
   // The picture, with grain at close range.
   vec3 base = texture2D(map, vUv).rgb;
+  // Unsharp mask: the picture minus its local mean, added back, makes edges crisper.
+  vec3 mean = 0.25 * (texture2D(map, vUv + vec2(texel.x, 0.0)).rgb + texture2D(map, vUv - vec2(texel.x, 0.0)).rgb
+                    + texture2D(map, vUv + vec2(0.0, texel.y)).rgb + texture2D(map, vUv - vec2(0.0, texel.y)).rgb);
+  base = clamp(base + sharpen * (base - mean), 0.0, 1.0);
   float close = 1.0 - smoothstep(30.0, 450.0, vDist);
   float grain = 0.6 * fbm(vPos * 0.9) + 0.4 * fbm(vPos * 5.0);
   base *= 1.0 + close * 0.3 * (grain - 0.5);
@@ -177,6 +185,8 @@ export function TerrainMaterial({
           hazeLength: { value: HAZE_LENGTH },
           opacity: { value: 1 },
           bump: { value: 1.6 },
+          texel: { value: new Vector2(1 / 2048, 1 / 2048) },
+          sharpen: { value: 0.9 },
         },
         side: DoubleSide,
         clipping: true,
@@ -185,6 +195,8 @@ export function TerrainMaterial({
   )
   useEffect(() => () => material.dispose(), [material])
   material.uniforms.map.value = texture
+  const image = texture.image as { width?: number; height?: number } | undefined
+  if (image?.width && image.height) material.uniforms.texel.value.set(1.5 / image.width, 1.5 / image.height)
   material.uniforms.opacity.value = opacity
   material.transparent = opacity < 1
   material.clippingPlanes = planes ?? null

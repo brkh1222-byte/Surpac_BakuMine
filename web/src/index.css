@@ -2106,3 +2106,6 @@ input {
 .blast-imagery .blast-note {
   margin: 0;
 }
+
+.blast-views { display: flex; gap: 6px; margin: 0 0 8px; }
+.blast-views button { flex: 1; }

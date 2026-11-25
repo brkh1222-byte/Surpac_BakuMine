@@ -13,10 +13,19 @@ export function LayersPanel() {
   const imageryStatus = useBlast((s) => s.imageryStatus)
   const imageryError = useBlast((s) => s.imageryError)
   const s = useBlast.getState()
-  const shown = (id: string) => (id !== 'topography' || source === 'api') && (id !== 'satellite' || imagery !== null)
+  const shown = (id: string) =>
+    (!['topography', 'equipment', 'scatter'].includes(id) || source === 'api') && (id !== 'satellite' || imagery !== null)
   return (
     <section className="blast-section">
       <h3>Layers</h3>
+      <div className="blast-views">
+        <button type="button" data-testid="blast-view-site" title="Only what a person at the site would see" onClick={() => s.setView('site')}>
+          Site view
+        </button>
+        <button type="button" data-testid="blast-view-engineering" title="Holes, delays, waves, damage and limits back on" onClick={() => s.setView('engineering')}>
+          Engineering view
+        </button>
+      </div>
       <div className="blast-layers">
         {LAYERS.filter((l) => shown(l.id)).map((l) => (
           <label key={l.id}>
@@ -61,8 +70,9 @@ export function LayersPanel() {
           )}
           {imagery && (
             <p className="blast-note" data-testid="blast-imagery-look">
-              Added by the viewer for looks, not measured: relief shading and fine relief from the picture, grain up close, rock on cut and
-              broken ground, sky and haze. The surface itself is unchanged.
+              Added by the viewer for looks, not measured: relief shading, sharpening and fine relief from the picture, grain up close,
+              rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs and the two excavators.
+              Fragment paths, sizes and the clearance distance come from the simulation. The surface itself is unchanged.
             </p>
           )}
         </div>

@@ -4,9 +4,8 @@
  * API serves one, the project's topography mesh underneath.
  */
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { BufferAttribute, BufferGeometry, DoubleSide, Plane, Vector3, type Texture } from 'three'
-import { fetchManifest, fetchMesh, type MeshData } from '../../api/client'
 import { worldToScene } from '../../scene/origin'
 import { useViewer } from '../../state/store'
 import { uvArray, useSatelliteTexture, type ImageryPlan } from '../imagery'
@@ -15,6 +14,7 @@ import { useBlast } from '../state'
 import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
 import { cutRock, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
+import { useTopography } from './topography'
 
 /** Triangles of a node grid; cells with a missing node (or rejected by `skip`) are left out. */
 function gridIndex(grid: GridSpec, ok: (i: number) => boolean, skip?: (ix: number, iy: number) => boolean): Uint32Array {
@@ -195,29 +195,7 @@ export function Topography({ bundle, origin }: LayerProps) {
   const theme = useViewer((s) => s.theme)
   const invalidate = useThree((s) => s.invalidate)
   const satellite = useSatellite()
-  const [mesh, setMesh] = useState<MeshData | null>(null)
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setMesh(null)
-    ;(async () => {
-      try {
-        const manifest = await fetchManifest(controller.signal)
-        const surfaces = manifest.objects.filter((o) => o.kind === 'mesh' && o.category === 'surfaces' && o.bounds)
-        const holds = (o: (typeof surfaces)[number]) =>
-          o.bounds !== null && o.bounds !== undefined &&
-          origin[0] >= o.bounds.min[0] && origin[0] <= o.bounds.max[0] && origin[1] >= o.bounds.min[1] && origin[1] <= o.bounds.max[1]
-        const inside = surfaces.filter(holds)
-        const pick = inside.find((o) => /topo|dtm|dem|surface/i.test(o.name)) ?? inside[0]
-        if (!pick) return
-        const data = await fetchMesh(pick, controller.signal)
-        if (!controller.signal.aborted) setMesh(data)
-      } catch {
-        // No project or no surface: the blast draws without it.
-      }
-    })()
-    return () => controller.abort()
-  }, [bundle, origin])
+  const mesh = useTopography(bundle, origin)?.mesh ?? null
 
   const geometry = useMemo(() => {
     if (!mesh) return null

@@ -47,7 +47,11 @@ export const blastView: {
   labels: HTMLDivElement | null
   /** Camera distance of the last "fit to blast": the distance labels are sized for. */
   fitDistance: number
-} = { fit: null, labels: null, fitDistance: 0 }
+  /** Moves the camera to the equipment in the safe zone, looking at the blast. */
+  safeView: (() => void) | null
+  /** World height of the project topography at a world plan point (NaN outside); null without one. */
+  groundAt: ((x: number, y: number) => number) | null
+} = { fit: null, labels: null, fitDistance: 0, safeView: null, groundAt: null }
 
 export interface LabelItem {
   /** Scene coordinates (world minus origin). */

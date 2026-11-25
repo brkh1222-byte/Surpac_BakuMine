@@ -8,6 +8,7 @@ import { loadDefaults, loadResult, simulate as apiSimulate, type Loaded } from '
 import { DEFAULT_DESIGN, makeDemoBundle } from './fixture'
 import { fetchImagery as apiFetchImagery, loadImagery as apiLoadImagery, type ImageryPlan } from './imagery'
 import { lastFire, timelineEnd } from './math'
+import { DUST_TAIL_MS } from './scene/realism'
 import type { BlastBundle, DesignParams } from './types'
 
 export const LAYERS = [
@@ -24,6 +25,9 @@ export const LAYERS = [
   { id: 'monitors', label: 'Monitors' },
   { id: 'topography', label: 'Project topography' },
   { id: 'satellite', label: 'Satellite imagery' },
+  { id: 'dust', label: 'Dust' },
+  { id: 'equipment', label: 'Excavators (safe zone)' },
+  { id: 'scatter', label: 'Stones and shrubs' },
 ] as const
 
 export type LayerId = (typeof LAYERS)[number]['id']
@@ -80,6 +84,8 @@ export interface BlastState {
   setAutoSpeed: (on: boolean) => void
   setLoop: (on: boolean) => void
   setLayer: (id: LayerId, on: boolean) => void
+  /** 'site': only what a person at the site would see; 'engineering': the diagram layers back on. */
+  setView: (view: 'site' | 'engineering') => void
   setExaggerateHoles: (on: boolean) => void
   setGroundOpacity: (v: number) => void
   setFragmentScale: (v: number) => void
@@ -103,7 +109,7 @@ export const useBlast = create<BlastState>((set, get) => ({
 
   layers: {
     ground: true, holes: true, labels: true, allLabels: false, waves: true, ppv: false, damage: true, throw: true,
-    flyrock: true, airblast: false, monitors: true, topography: true, satellite: true,
+    flyrock: true, airblast: false, monitors: true, topography: true, satellite: true, dust: true, equipment: true, scatter: true,
   },
   exaggerateHoles: true,
   groundOpacity: 1,
@@ -119,6 +125,8 @@ export const useBlast = create<BlastState>((set, get) => ({
     try {
       const state = await apiLoadImagery()
       set((s) => ({ imagery: state.plan, imageryPossible: state.project, imageryCrs: s.imageryCrs || state.crs || '' }))
+      // With a satellite picture the view opens as the site looks; the diagram layers are one click away.
+      if (state.plan) get().setView('site')
     } catch {
       set({ imagery: null, imageryPossible: false })
     }
@@ -135,7 +143,7 @@ export const useBlast = create<BlastState>((set, get) => ({
   setImageryCrs: (imageryCrs) => set({ imageryCrs }),
 
   setLoaded: ({ bundle, source, reason }) =>
-    set({ bundle, source, reason, status: 'ready', error: null, t: 0, playing: false, tEnd: timelineEnd(bundle), lastFire: lastFire(bundle) }),
+    set({ bundle, source, reason, status: 'ready', error: null, t: 0, playing: false, tEnd: timelineEnd(bundle) + DUST_TAIL_MS, lastFire: lastFire(bundle) }),
 
   load: async (demoOnly) => {
     set({ status: 'loading' })
@@ -175,6 +183,18 @@ export const useBlast = create<BlastState>((set, get) => ({
   setAutoSpeed: (autoSpeed) => set({ autoSpeed }),
   setLoop: (loop) => set({ loop }),
   setLayer: (id, on) => set((s) => ({ layers: { ...s.layers, [id]: on } })),
+  setView: (view) =>
+    set((s) => {
+      const diagram = view === 'engineering'
+      return {
+        layers: {
+          ...s.layers,
+          ground: true, throw: true, topography: true, dust: true, equipment: true, scatter: true,
+          holes: diagram, labels: diagram, waves: diagram, damage: diagram, flyrock: diagram, monitors: diagram,
+          allLabels: false, ppv: false, airblast: false,
+        },
+      }
+    }),
   setExaggerateHoles: (exaggerateHoles) => set({ exaggerateHoles }),
   setGroundOpacity: (groundOpacity) => set({ groundOpacity }),
   setFragmentScale: (fragmentScale) => set({ fragmentScale }),

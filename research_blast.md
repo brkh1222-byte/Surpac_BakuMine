@@ -937,3 +937,48 @@ terrain beyond the first topography surface, no shadows cast by the terrain, no 
 References: J. F. Blinn, "Simulation of wrinkled surfaces", SIGGRAPH 1978. M. Mikkelsen, "Bump mapping
 unparametrized surfaces on the GPU", Journal of Graphics, GPU and Game Tools 15(1), 2010. (Both cited from
 memory; page numbers not checked.)
+
+
+---
+
+## Part 6: The site view (task B12)
+
+What a person standing at the site would see. Display only: no result of the simulation changes. Code:
+`web/src/blast/scene/` (`realism.ts` holds the rules and their tests, `Throw.tsx`, `Dust.tsx`, `Equipment.tsx`,
+`Scatter.tsx`, `topography.ts`).
+
+From the simulation (not invented here): the path, launch time and landing of every parcel of rock; the predicted
+size distribution; the firing time of every hole; the clearance radius; the ground before and after.
+
+Added by the viewer:
+
+- **Fragments.** throw.py moves a few thousand parcels, each standing for many tonnes. A parcel is drawn as up to
+  10 fragments. The first has the parcel's own size and path. The others take a size from the predicted
+  Rosin-Rammler curve, `x = xc (-ln(1 - u))^(1/n)`, and a velocity that differs from the parcel's by up to 10 % of
+  its speed, so the cluster spreads in flight; the height difference fades over the last fifth of the flight so
+  the fragments meet the ground where the parcel does. This is a drawing of scatter, not a second simulation:
+  fragments do not collide and do not have their own landing point on the terrain. Each fragment is an irregular
+  42-vertex block that tumbles at 2 to 14 rad/s (assumed, faster for small pieces) and stops when it lands.
+- **Soil.** Parcels that start within 1.5 m of the bench top are drawn as soil: brown clods of 3 to 16 cm with a
+  wider spread (22 % of the speed) and more lift. The 1.5 m is assumed: the blast does not read a cover thickness
+  from the geology model yet, and the simulation gives soil the same launch velocity as rock.
+- **Dust.** Puffs start at every hole collar when it fires (a column and a ground surge, strength varied per
+  hole), at parcels when they launch and where they land. A puff obeys `dv/dt = (w - v) / tau` with `tau` = 1.1 s
+  and a wind `w` of (1.6, 0.7) m/s plus 0.5 m/s rise, so
+  `x(t) = x0 + v0 tau (1 - e^(-t/tau)) + w (t - tau (1 - e^(-t/tau)))`; its radius grows as `r0 + k sqrt(t)`; it
+  fades over 5 to 12 s. The form is the standard linear-drag solution; every number in it is assumed. Dust
+  amounts are not computed from the rock or the explosive. The player runs 7 s past the last landing so the cloud
+  can drift.
+- **Excavators.** Two generic 30-tonne-class machines (boxes and cylinders, not a product model) stand behind the
+  blast, 25 m outside the clearance radius of the flyrock model, 18 m apart, on the topography. "Behind" is the
+  side opposite the free face. They cast shadows on a patch of ground around them.
+- **Stones and shrubs.** About 7000 of them within 280 m of the blast and 110 m of the machines, at fixed
+  pseudo-random places, none on the cut bench. Invented scenery for depth and scale.
+- **Sharpening.** The picture plus 0.9 of its difference from the mean of four neighbours 1.5 pixels away.
+- **Height lookup.** Machines and scatter stand on the project topography: bilinear in the grid cell when the
+  surface is a complete regular grid (exact on a plane), else an inverse-distance mean of nearby vertices.
+
+Not done: fragments and dust cast no shadows and do not light up; no sound; no shock or camera shake; dust does
+not hide behind terrain softly (it is cut where it meets the ground); machines do not move; the terrain is still
+the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
+added grain and scatter.
