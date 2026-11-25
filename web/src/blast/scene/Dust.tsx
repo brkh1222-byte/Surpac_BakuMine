@@ -166,13 +166,13 @@ export function dustPuffs(bundle: LayerProps['bundle']): Puff[] {
   holes.forEach((h, i) => {
     // Holes do not all vent alike: a strength per hole makes the cloud ragged.
     const strength = 0.45 + 1.2 * hash01(i, 30)
-    for (let c = 0; c < 12; c++) {
+    for (let c = 0; c < 18; c++) {
       const seed = i * 16 + c
-      // Nine puffs rise as a column from the collar; three roll out along the ground.
-      const column = c < 9
+      // Fourteen puffs rise as a column from the collar; four roll out along the ground.
+      const column = c < 14
       const a = hash01(seed, 34) * Math.PI * 2
       const out = column ? 1.5 + 4.5 * hash01(seed, 35) : 6 + 8 * hash01(seed, 35)
-      const up = column ? (4 + 26 * hash01(seed, 31) ** 1.6) * strength : 0.4 + 1.2 * hash01(seed, 31)
+      const up = column ? (5 + 36 * hash01(seed, 31) ** 1.5) * strength : 0.4 + 1.2 * hash01(seed, 31)
       const dark = 0.74 + 0.36 * hash01(seed, 40)
       puffs.push({
         start: [h.collar[0] + (hash01(seed, 32) - 0.5) * 3, h.collar[1] + (hash01(seed, 33) - 0.5) * 3, h.collar[2] + 0.3],
@@ -180,9 +180,9 @@ export function dustPuffs(bundle: LayerProps['bundle']): Puff[] {
         birth: h.t_fire_ms + (column ? 260 : 120) * hash01(seed, 36),
         life: (column ? 7 : 5) + 5 * hash01(seed, 37),
         radius: column ? 0.7 + 0.9 * hash01(seed, 38) : 1.2 + 0.8 * hash01(seed, 38),
-        growth: (column ? 1.9 : 2.6) + 1.3 * hash01(seed, 39),
+        growth: (column ? 2.3 : 2.9) + 1.5 * hash01(seed, 39),
         tint: [soil[0] * dark, soil[1] * dark, soil[2] * dark],
-        opacity: (column ? 0.2 : 0.14) + 0.12 * hash01(seed, 51),
+        opacity: (column ? 0.17 : 0.12) + 0.1 * hash01(seed, 51),
       })
     }
   })

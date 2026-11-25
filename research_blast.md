@@ -1023,6 +1023,10 @@ Fourth pass (task B16):
   is invented so that ground seen from eye height is not flat facets. Stones, shrubs, grass, machines and the
   camera stand on the refined ground. No volume, no result and no stored surface uses it.
 
+Fifth pass (task B17): fair-weather clouds (fractal noise on a flat layer, lit on the sun's side), a sun disc with
+glow, rough relief on rock faces (noise read as height, lit), a larger dust cloud (18 puffs per hole, rising
+faster), and a slightly firmer picture (contrast 1.08 about mid grey, saturation 1.12). All choices for looks.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

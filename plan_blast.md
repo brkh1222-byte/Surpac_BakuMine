@@ -120,6 +120,7 @@ that are not finite are written as `null`.
 | B14 | Site view, second pass (`scene/Effects.tsx`, `Equipment.tsx`): sun shadows of fragments, walls, scatter and machines on the terrain; excavators from extruded profiles; collar flash; camera tremble and rumble with physical arrival times; soft dust edge; camera kept above ground | orchestrator | B12 | tremble envelope by hand (arrival d / cp, decay, sum, distance); seen in the browser |
 | B15 | Site view, third pass: dust shadows on the ground, idle motion of the machines, gravel / sand / grass detail near the camera, measured check of the rumble signal | orchestrator | B14 | idle pose bounds; rumble rendered off-line (peak, duration, low-frequency share) and logged when played; seen in the browser without shader errors |
 | B16 | Site view, fourth pass: fine procedural relief of the ground near the blast and the machines (display only), everything standing on it | orchestrator | B15 | relief bounds and continuity; patch weight by hand (edge fade, hole); seen in the browser |
+| B17 | Site view, fifth pass: clouds and sun in the sky, rough rock faces, larger dust cloud, firmer colours | orchestrator | B16 | seen in the browser without shader errors; existing tests |
 
 Parallel waves: W1 = B2, B3, B4, B6 (fixture-driven), B7 research. W2 = B5. W3 = B6 wiring to the API, B8.
 Agents do not commit and do not run the full `make check`; they run their own tests and ruff on their files.

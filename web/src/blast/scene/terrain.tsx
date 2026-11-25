@@ -170,9 +170,20 @@ void main() {
   float grit = 0.6 * fbm(vPos * 2.5) + 0.4 * vnoise(vPos * 11.0);
   vec3 stone = vTint * (0.82 + 0.36 * bands) * (0.88 + 0.24 * patches) * (0.84 + 0.32 * grit);
 
-  vec3 colour = mix(base, stone, vRock);
-  vec3 nn = normalize(mix(ns, normalize(mix(n, facet, 0.6)), vRock));
+  vec3 colour = base;
+  // The rock itself is rough: blocks a metre or two across with sharper small breaks, read
+  // as a height and lit like the fine relief of the picture.
+  float hr = 0.45 * fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)) + 0.12 * vnoise(vPos * 2.6) + 0.04 * vnoise(vPos * 9.0);
+  vec3 rockGradient = sign(det) * (dFdx(hr) * r1 + dFdy(hr) * r2);
+  vec3 rough = normalize(abs(det) * normalize(mix(n, facet, 0.6)) - rockGradient);
+  stone *= 0.86 + 0.28 * smoothstep(0.25, 0.75, fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)));
+  vec3 nn = normalize(mix(ns, rough, vRock));
+  colour = mix(colour, stone, vRock);
   colour *= clamp(1.0 + 0.85 * (dot(nn, sun) - sun.z), 0.5, 1.35);
+  // A slightly firmer picture: more contrast about mid grey and a little more colour.
+  float grey = dot(colour, vec3(0.299, 0.587, 0.114));
+  colour = mix(vec3(grey), colour, 1.12);
+  colour = clamp((colour - 0.18) * 1.08 + 0.18, 0.0, 1.0);
   colour = mix(colour, haze, 1.0 - exp(-vDist / hazeLength));
   gl_FragColor = vec4(colour, opacity);
   #include <colorspace_fragment>
@@ -240,11 +251,24 @@ uniform vec3 zenith;
 uniform vec3 below;
 uniform vec3 sun;
 varying vec3 vDir;
+${NOISE}
 void main() {
   vec3 d = normalize(vDir);
   vec3 colour = mix(horizon, zenith, pow(max(d.z, 0.0), 0.55));
+  // Fair-weather clouds on a flat layer overhead: denser patches of fractal noise, thinning
+  // to the horizon, lit on the sun's side and grey underneath.
+  if (d.z > 0.015) {
+    vec2 p = d.xy / (d.z + 0.08);
+    float cover = 0.6 * fbm(vec3(p * 0.55, 1.7)) + 0.4 * fbm(vec3(p * 1.7, 4.2));
+    float cloud = smoothstep(0.5, 0.72, cover) * smoothstep(0.015, 0.16, d.z);
+    float lit = 0.5 + 0.5 * fbm(vec3(p * 0.55 + sun.xy * 0.25, 1.7));
+    vec3 white = mix(vec3(0.74, 0.77, 0.82), vec3(1.0, 0.99, 0.96), smoothstep(0.35, 0.75, lit));
+    colour = mix(colour, white, 0.88 * cloud);
+  }
   colour = mix(colour, below, smoothstep(0.0, -0.12, d.z));
-  colour += vec3(1.0, 0.95, 0.85) * 0.25 * pow(max(dot(d, sun), 0.0), 24.0);
+  // The sun: a small bright disc, a glow around it and a wide warm haze.
+  float towards = max(dot(d, sun), 0.0);
+  colour += vec3(1.0, 0.95, 0.85) * (0.22 * pow(towards, 24.0) + 0.5 * pow(towards, 400.0) + 2.5 * smoothstep(0.99985, 0.99996, towards));
   gl_FragColor = vec4(colour, 1.0);
   #include <colorspace_fragment>
 }
