@@ -694,3 +694,209 @@ swell), largest slope excess, particles landed outside the grid, volume on unkno
 Not modelled: the real mechanics of muckpile formation (the face slumping as a body, rows piling against each
 other, cast distance depending on powder factor and delay timing). The delay sequence changes only the start
 times here, not the shape of the pile.
+
+---
+
+## Part 4: Maptek BlastLogic feature study and gap analysis (public sources only, 2026-11-25)
+
+**Headline finding:** BlastLogic itself has no drill-pattern design. Its help says outright that it "does not support drill or drillhole design"; patterns come from Vulcan or CSV/DXF. Pattern generation only arrives through the BlastMCF add-on (cloud genetic-algorithm optimiser, 2025+). BlastLogic's real weight is charge rules, tie-up design, field capture and reconciliation, plus four prediction models that are close to what Blast BakuMine already has.
+
+**How this was done:** read-only, nothing in the repo touched. Most facts come from the public BlastLogic 2026 help site and three public help PDFs (Integration Service, Tablet, OData). Help pages were read through a summarising fetcher, so wording is paraphrased and fine detail could be off. Equations on the help pages are images and were not read.
+
+URL shorthand: `H/` = `https://help.maptek.com/blastlogic/2026/topics/`, `V/` = `https://help.maptek.com/vulcan/2025.1/Content/topics/Drill_and_Blast/`. Confidence: High = stated in help text; Med = marketing/news; Inferred = my reading.
+
+---
+
+## A. Feature inventory
+
+### 1. Design
+- **No pattern design in BlastLogic core.** Designs are imported from CSV, DXF or Vulcan design databases and can be re-synced from the source file; holes match by ID or collar XYZ. High. `H/key-concepts/drill-and-blast-design.htm`, `H/menus-and-tools/home/data.htm`
+- **Vulcan Drill and Blast module does the layout** (separate product). High. `V/00Index/DrillandBlast_00INDEX.htm`
+  - Pattern inside a boundary polygon with a reference line setting where rows start.
+  - Rows that progressively follow the free face, with min/max burden limits (defaults 3.5 m and 14 m) and smoothing. `https://help.maptek.com/vulcan/2024.0.0/Content/topics/Drill_and_Blast/Create/DrillandBlast_CreateHolesToFreeFace.htm`
+  - Holes at points, along a line, or between a collar line and a toe line.
+  - Legacy layout tool: square or staggered, bearing, dip from vertical, standoff above a target horizon, minimum drill length. `https://help.maptek.com/vulcan/2024.4/Content/topics/OpenPit/Blast_Hole_Layout/OpenPit_01LAY.htm`
+  - Naming: alphabetic or numeric rows, echelon numbering, continuous forward/back, by object, zero-fill, prefix/suffix. `https://help.maptek.com/vulcan/2024.4/Content/topics/Drill_and_Blast/Create/DrillandBlast_Create_Holes_Along_Collar_and_Toe.htm`
+  - Manual editing: insert, delete (also by polygon), drag, translate, rotate, double stitching, split/merge blasts, reverse row direction, recalculate after a surface change.
+  - Checks: hole clearance (charged sections too close), hole separation report, compare holes.
+  - Templates live in a specification file with five parts: loading styles, pattern, reporting, posting, display. Parameter-level content not found.
+- **Face-profile burden (in Vulcan, not BlastLogic).** Design is compared with a triangulated real face; the face is coloured below/valid/above the burden range, a profile line is drawn in front of each hole, minimum burden is plotted down the hole, and the hole is nudged in position, dip, bearing. An "Offset to Face" report covers front-row holes. High. `https://help.maptek.com/vulcan/2024.4/Content/topics/Drill_and_Blast/Edit/DrillandBlast_Minimum_Burden_Adjustment.htm`
+- **Buffer / trim / presplit row types:** not found as named features. The collar-and-toe-line tool is the likely presplit route (Inferred).
+- **BlastMCF pattern generation.** Inputs: boundary polygon, upper surface, lower surface or RL or fixed depth, or a blast solid. High (2026 page + 2022 parameter page). `H/blastlogic-system-component-documentation/blastmcf.htm`, `https://help.maptek.com/blastlogic/2022/topics/menus-and-tools/blastmcf/optimisation.htm`
+  - Bit-diameter list, subdrill (downhole or vertical), angle and bearing.
+  - Pattern type: square, rectangular, equilateral, staggered.
+  - Burden and spacing as min/max or ratio ranges; minimum hole-to-boundary distance; alignment point and row direction.
+  - Parameter list is from the 2022 help; the 2026 page is less detailed.
+- **Per-hole depth to a surface.** Charge depth and standoff are set against a reference surface or target RL, per row if wanted. High. `H/menus-and-tools/charging/Design/design-charge-depths.htm`
+- **Coal / strata.** No separate coal mode. High. `H/menus-and-tools/home/hole.htm`, `H/quick-reference/glossary.htm`
+  - Downhole "intervals" (labelled zones) are built from surfaces, from distance to a surface (seam or highwall offsets), from a drillhole database, from CSV, or from drill-measurement conditions.
+  - Charge rules can query labelled intervals.
+  - "Protective cap" (rock left above a seam or ore) has its own tolerance and report.
+
+### 2. Charging
+- **Charge rules are JavaScript scripts,** either hand-written or generated from a load table. High. `H/menus-and-tools/charging/Design/create-charge-rule.htm`
+  - Load table: hole-length bands, each with a deck list.
+  - Six deck sizing methods: variable ratio, fixed length, fixed volume, fixed mass, target powder factor, length above water.
+  - Typed parameters (product, product family, number, boolean, select, interval label, load table), optionally editable on the tablet.
+- **Scripting interface exposes hole conditions.** High. `H/quick-reference/charge-rule-api/object-interfaces.htm`
+  - Hole: length, diameter, angle, burden, spacing, standing water length, wet-sides length, temperature (current and previous, with age in days), custom properties, labelled intervals, neighbours within a radius, local water level, approximate rock volume.
+  - Actions: fill an interval, fill to a mass, fill packaged product, add a primer at a depth, add evenly spaced primers.
+  - Products: density, water and damp resistance, delay, and gassed-emulsion density by depth (toe and average in-hole).
+  - Built-in air and drill-cuttings products, so air decks and stemming decks are ordinary decks.
+  - Hardness is not a built-in field; it would arrive as a custom property or interval (Inferred).
+- **Product catalogue:** groups and families, density-by-depth tables, density tolerance, unit cost, stock level, import/export. Energy, RWS or VOD fields not found. High. `H/menus-and-tools/home/setup-group/blast-product-catalogue.htm`
+- **Charge plans and sheets:** rule applied per hole gives a plan with preview; manual deck and primer editing in a row/echelon profile view; charge sheets and dip sheets go to tablet or paper. High. `H/key-concepts/profile-view.htm`, `H/process-overview/process-overview.htm`
+- **Powder factor:** explosive mass per rock volume, from design volume ((drilled length + standoff) x cos(angle) x burden x spacing) or from hole length; reported for reference design, target, plan and actual. High. `H/quick-reference/glossary.htm`, `H/menus-and-tools/analysis/analysis-report.htm`
+- **Energy display:** only two places found. The timing envelope plots detonation energy (MJ) per time window, and the fragmentation surface weights by each hole's "explosive energy density". No 3D energy-halo display found. High for what exists. `H/menus-and-tools/analysis/timing.htm`
+- **Coloured surfaces from holes:** any metric, optionally one metric minus or divided by another (design vs actual). High. `H/menus-and-tools/geometry/surfaces.htm`
+
+### 3. Timing
+- **Tie-up editor** with pyrotechnic, electronic and auto-detected hybrid modes. High. `H/menus-and-tools/charging/Design/create-tie-up-design.htm`
+  - Pyrotechnic: connector catalogue (single or composite), four tie modes (row-by-row, hole-by-hole, auto-fill along a control line, dummy holes), initiation point, connector length limits.
+  - Electronic: timing lines and diamond "roses", each segment with its own burden relief (ms/m) plus fixed delay; per-hole time table; timing horizons for decks (deck delay, detonator delay, firing order).
+  - Optimise: enforce minimum time between detonations, or between wave arrivals at named locations.
+  - Harness wire layout with limits on wire length and detonators per run.
+  - Tie-ups can span several blasts; states are Draft, Design, Actual.
+- **Analysis tools.** High. `H/menus-and-tools/analysis/timing.htm`
+  - Timing envelope: detonations, holes, mass, energy, PPV, pressure per window (usually 8 ms; 1-2 ms for electronic), optionally as seen at a point using a propagation speed.
+  - Timing contours.
+  - Burden relief surface: detonation time divided by distance from the free face.
+  - First-movement arrows (method not given).
+  - Animation with optional wavefront rings.
+- **Vendor initiation systems:** only DetNet DigiShot (special-hole flag) and BME AXXIS (log-file round trip) are named; also generic CSV, tagger report and PDF. Export/import of actuals and charge plans "for SHOTplus" exists. Orica i-kon, Dyno, Davey Bickford: not found.
+
+### 4. Field data and reconciliation
+- **As-drilled vs design.** High. `H/menus-and-tools/drilling/validation.htm`, `H/menus-and-tools/home/setup-group/site.htm`
+  - Auto-association by search radius with hole-ID fallback; redrill and ad hoc hole handling; green/red/orange validation.
+  - Tolerances per diameter: short/long depth, collar XY, collar Z, setup error (angle and bearing at a set depth), dip depth, charge depth, backfill.
+- **Drill navigation** through the Integration Service, which polls vendor databases (SQL Server, Oracle, PostgreSQL, ODBC, CSV). High. `http://help-files.maptek.com/blastlogic/2026/BlastLogic Integration Service Help Documentation.pdf`
+  - Named systems: Atlas Copco Surface Manager, Caterpillar Aquila and Terrain, FLANDERS ARDVARC, Leica IMS/Tritronics and Jigsaw/Jmineops, Modular ProVision, ROCKMA, Wenco.
+  - IREDES: not used by BlastLogic. Vulcan exports IREDES and a Tritronics file.
+- **Drill-monitoring (MWD) data:** depth intervals with site-defined measures; viewed down the hole and in profile; intervals created from rule conditions; round trip through Maptek Eureka/GeologyCore for lithology boundaries. No hardness index formula. High / Med. `https://www.maptek.com/forge/june_2020/measurement-while-drilling-data/`
+- **Dipping:** depth, water, wet sides, temperature, custom properties; backfill entry with check-dip percentage. High.
+- **Tablet:** Windows app, offline with a sync queue, GNSS nearest-hole selection. High. `http://help-files.maptek.com/blastlogic/2026/BlastLogic Tablet Help Documentation.pdf`
+  - Modules: drilling, dipping, backfilling, charging (load from plan, top-up, ad hoc decks and primers, cup density), blasts (mark fired), inventory.
+  - Charge plans recalculate in the field from new dip data.
+- **As-loaded vs design:** loaded and reconciled decks, charge placement accuracy, charge reconciliation, density measurement and protective-cap reports. High. `H/menus-and-tools/charging/charging-report.htm`
+- **QA/QC reports.** High. `H/menus-and-tools/drilling/drilling-report.htm`, `H/menus-and-tools/pre-charging/pre-charging-report.htm`
+  - Drilling: depth, collar and setup accuracy, drill calibration, productivity.
+  - Pre-charging: water, pattern condition, time-dependent fallback, backfill compliance, depth accuracy.
+  - Also hole status and blast summary.
+- **Architecture:** central server, publish step, snapshots with a reference design, roles and permissions, hole history with comments and anomalies. High.
+  - OData feeds for Excel/Power BI. `http://help-files.maptek.com/blastlogic/2026/BlastLogic OData Service Help Documentation.pdf`
+  - HTTP API and Python package (`maptekblastlogic`). `H/blastlogic-system-component-documentation/blastlogic-server/blastlogic-extend/blastlogic-extend.htm`
+  - Server database engine not found.
+- **Explosive trucks:** no vendor named in the help. A truck is a pick-list item; the API can write loaded decks, and its key example is named "Blast Truck Integration" (Inferred integration path). A search snippet mentioned a Sasol IBIS truck link, but the fetched article did not confirm it.
+
+### 5. Post-blast
+- **Fragmentation measurement** is in PointStudio (scan-based rock segmentation, S-curves), compared with BlastLogic's prediction. Med. `https://www.maptek.com/forge/september_2019/spatial-measurements-for-drill-blast/`
+- **"Spatial measurements":** back-break, heave, cratering imported and tied to holes for heat maps. Med.
+- **Vibration and overpressure observations:** table per monitoring station, manual or CSV, linked to a tie-up so MIC and source location are derived. High. `H/menus-and-tools/analysis/Modelling/modelling-observation-history.htm`
+- **Site-law regression:** not described. The models have a "use vibration observations" mode with filters, which suggests a fit (Inferred).
+- **Muckpile shape, blast movement, ore loss/dilution, dig-line adjustment:** not found in BlastLogic.
+- **Wall damage model:** not found (only back-break import).
+
+### 6. Prediction models
+- **Vibration (PPV).** Site constant and exponent per location, referenced to AS 2187.2-2006; standard square-root scaled-distance form assumed (Inferred, equation is an image). High for the logic. `H/menus-and-tools/analysis/Modelling/modelling-vibration-modelling.htm`
+  - MIC is found per grid point by arrival time (distance / propagation speed + firing time) within the window, summing whole deck masses.
+  - "Conservative" uses the nearest contributing charge; "non-conservative" uses a mass-weighted effective distance.
+  - Outputs: heat map and a table at locations.
+- **Overpressure.** Same structure with cube-root scaling, wind speed and direction, 340 m/s default, dB re 20 µPa, 5 dB contours, limit breaches shown red. High. `.../modelling-overpressure-modelling.htm`
+- **Fragmentation.** Kuz-Ram with the Swebrec function replacing Rosin-Rammler. High. `.../modelling-fragmentation-modelling.htm`
+  - Rock factor from Cunningham-style inputs: rock mass description, joint condition/spacing/angle, density influence (RDI = 25 x density - 50, from the 2022 page), UCS, Young's modulus, site correction factor.
+  - Timing factors (rock compression velocity, delay scatter) change the curve.
+  - Outputs: S-curve, maximum size, per-hole fragmentation surface.
+- **Flyrock.** Choice of McKenzie (2009) or Richards and Moore (2006). High. `.../modelling-fly-rock-modelling.htm`
+  - Cratering and face burst only; rifling explicitly not modelled.
+  - 2D circles, or 3D trajectories intersected with topography; safety factor; exclusion polygons.
+  - Face burst uses a user-supplied face triangulation.
+- **Cost model:** drilling, explosives, primers, tie-up; planned vs actual. High.
+- **BlastMCF** combines cost, powder factor, PPV, fragmentation oversize and 2D flyrock as objectives or constraints. High.
+- **"Hardness modelling"** appears only in a 2017 brochure line; no model found in current help. Low.
+
+### 7. Data in/out
+- **In:** CSV, DXF, Vulcan design database, Vulcan triangulations and grids, GeologyCore drillhole file, product catalogue and charge-rule files, attachments. High. `H/menus-and-tools/home/data.htm`
+- **Out:** the same, plus loaded decks, drill measurements, PDF/CSV reports.
+- **Block model import: not found.** Geology reaches holes as intervals; Vulcan rock-type intervals map across. `H/key-concepts/blastlogic-and-vulcan-integration.htm`
+- **Fleet management:** only through drill-navigation databases. Maptek Evolution or Drive links: not found.
+
+### 8. Reporting for cost or feasibility
+- **Cost report:** drilling, explosive, primer and tie-up costs, planned vs actual, per hole and total. High. `H/menus-and-tools/analysis/analysis-report.htm`
+  - Defaults per the OData manual: drilling cost per metre by diameter, fixed drilling cost per hole, charging cost per hole, bulk explosive cost per kg, primer cost per deck.
+  - Per-volume or per-mass cost display is described for BlastMCF only (needs rock density).
+- **Blast statistics feed:** hole count, volume, design/actual drill metres, designed/loaded/reconciled explosive mass, powder factor, redrills, out-of-tolerance counts. High.
+- **Inventory:** planned usage vs stock; actual usage of bulk ingredients and accessories. High. `H/menus-and-tools/inventory/inventory-report.htm`
+
+### Competitors: what they offer that BlastLogic does not (brief; partly from general knowledge)
+- **Orica SHOTPlus / BlastIQ / OREPro 3D / FRAGTrack:** blast movement and ore-control modelling, a physics-based movement and damage model, camera fragmentation measurement. Source: `https://www.orica.com/blastiq` and trade press. The SHOTPlus page returned 403.
+- **Hexagon:** in-hole blast movement monitors with dig-line generation, AI muckpile block model, Split photo fragmentation. `https://hexagon.com/products/hexagon-blast-movement-monitoring`
+- **Deswik.OPDB:** pattern design inside the planning package, hole templates that re-fit to the next bench's surfaces, blast clearance, publish to drills. `https://www.deswik.com/products/opdb`
+- **Dyno Nobel:** Differential Energy (varying emulsion density down the hole; heading only, no detail found), Nobel Fire with a fracture-density fragmentation model, ViewShot 3D timing. `https://www.dynonobel.com/our-services/software-services`
+- **O-Pitblast:** borehole deviation measurement, greenhouse-gas estimate, rules-of-thumb guide. `https://www.o-pitblast.com/`. Signature-hole vibration and photo fragmentation not confirmed (the search errored).
+
+---
+
+## B. Gap table
+
+| Feature | BlastLogic | Ours today | Value: (i) feasibility / (ii) operations | Size | Input needed |
+|---|---|---|---|---|---|
+| Cost model | Drill, explosive, primer, tie-up costs, plan vs actual | None | (i) Very high / (ii) High | S | Unit costs, rock density |
+| Deck charging and rule engine | Scripted rules, six deck sizing methods, air and stemming decks, multiple primers | One column | (i) High / (ii) Very high | M-L | Product table, hole conditions |
+| Product catalogue | Density, density-by-depth, water resistance, cost | Minimal | (i) High / (ii) High | S | Supplier data sheets |
+| Wet/dry product choice | Water and wet-sides length, length-above-water decks | None | (i) Med (assumed wet fraction) / (ii) High | S after decks | Hydrogeology, dips |
+| Geology-driven design | Downhole intervals from surfaces; rules read them | None | (i) Very high / (ii) High | M | Our block model, rock-mass data |
+| Rock factor from rock-mass inputs | Cunningham inputs, Swebrec option, correction factor | Kuz-Ram | (i) High / (ii) Med | S | UCS, E, jointing, density |
+| Scenario optimiser | BlastMCF: constraints and objectives across pattern, charge, timing | Single design | (i) Very high / (ii) Med | L | Limits, costs, monitors |
+| Pattern options | Diameter list, four pattern types, angled holes, hole depth to a surface, free-face rows | Staggered/square | (i) High / (ii) High | M | Bench surfaces, pit design |
+| Row types (buffer/trim/presplit) | Not found as named features | None | (i) High for wall control / (ii) High | M | Wall design |
+| Manual hole editing | Vulcan: insert, delete, move, rename | None | (i) Low / (ii) High | M | None |
+| Face-profile burden | Vulcan: face triangulation vs holes | None | (i) None / (ii) High | M | Face scan |
+| Tie-up drawing and accessory count | Connectors, timing lines/roses, harness, deck horizons | Auto patterns only | (i) Med (counts feed cost) / (ii) High | M-L | Accessory catalogue |
+| Timing envelope and optimiser | Mass/energy/PPV per window; minimum separation | MIC in 8 ms | (i) Med / (ii) Med | S | None |
+| Arrival-time MIC per receiver | Per grid point, propagation speed | Firing-time window | (i) Med / (ii) Med | S | Propagation speed |
+| Overpressure with wind, dB limits | Yes | Rings | (i) Med / (ii) Med | S | Site constants, wind |
+| Flyrock in 3D on topography, McKenzie option | Yes | Richards-Moore ranges | (i) Med / (ii) Med | S-M | Topography |
+| Monitoring observation store | Table tied to tie-ups | Fit function only | (i) Low / (ii) High | S | Monitor records |
+| Field capture (drill, dip, load) | Tablet, server, tolerances | None | (i) None / (ii) Very high | L | Field crews, devices |
+| Drill-navigation / MWD link | Seven vendor systems | None | (i) None / (ii) High | L | Vendor databases |
+| QA/QC reports | Around 15 reports | JSON report | (i) Low / (ii) High | M | Field data |
+| Inventory | Magazines, usage vs stock | None | (i) Low / (ii) Med | M | Stock records |
+| Blast movement / dilution | Not in BlastLogic (Orica, Hexagon have it) | Throw and muckpile only | (i) Med-High / (ii) Very high | L | Block model, movement data |
+
+---
+
+## C. Ranked recommendations
+
+### Top 10 for a feasibility study (no field data yet)
+1. **Cost model** (per hole, per BCM, per tonne): the chapter's main deliverable and the cheapest to build.
+2. **Product catalogue** with density, water resistance and unit cost: prerequisite for items 1, 3 and 4.
+3. **Decks:** stemming, air decks, multiple explosive decks, primers per deck. Realistic consumption and correct MIC per deck.
+4. **Design domains from our own block model:** rock type and hardness per hole or zone driving burden, spacing, powder factor and rock factor. BlastLogic lacks this; it is our natural advantage.
+5. **Rock factor calculator** from UCS, modulus, jointing and density, with a Swebrec option: defensible fragmentation from geotechnical data that a study actually has.
+6. **Consumption roll-up over the mine life:** drill metres, explosive tonnes, accessory counts per period and domain. Needs pit volumes by domain.
+7. **Pattern options:** diameter choice, angled holes, depth to a floor surface, equilateral/rectangular patterns.
+8. **Wall-control rows** (buffer, trim, presplit) with their own charge rules, tied to our Holmberg-Persson damage model.
+9. **Constraint check and scenario comparison** (PPV, airblast, flyrock, oversize, cost side by side); a small grid search before any genetic algorithm.
+10. **Wet-hole assumption** (wet fraction selects product and cost), plus overpressure in dB with limits and arrival-time MIC as small model upgrades.
+
+### Top 5 for an operating mine
+1. **As-drilled and dipping import with tolerances:** CSV first, vendor links later.
+2. **Condition-driven charge rules** that recalculate from dip, water and temperature.
+3. **As-loaded reconciliation** with powder factor and cost, plan vs actual.
+4. **Face-profile burden and manual hole editing.**
+5. **Monitoring database with site-law refit, then a blast-movement / dig-line model.** The second half is where BlastLogic is weakest and the grade-control value is highest.
+
+---
+
+## D. Not verified from public sources
+- **Exact equations** for vibration, overpressure and fragmentation (images on the help pages). The scaled-distance forms and the Kuznetsov variant are assumed standard.
+- **Site-law regression:** whether BlastLogic fits the constants from observations, and how.
+- **First-movement method** and how the free face is defined for burden relief.
+- **Product catalogue fields** for energy/RWS/VOD and the full list of product types; how detonation energy (MJ) is computed.
+- **Release notes:** behind a login. Version history here comes from news items and manual revision tables only.
+- **Vulcan specification contents:** parameter detail of pattern and loading-style templates, and any named buffer/presplit row types.
+- **Block model import, Evolution/Drive links, IREDES import, a named explosive-truck integration:** none found in BlastLogic documentation. Absence from the pages read is not proof of absence.
+- **Server database engine,** audit-trail detail, tablet hardware.
+- **PointStudio blast tools** beyond fragmentation analysis.
+- **Failed sources:** the miningmagazine.com article on electronic timing and the Orica SHOTPlus page returned 403; the O-Pitblast feature search errored. Competitor notes are therefore partly from general knowledge and marketing pages.
+- **Marketing claims** (9-10% shovel gain, 20% less commodity loss) are vendor statements with no independent evidence.
