@@ -21,6 +21,7 @@ SUBCOMMANDS: list[tuple[str, str]] = [
     ("surface", "bakumine.commands.geology_surface"),
     ("cv", "bakumine.commands.geology_cv"),
     ("code", "bakumine.commands.geology_code"),
+    ("build", "bakumine.commands.geology_build"),
 ]
 
 

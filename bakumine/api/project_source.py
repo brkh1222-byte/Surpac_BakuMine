@@ -2,12 +2,18 @@
 
 Database objects become drillhole objects, ``dtm`` objects surfaces, ``solid`` objects
 solids and ``model`` objects block models. Composites, strings and constraints are in the
-project but not drawn. Block models resolve the project's solids and DTMs by object id in
-constraints, and open the way :func:`bakumine.api.blocks.default_display` reads them:
-coloured by the estimated grade, without the air. The project's solids are all listed as
-the model's constraint geometry, so the viewer opens them unticked and see-through: an
-opaque ore solid would hide the blocks inside it. Data are loaded on first use and kept
-until the folder changes.
+project but not drawn. A ``geology`` object is listed as itself (category and kind
+``geology``) followed by its meshes as ``mesh`` objects that name it as their ``parent``:
+``<id>.unit.<CODE>`` (group ``Units``, the unit's colour), ``<id>.fault.<NAME>`` (group
+``Faults``) and ``<id>.surface.<stem>`` (group ``Surfaces``, the zone's colour). The unit
+dictionaries of the geology objects give the colours of the categories of block and
+drillhole attributes (the first geology object wins).
+
+Block models resolve the project's solids and DTMs by object id in constraints, and open
+the way :func:`bakumine.api.blocks.default_display` reads them: coloured by the estimated
+grade, without the air. The project's solids are all listed as the model's constraint
+geometry, so the viewer opens them unticked and see-through: an opaque ore solid would hide
+the blocks inside it. Data are loaded on first use and kept until the folder changes.
 """
 
 from __future__ import annotations
@@ -60,11 +66,97 @@ class ProjectSceneSource:
         return digest.hexdigest()[:12]
 
     def objects(self) -> list[ObjectInfo]:
-        return [
-            ObjectInfo(o.id, o.name, *_DRAWN[o.kind])
-            for o in self._project().list()
-            if o.kind in _DRAWN
+        project = self._project()
+        out = [
+            ObjectInfo(o.id, o.name, *_DRAWN[o.kind]) for o in project.list() if o.kind in _DRAWN
         ]
+        for o in project.list("geology"):
+            folder = project.path_of(o)
+            if not (folder / "geology.json").is_file():
+                continue
+            out.append(ObjectInfo(o.id, o.name, "geology", "geology"))
+            out.extend(
+                ObjectInfo(c["id"], c["name"], "geology", "mesh", c["colour"], c["group"], o.id)
+                for c in self._geology_children(o.id, folder)
+            )
+        return out
+
+    # ------------------------------------------------------------------ geology
+
+    def _geology_children(self, object_id: str, folder: Path) -> list[dict]:
+        def build() -> list[dict]:
+            from bakumine.api.operations_geology import geology_children
+
+            return geology_children(object_id, folder)
+
+        return self._cached("geology-children", object_id, build)  # type: ignore[no-any-return]
+
+    def _geology_folder(self, object_id: str) -> Path:
+        folder = self._path(object_id, "geology")
+        if not (folder / "geology.json").is_file():
+            raise KeyError(object_id)
+        return folder
+
+    def geology(self, object_id: str) -> dict:
+        """``bounds`` (the grid box) and ``stats`` of a geology object, for the manifest."""
+        folder = self._geology_folder(object_id)
+
+        def build() -> dict:
+            import json
+
+            manifest = json.loads((folder / "geology.json").read_text(encoding="utf-8"))
+            grid = manifest["grid"]
+            lo = [float(v) for v in grid["origin"]]
+            hi = [
+                o + float(s) * (int(n) - 1)
+                for o, s, n in zip(lo, grid["spacing"], grid["shape"], strict=True)
+            ]
+            return {
+                "bounds": {"min": lo, "max": hi},
+                "stats": {
+                    "units": len([c for c in manifest["layers"]["lith"] if c != "AIR"]),
+                    "blocks": len(manifest.get("blocks") or []),
+                    "faults": len(manifest.get("faults") or []),
+                },
+            }
+
+        return self._cached("geology", object_id, build)  # type: ignore[no-any-return]
+
+    def _geology_mesh_file(self, object_id: str) -> Path:
+        """File of ``<geology id>.<unit | fault | surface>.<key>``; ids are parsed from the
+        right, because an object id may contain dots and a key does not."""
+        parts = object_id.rsplit(".", 2)
+        if len(parts) != 3 or parts[1] not in ("unit", "fault", "surface"):
+            raise KeyError(object_id)
+        folder = self._geology_folder(parts[0])
+        for child in self._geology_children(parts[0], folder):
+            if child["id"] == object_id:
+                return folder / child["file"]
+        raise KeyError(object_id)
+
+    def category_colours(self) -> dict[str, str]:
+        """Colour of unit codes, weathering zones and folded log spellings, from the unit
+        dictionaries of the project's geology objects; the first object wins."""
+
+        def build() -> dict[str, str]:
+            from bakumine.core.geology.units import UnitDictionary
+
+            out: dict[str, str] = {}
+            project = self._project()
+            for o in project.list("geology"):
+                try:
+                    units = UnitDictionary.load(project.path_of(o) / "units.json")
+                except (OSError, ValueError):
+                    continue
+                colours = units.colours()
+                for code, colour in colours.items():
+                    out.setdefault(code, colour)
+                for spelling, code in units.lookup().items():
+                    if code in colours:
+                        out.setdefault(spelling, colours[code])
+            return out
+
+        return self._cached("colours", "", build)  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------ data
 
@@ -93,12 +185,15 @@ class ProjectSceneSource:
             from bakumine.core.drillholes.importer import load_database
 
             database = load_database(path)
-            return DrillholeData(database, database.desurvey())
+            return DrillholeData(database, database.desurvey(), colours=self.category_colours())
 
         return self._cached("drillholes", object_id, build)  # type: ignore[no-any-return]
 
     def mesh(self, object_id: str) -> Mesh:
-        path = self._path(object_id, "dtm", "solid")
+        try:
+            path = self._path(object_id, "dtm", "solid")
+        except KeyError:
+            path = self._geology_mesh_file(object_id)
 
         def build() -> Mesh:
             from bakumine.core.io.obj import read_obj
@@ -129,6 +224,7 @@ class ProjectSceneSource:
                 solids={k: n for k, (n, _) in solids.items()},
                 surfaces={k: n for k, (n, _) in dtms.items()},
                 display=default_display(model),
+                colours=self.category_colours(),
             )
 
         return self._cached("blocks", object_id, build)  # type: ignore[no-any-return]

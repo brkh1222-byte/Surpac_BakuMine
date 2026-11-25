@@ -851,6 +851,98 @@ Recorded changes (wave 3, 2026-11-25):
 - Volume reports separate the drilled volume from the extrapolated one (`max_extrapolation`); thin bodies need
   partial volumes or finer sub-blocks (centroid coding of an 8 m sheet in 2.5 m sub-blocks is off by 10 %).
 
+Recorded changes (T14, 2026-11-25):
+
+Build spec and build (`bakumine/core/geology/spec.py`):
+- Also exported: `save_geology(model, folder, *, overwrite=False)` (the folder of section 9: `GeologyModel.save`
+  plus `spec.json`, `surfaces/<name>.json`, `surfaces/<name>_picks.csv`, and `diagnostics.json` rewritten as
+  standard JSON), `build_summary(model) -> dict`, `json_safe(value)` (NaN / infinity -> `null`), `BuildRecord`.
+  `build_geology` returns the model sampled, with `model.provenance` (the merged record), `model.diagnostics` and
+  `model.build` (a `BuildRecord`: the spec and the `DepthSurface` objects) set.
+- Required keys: `name`, `units`, and a database (`database` in the spec or the `DB` argument). Everything else
+  is optional. A key that is not known is an error.
+- Extra spec keys: `topography` may be `{"file", "source"}` (`source` = where the surface comes from, free text);
+  `lithology.intrusion_order` (oldest first; default: the `age` of the dictionary when every intrusion has one,
+  else the dictionary order); `faults.post_fault`; `density_source` `{"table", "column"}`;
+  `interpolation.keep_conflicts`; `extra_intervals[]` = `{"file" | "rows", "units_column", "surfaces"}`;
+  `units` may be the dictionary itself; `replace_with.points` may be a list of `[x, y, z]`; `defaults` (written
+  by the build, see below).
+- Defaults, each an "assumed" entry `Default for <field>`: `extent` (box of the hole traces + 10 %), `resolution`
+  (shortest horizontal side / 80, two significant digits), `max_nodes` 20 000 000, `lithology.kernel` linear,
+  `faults.fault_zone_units` (the units of kind `fault-zone`), `faults.min_picks` 3, `faults.min_holes_per_block`
+  5, `cover.mode` first_run, `weathering[i].base[].mode` deepest, `interpolation.method` kriging, `.drift`
+  constant, `.spacing` 2 x the grid spacing, `lithology.events` (one `argmax` event of the logged lithology
+  units + one `intrusion` event per logged intrusion; entry `Rock-unit events`). Defaults that a core module
+  already records (cap, spacings, anisotropy, `absent`, variogram, age of the faults) are not listed twice.
+- `spec.json` is the spec as run: every default written out, paths as given, plus
+  `"defaults": [{"field", "value", "used_for"}]`. Loading it again keeps those fields as defaults, so a rebuild
+  from `spec.json` gives the same provenance record.
+- Event order used: the non-intrusion events as listed, then the intrusions in age order; events whose units
+  are all in `faults.post_fault` last. An intrusion younger than the faults that is older than one the faults
+  cut is a `SpecError`.
+- `extra_intervals` feed the surfaces only (not the rock units). Without `surfaces` an entry is used for a
+  surface when it holds an interval of that surface's own units.
+- `cover` or `weathering` without `topography` is a `SpecError`. Without a topography the model has no AIR.
+- `diagnostics.json` keys: `timing`, `grid`, `grid_nodes`, `inputs`, `surfaces` (per surface), `fault_picks`,
+  `fault_network`, `throw`, `residuals` (logged unit against the grid labels at points every 2 m along the
+  holes), `volumes`, `cross_validation` (`{"run": false, "note"}`: the build does not run it), `pooled_blocks`.
+  `volumes = {"method", "cell_volume", "hull", "units": {"<CODE>": {"volume", "inside_hull", "extrapolated",
+  "extrapolated_share"}}}`: one point per grid cell with the per-level plan shift of section 13 (a plain
+  lattice was 20 % off on the 8 m dyke at a 5 m grid); the hull is the convex hull of the logged hole points.
+- Missing entries written by the build: `Topography`, `Fault data`, `Density samples`, `Cover base` (cover
+  logged, not built), `Weathering bases` (zones in the dictionary, not built).
+
+CLI:
+- `geology build [DB] --spec SPEC --out FOLDER [--overwrite] [--summary JSON] [--base DIR]`; `--base` is the
+  folder the paths of the spec are relative to (default: the spec's folder). Exit 2 with `error: <field>: ...`.
+- `geology cv` reads the spec with `load_spec` (a spec without a name takes the file's; `fault_zone_units`
+  now defaults to the units of kind `fault-zone`).
+- `geology provenance` is not implemented (no task owns it).
+
+API (all synchronous, like the geometry operations; errors are HTTP 400 with the `SpecError` text):
+- In the API spec: `database`, `topography` (`{"object": id, "source": "..."}` allowed), `extent.model` and
+  `faults.surfaces[].replace_with.file` are `{"object": "<id>"}` (or the bare id); `units` is the dictionary
+  itself or `{"object": "<geology id>"}`; `extra_intervals` takes `rows` only and `replace_with.points` a list.
+- `POST /api/v1/ops/geology/build` `{"spec", "name"}` -> `{"id", "kind": "geology", "name", "grid", "layers",
+  "blocks", "pooled_blocks", "faults": [{"name", "source", "dip", "dip_azimuth", "blocks"}], "surfaces":
+  [{"name", "depth_mean", "depth_min", "depth_max", "used", "n_nested"}], "throw": [...], "residuals", "volumes",
+  "inputs", "timing", "provenance": {"measured": n, "assumed": n, "missing": n}}` (`build_summary`). The object
+  lands in `geology/<slug of name>`. Job-log entry: `inputs` = the objects named, `replay.spec` = the spec with
+  the objects' project paths, run again by `geology build --spec ... --base PROJECT`.
+- `POST /api/v1/ops/geology/code` `{"model", "geology", "layers"?, "subblock"? (true), "density"? ("density";
+  null = none), "display"?, "ore_attribute"?, "distance"?, "max_level"?, "merge"? (false)}` -> `{"model",
+  "geology", "n_blocks", "attributes": {layer: attribute}, "skipped": {layer: reason}, "n_split", "n_merged",
+  "volumes": [{"layer", "category", "volume"}], "tonnage": [{"unit", "blocks", "volume", "tonnes", "density"}] |
+  null, "provenance": {...counts}}`. The model is changed in place with an undo snapshot (`modifies`); the
+  coding record goes to `<geology folder>/coding/<model folder name>.provenance.json` (undo does not remove it).
+- `GET /api/v1/geology/{id}` -> `{"id", "name", "model_name", "created", "grid": {"origin", "spacing", "shape"},
+  "bounds": {"min", "max"}, "layers": {"lith", "weathering", "fault_block"}, "blocks", "pooled_blocks",
+  "units": [{"code", "name", "kind", "colour", "mesh": <child id> | null}],
+  "faults": [{"name", "source", "dip", "dip_azimuth", "blocks", "misfit", "mesh": <child id> | null}],
+  "surfaces": [{"name": "base:OXIDE", "role": "cover" | "weathering", "code", "colour", "mesh": <child id> |
+  null, "diagnostics"}], "max_extrapolation", "diagnostics": <diagnostics.json>, "spec": <spec.json> | null,
+  "coded_models": [names]}`. 404 for an id that is not a geology object.
+- `GET /api/v1/geology/{id}/provenance` -> `{"build": <provenance.json>, "coding": {"<model folder name>":
+  <record>}}`; a record is `{"format", "version", "object", "entries": [{"item", "kind", "source", "used_for",
+  "detail"?, "stage"?, "task"?, "count"?, "value"?}]}` (section 3).
+
+Scene manifest (`GET /api/v1/scene`, `objects[]`):
+- The geology object: `{"id", "name", "category": "geology", "kind": "geology", "attributes": [],
+  "href": "/api/v1/geology/<id>", "bounds": {"min", "max"}, "stats": {"units", "blocks", "faults"}}`
+  (`units` counts the lith categories without `AIR`).
+- Directly after it, its meshes, each `{"id", "name", "category": "geology", "kind": "mesh", "attributes": [],
+  "group": "Units" | "Faults" | "Surfaces", "parent": "<geology id>", "style": {"colour": "#rrggbb"} (absent
+  for faults), "href": "/api/v1/scene/objects/<child id>/mesh", "bounds", "stats": {"vertices", "faces",
+  "closed"}}`. Ids: `<id>.unit.<CODE>` (name = the unit's name), `<id>.fault.<NAME>` (name `Fault <NAME>`),
+  `<id>.surface.<stem>` (stem = `base_OXIDE`; name `Base of <zone name>`). Only meshes whose file exists are
+  listed; the cover unit has no mesh (its base is a surface). Fault names are limited to letters, digits, `_`
+  and `-`. The mesh endpoint looks an id up as a project object first and parses it from the right otherwise.
+- `"style"`, `"group"`, `"parent"` appear only when set; other objects are unchanged.
+- `"colours"` on categorical attributes: block attributes get the colour of every category that is a unit code,
+  a weathering zone or a display code of the dictionaries; drillhole attributes also match log spellings
+  (folded: upper case, stripped) to their unit's colour. The key is absent when no category is known.
+- Until T15 adds the category `geology` to the viewer store, these objects are listed and not drawn.
+
 ## 13. Synthetic layered deposit (T2)
 
 Command: `bakumine synth --preset layered | layered-small --out DIR [--seed 42]`. Every number below is part of
