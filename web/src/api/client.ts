@@ -43,7 +43,7 @@ export interface CategoricalAttributeInfo {
 
 export type AttributeInfo = NumericAttributeInfo | CategoricalAttributeInfo
 
-export type ObjectKind = 'drillholes' | 'mesh' | 'blocks'
+export type ObjectKind = 'drillholes' | 'mesh' | 'blocks' | 'geology'
 
 export interface ManifestObject {
   id: string
@@ -56,6 +56,12 @@ export interface ManifestObject {
   bounds: Bounds | null
   attributes: AttributeInfo[]
   stats: Record<string, unknown>
+  /** Id of the object this one is part of (a mesh of a geology model). */
+  parent?: string
+  /** Group under the parent: "Units", "Faults" or "Surfaces". */
+  group?: string
+  /** Colour the project supplies for the object (a unit's colour); absent for faults. */
+  style?: { colour?: string }
 }
 
 export interface SceneManifest {

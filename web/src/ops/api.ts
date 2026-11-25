@@ -17,7 +17,7 @@ export interface IntervalTableInfo {
 
 export interface ProjectObjectInfo {
   id: string
-  kind: 'database' | 'composite' | 'string' | 'dtm' | 'solid' | 'model' | 'constraint'
+  kind: 'database' | 'composite' | 'string' | 'dtm' | 'solid' | 'model' | 'constraint' | 'geology'
   name: string
   tables?: Record<string, IntervalTableInfo>
   columns?: string[]

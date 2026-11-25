@@ -7,6 +7,7 @@ import {
   clampOpacity,
   defaultElevationSettings,
   defaultMeshDisplay,
+  geologyMeshDisplay,
   elevationColors,
   elevationLegend,
   zRangeOf,
@@ -112,4 +113,25 @@ test('generated performance surface has the requested size and valid indices', (
   expect(big.vertices).toBeInstanceOf(Float64Array)
   expect(big.vertices[0]).toBeGreaterThan(499_000)
   expect(big.vertices[1]).toBeGreaterThan(5_299_000)
+})
+
+test('meshes of a geology model: units in their dictionary colour, faults neutral, surfaces see-through', () => {
+  const unit = geologyMeshDisplay({ group: 'Units', colour: '#C9B28F' }, true, [940, 1250])
+  expect([unit.mode, unit.color, unit.group]).toEqual(['shaded', '#c9b28f', 'Units'])
+  const fault = geologyMeshDisplay({ group: 'Faults' }, false, [940, 1250])
+  expect([fault.mode, fault.color]).toEqual(['transparent', '#9aa3ad'])
+  expect(fault.opacity).toBeLessThan(1)
+  const surface = geologyMeshDisplay({ group: 'Surfaces', colour: '#d98c3a' }, false, [1180, 1230])
+  expect([surface.mode, surface.color]).toEqual(['transparent', '#d98c3a'])
+  // a colour that is not #rrggbb is not used
+  expect(geologyMeshDisplay({ group: 'Units', colour: 'red' }, true, [0, 1]).color).toMatch(/^#[0-9a-f]{6}$/)
+
+  // geology meshes take no colour of the solid palette away from the other solids
+  const { registerMesh } = useDisplay.getState()
+  registerMesh('geo.unit.A', true, [0, 10], false, { group: 'Units', colour: '#112233' })
+  registerMesh('geo.unit.B', true, [0, 10], false, { group: 'Units', colour: '#445566' })
+  registerMesh('first-solid', true, [0, 10])
+  const meshes = useDisplay.getState().meshes
+  expect(meshes['geo.unit.A'].color).toBe('#112233')
+  expect(meshes['first-solid'].color).toBe(defaultMeshDisplay(true, [0, 10], 0).color)
 })

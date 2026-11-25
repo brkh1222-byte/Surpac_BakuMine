@@ -10,6 +10,8 @@ import { SurfacePanel } from './ops/SurfacePanel'
 import { JobLogPanel } from './ops/JobLogPanel'
 import { ModelPanel } from './ops/ModelPanel'
 import { DigitisePanel } from './DigitisePanel'
+import { GeologyPanel } from './ops/GeologyPanel'
+import { GeologyTree, countGeologyModels } from './GeologyTree'
 import { ObjectControls } from './ObjectControls'
 import { ReportPanel } from './ReportPanel'
 import { SectionPanel } from './SectionPanel'
@@ -52,9 +54,12 @@ function CategoryNode({ id, label }: { id: Category; label: string }) {
           aria-label={`Show ${label.toLowerCase()}`}
         />
         <span className="tree-name">{label}</span>
-        <span className="tree-count">{members.length}</span>
+        <span className="tree-count">{id === 'geology' ? countGeologyModels(objects) : members.length}</span>
       </label>
-      {members.length > 0 && (
+      {id === 'geology' ? (
+        // Models with their groups of meshes, not a flat list.
+        <GeologyTree off={!visible} tag={(objectId) => <LoadTag id={objectId} />} />
+      ) : members.length > 0 && (
         <ul>
           {members.map((o) => (
             <li key={o.id}>
@@ -126,6 +131,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <ModelPanel />
           <EstimatePanel />
           <ClassifyPanel />
+          <GeologyPanel />
           <JobLogPanel />
         </>
       )}

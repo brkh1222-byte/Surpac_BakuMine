@@ -12,13 +12,14 @@ import { ensureOrigin, type Vec3 } from '../scene/origin'
 
 export type Theme = 'dark' | 'light'
 export type Projection = 'perspective' | 'orthographic'
-export type Category = 'drillholes' | 'surfaces' | 'solids' | 'blockModels'
+export type Category = 'drillholes' | 'surfaces' | 'solids' | 'blockModels' | 'geology'
 
 export const CATEGORIES: readonly { id: Category; label: string }[] = [
   { id: 'drillholes', label: 'Drillholes' },
   { id: 'surfaces', label: 'Surfaces' },
   { id: 'solids', label: 'Solids' },
   { id: 'blockModels', label: 'Block models' },
+  { id: 'geology', label: 'Geology' },
 ]
 
 /** Axis-aligned box in WORLD coordinates (float64, true Z). */
@@ -33,6 +34,12 @@ export interface SceneObject {
   category: Category
   bounds: Bounds
   visible: boolean
+  /** Id of the object this one belongs to (a mesh of a geology model): hidden with it. */
+  parent?: string
+  /** Group under the parent in the object tree ("Units", "Faults", "Surfaces"). */
+  group?: string
+  /** Position in the project's object list: keeps a group in the project's order. */
+  order?: number
 }
 
 export interface CursorReadout {
@@ -124,16 +131,23 @@ export function boundsOf(xyz: ArrayLike<number>): Bounds {
   return { min: [min[0], min[1], min[2]], max: [max[0], max[1], max[2]] }
 }
 
+/** Object toggle AND category toggle AND, for a child, the toggle of its parent. */
+export function isShown(state: Pick<ViewerState, 'objects' | 'categoryVisible'>, object: SceneObject): boolean {
+  if (!object.visible || !state.categoryVisible[object.category]) return false
+  const parent = object.parent ? state.objects[object.parent] : undefined
+  return !parent || parent.visible
+}
+
 export function isObjectVisible(state: ViewerState, id: string): boolean {
   const object = state.objects[id]
-  return !!object && object.visible && state.categoryVisible[object.category]
+  return !!object && isShown(state, object)
 }
 
 /** World bounds of everything currently shown, or null when nothing is. */
 export function visibleBounds(state: ViewerState): Bounds | null {
   return unionBounds(
     Object.values(state.objects)
-      .filter((o) => o.visible && state.categoryVisible[o.category])
+      .filter((o) => isShown(state, o))
       .map((o) => o.bounds),
   )
 }
@@ -172,7 +186,7 @@ export const useViewer = create<ViewerState>()((set) => ({
   theme: initialTheme(),
   projection: 'perspective',
   verticalExaggeration: 1,
-  categoryVisible: { drillholes: true, surfaces: true, solids: true, blockModels: true },
+  categoryVisible: { drillholes: true, surfaces: true, solids: true, blockModels: true, geology: true },
   objects: {},
   cursor: null,
   gridSpacing: 100,

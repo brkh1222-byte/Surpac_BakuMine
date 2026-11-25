@@ -31,6 +31,8 @@ export interface MeshDisplay {
   elevation: NumericSettings
   /** Lowest and highest vertex, true Z. */
   zRange: [number, number]
+  /** Set for a mesh of a geology model: it takes no colour of the surface / solid palettes. */
+  group?: string
 }
 
 /** Object colours handed out in order of registration, per kind. */
@@ -59,6 +61,40 @@ export function defaultMeshDisplay(closed: boolean, zRange: readonly [number, nu
     elevation: defaultElevationSettings(zRange),
     zRange: [zRange[0], zRange[1]],
   }
+}
+
+/** Colour of a fault mesh: neutral, so that it reads against every unit colour. */
+export const FAULT_COLOR = '#9aa3ad'
+
+/** What the manifest says about a mesh of a geology model. */
+export interface GeologyMeshStyle {
+  /** "Units", "Faults" or "Surfaces". */
+  group: string
+  /** Colour of the unit or zone in the dictionary, `#rrggbb`; none for faults. */
+  colour?: string
+}
+
+/**
+ * Display of a mesh of a geology model: a unit solid is opaque in its dictionary colour;
+ * a fault is neutral and see-through; a base surface is see-through in its zone colour.
+ */
+export function geologyMeshDisplay(style: GeologyMeshStyle, closed: boolean, zRange: readonly [number, number]): MeshDisplay {
+  const display = defaultMeshDisplay(closed, zRange)
+  const given = style.colour && /^#[0-9a-f]{6}$/i.test(style.colour) ? style.colour.toLowerCase() : null
+  display.group = style.group
+  if (style.group === 'Faults') {
+    display.color = given ?? FAULT_COLOR
+    display.mode = 'transparent'
+    display.opacity = 0.4
+  } else if (style.group === 'Surfaces') {
+    display.color = given ?? display.color
+    display.mode = 'transparent'
+    display.opacity = 0.5
+  } else {
+    display.color = given ?? display.color
+    display.mode = 'shaded'
+  }
+  return display
 }
 
 export function clampOpacity(value: number): number {

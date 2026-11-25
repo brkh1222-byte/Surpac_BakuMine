@@ -11,7 +11,7 @@ beforeEach(() => {
   resetOrigin()
   useViewer.setState({
     objects: {},
-    categoryVisible: { drillholes: true, surfaces: true, solids: true, blockModels: true },
+    categoryVisible: { drillholes: true, surfaces: true, solids: true, blockModels: true, geology: true },
     verticalExaggeration: 1,
   })
 })
@@ -57,4 +57,26 @@ test('vertical exaggeration is clamped and ignores NaN', () => {
 
 test('boundsOf', () => {
   expect(boundsOf(new Float64Array([1, 2, 3, -1, 5, 0]))).toEqual({ min: [-1, 2, 0], max: [1, 5, 3] })
+})
+
+test('a child is hidden with its parent, and a hidden child does not count in the visible bounds', () => {
+  const s = useViewer.getState()
+  s.registerObject({ id: 'geo', name: 'Geology', category: 'geology', bounds: box(0, 0, 0, 10) })
+  s.registerObject({ id: 'geo.unit.A', name: 'A', category: 'geology', bounds: box(100, 0, 0, 10), parent: 'geo', group: 'Units' })
+  expect(isObjectVisible(useViewer.getState(), 'geo.unit.A')).toBe(true)
+  expect(visibleBounds(useViewer.getState())?.max[0]).toBe(110)
+
+  s.setObjectVisible('geo', false)
+  expect(isObjectVisible(useViewer.getState(), 'geo.unit.A')).toBe(false)
+  // the child keeps its own toggle for when the model is shown again
+  expect(useViewer.getState().objects['geo.unit.A'].visible).toBe(true)
+  expect(visibleBounds(useViewer.getState())).toBeNull()
+
+  s.setObjectVisible('geo', true)
+  s.setCategoryVisible('geology', false)
+  expect(isObjectVisible(useViewer.getState(), 'geo.unit.A')).toBe(false)
+  // a child whose parent is not registered (still loading) is not hidden by it
+  s.setCategoryVisible('geology', true)
+  s.registerObject({ id: 'x.unit.A', name: 'A', category: 'geology', bounds: box(0, 0, 0, 1), parent: 'x' })
+  expect(isObjectVisible(useViewer.getState(), 'x.unit.A')).toBe(true)
 })
