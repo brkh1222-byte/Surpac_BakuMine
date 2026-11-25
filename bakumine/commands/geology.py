@@ -18,6 +18,7 @@ HELP = "Geology model: unit dictionary, surfaces, rock units, faults, block codi
 
 SUBCOMMANDS: list[tuple[str, str]] = [
     ("units", "bakumine.commands.geology_units"),
+    ("surface", "bakumine.commands.geology_surface"),
 ]
 
 
