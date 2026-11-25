@@ -940,6 +940,16 @@ Self-check in the generator (raise if not met): every lith code logged in >= 8 h
 >= 6 (small) / >= 15 (full) holes cross F1; the ore lens is at least 10 m below the topography; volumes at 2 m
 and 1 m agree within 1 %. If a check fails, only the hole length may change, and the change is recorded here.
 
+Recorded changes (T2, 2026-11-25):
+- Full preset: the DIO stock is cut by 13 holes at any hole length tried, so its minimum is 12 holes
+  (`min_holes_exceptions`); the other units keep 20.
+- Volumes in `truth.json` use one point per cell with a per-level plan shift (`r = k mod 31`, shift
+  `((r + 0.5) / 31, ((12 r mod 31) + 0.5) / 31)` cells): a plain lattice samples the 8 m dyke at one phase and
+  the 2 m and 1 m counts then differ by 9 %.
+- `frac_GRD` in `truth_blocks.parquet` (plain 4 x 4 x 4 lattice) is biased by about 10 %: volume checks (T12,
+  T16) use `truth.json["volumes"]`.
+- The importer strips trailing spaces of codes; `topo.obj` covers the box plus 100 m.
+
 `tests/geology/conftest.py` (T2), session scope:
 - `layered_small` -> `LayeredDeposit`;
 - `layered_small_dir` -> its written folder (tmp);

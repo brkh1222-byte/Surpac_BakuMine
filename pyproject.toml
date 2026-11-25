@@ -46,6 +46,7 @@ packages = ["bakumine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: needs the full synthetic layered deposit"]
 
 [tool.ruff]
 line-length = 100
