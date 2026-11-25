@@ -99,14 +99,18 @@ test('rampColor clamps and interpolates between the stops', () => {
   for (let k = 0; k < 3; k++) expect(mid[k]).toBeCloseTo((a[k] + b[k]) / 2, 12)
 })
 
-test('categorical colours are distinct, fixed in order and never cycled', () => {
+test('categorical colours are distinct and fixed in order; past the 20th they cycle', () => {
   for (const theme of THEMES) {
     const palette = CATEGORICAL[theme]
     expect(new Set(palette).size).toBe(palette.length)
     expect(categoryColor(theme, 0)).toBe(palette[0])
     expect(categoryColor(theme, 7)).toBe(palette[7])
-    expect(categoryColor(theme, 8)).toBe(OTHER_COLOR[theme])
-    expect(categoryColor(theme, 99)).toBe(OTHER_COLOR[theme])
+    // P9.T5: 20 entries instead of 8, so the ninth is a colour of its own and the list
+    // cycles past its end (it used to fall back to OTHER_COLOR from the ninth on).
+    expect(palette.length).toBe(20)
+    expect(categoryColor(theme, 8)).toBe(palette[8])
+    expect(categoryColor(theme, 99)).toBe(palette[99 % 20])
+    expect(categoryColor(theme, -1)).toBe(OTHER_COLOR[theme])
     // Every pair differs (a crude sRGB distance; the palette itself was checked for
     // colour-blind separation with the dataviz validator): clearly among the first six,
     // which is what most rock-code tables use, and still visibly for the last two.

@@ -224,7 +224,7 @@ software / inputs still needed.
 - [x] **P9.T2 Synthetic layered deposit with truth** (`bakumine synth --preset layered | layered-small`).
 - [x] **P9.T3 Unit dictionary and provenance record**, `geology units init | check`.
 - [x] **P9.T4 2-D kriging with inequality data** (exact picks, lower and upper bounds), checked against PyKrige and a quadratic-programme solver.
-- [ ] **P9.T5 Viewer: 20 category colours and colour maps per code.**
+- [x] **P9.T5 Viewer: 20 category colours and colour maps per code.**
 - [ ] **P9.T6 Unit picks per hole with bounds.**
 - [ ] **P9.T7 Multi-unit rock model (largest field), grid sampling, meshes, save / load.**
 - [ ] **P9.T8 Fault surfaces and fault blocks** (inferred from logged blocks, or imported).

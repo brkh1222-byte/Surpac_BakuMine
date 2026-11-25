@@ -35,6 +35,8 @@ export interface CategoricalAttributeInfo {
   name: string
   type: 'categorical'
   categories: string[]
+  /** Colours the project supplies, category -> `#rrggbb`; they win over the palette. */
+  colours?: Record<string, string>
   count: number
   missing: number
 }
