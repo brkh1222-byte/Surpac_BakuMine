@@ -714,6 +714,7 @@ class ImplicitField:
         self.topography = topography
         self.max_extrapolation = max_extrapolation
         self._local = local
+        self.flat_points = 0  # evaluations that fell back to a constant drift (_local_values)
         self._hole_tree = None
         if max_extrapolation is not None:
             if hole_points is None or len(hole_points) == 0:
@@ -731,6 +732,48 @@ class ImplicitField:
             local = self.anisotropy.to_isotropic(local)
         return np.ascontiguousarray(local / self.length)
 
+    def _local_values(self, x: np.ndarray) -> np.ndarray:
+        """The local fit at scaled points ``x``, also where the nearest constraints are flat.
+
+        With a linear drift (``degree`` 1) the local system of a point is singular when its
+        ``neighbors`` nearest constraints all lie in one plane or on one line (holes drilled
+        in one section, or one straight hole): the slope of the drift across that plane is
+        not determined by them. For those points only, the drift is the constant (degree 0),
+        i.e. the undetermined slope is taken as zero. The linear kernel is conditionally
+        positive definite of order 1, so a constant drift keeps the system solvable
+        (research.md 5.6). Their number is added to ``flat_points``.
+        """
+        try:
+            return self._local(x)
+        except np.linalg.LinAlgError:
+            if self.degree == 0 or self.kernel != "linear":
+                raise
+        if len(x) > 64:
+            half = len(x) // 2
+            return np.concatenate([self._local_values(x[:half]), self._local_values(x[half:])])
+        local = self._local
+        _, index = local._tree.query(x, k=local.neighbors)
+        index = np.sort(np.atleast_2d(index), axis=1)
+        out = np.empty(len(x))
+        _, group = np.unique(index, axis=0, return_inverse=True)
+        group = np.ravel(group)
+        for g in range(int(group.max()) + 1):
+            rows = np.flatnonzero(group == g)
+            try:
+                out[rows] = local(x[rows])
+            except np.linalg.LinAlgError:
+                near = index[rows[0]]
+                constant = RBFInterpolator(
+                    local.y[near],
+                    np.ravel(local.d[near]),
+                    smoothing=np.ravel(local.smoothing)[near],
+                    kernel=local.kernel,
+                    degree=0,
+                )
+                out[rows] = constant(x[rows])
+                self.flat_points += len(rows)
+        return out
+
     def _raw(self, flat: np.ndarray, chunk: int) -> np.ndarray:
         out = np.empty(len(flat))
         bounds = [(a, min(a + chunk, len(flat))) for a in range(0, len(flat), chunk)]
@@ -744,7 +787,7 @@ class ImplicitField:
 
         def work(ab):
             a, b = ab
-            out[a:b] = self._local(self._to_model(flat[a:b]))
+            out[a:b] = self._local_values(self._to_model(flat[a:b]))
 
         if len(bounds) == 1:
             work(bounds[0])
