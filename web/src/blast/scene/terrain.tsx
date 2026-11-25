@@ -11,7 +11,8 @@
  * - sharpening: an unsharp mask on the picture (the picture plus 0.9 of its difference
  *   from the mean of four neighbours 1.5 pixels away);
  * - grain: fractal value noise multiplied in at close range, where one pixel of the picture
- *   covers more than one pixel of the screen;
+ *   covers more than one pixel of the screen; within 150 m also dark pebble specks and a
+ *   rough ground (a few centimetres of the same noise) that catches the light;
  * - fresh rock: ground that was cut (the bench face and floor) or broken (the muckpile) is
  *   drawn as procedural rock (bands along the bedding, mottling, grit) in the vertex colour, not as the picture
  *   of the old surface;
@@ -136,8 +137,14 @@ void main() {
   float grain = 0.6 * fbm(vPos * 0.9) + 0.4 * fbm(vPos * 5.0);
   base *= 1.0 + close * 0.3 * (grain - 0.5);
 
-  // Fine relief: the brightness of the picture as a height of "bump" metres.
-  float h = dot(base, vec3(0.299, 0.587, 0.114)) * bump;
+  // Pebbles: dark specks within about 150 m, where the picture has no detail left.
+  float near = 1.0 - smoothstep(25.0, 150.0, vDist);
+  float speck = smoothstep(0.74, 0.84, vnoise(vPos * 5.5)) * near;
+  base *= 1.0 - 0.32 * speck;
+
+  // Fine relief: the brightness of the picture as a height of "bump" metres, plus near the
+  // camera a rough ground of the same noise as the grain (a few centimetres) and the pebbles.
+  float h = dot(base, vec3(0.299, 0.587, 0.114)) * bump + near * (0.22 * grain + 0.05 * speck + 0.04 * vnoise(vPos * 14.0));
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
