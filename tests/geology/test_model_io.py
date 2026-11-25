@@ -225,7 +225,7 @@ def test_constructor_checks(host):
 
 
 # --------------------------------------------------------------------------
-# fault hook: a stack per block (the fault layer itself is P9.T13)
+# fault hook: a stack per block (the fault layer itself: the end of this file, P9.T13)
 # --------------------------------------------------------------------------
 
 
@@ -273,10 +273,6 @@ def test_labels_take_the_stack_of_the_block(host, exact):
     expected = np.where(east, names[host.labels(pts + [0.0, 0.0, 15.0])], names[host.labels(pts)])
     assert (got == expected).mean() >= (1.0 if exact else 0.995)
     assert (got[east] != names[host.labels(pts)][east]).mean() > 0.1  # the blocks do differ
-    with pytest.raises(NotImplementedError, match="T13"):
-        faulted.meshes()
-    with pytest.raises(NotImplementedError, match="T13"):
-        faulted.save("unused")
 
 
 # --------------------------------------------------------------------------
@@ -634,11 +630,178 @@ def test_load_refuses_other_files(saved, tmp_path):
     for change, message in (
         ({"format": "bakumine.units"}, "format"),
         ({"version": 2}, "version"),
-        ({"faults": [{"name": "F1", "file": "faults/F1.json"}]}, "T13"),
     ):
         copy = tmp_path / message
         copy.mkdir()
         (copy / "geology.json").write_text(json.dumps({**manifest, **change}))
-        error = NotImplementedError if message == "T13" else ValueError
-        with pytest.raises(error, match=message):
+        with pytest.raises(ValueError, match=message):
             GeologyModel.load(copy)
+
+
+# --------------------------------------------------------------------------
+# the fault layer of the folder (P9.T13)
+# --------------------------------------------------------------------------
+
+FAULT_X = LO[0] + 61.0  # between the node planes of the grid and of the test lattices
+DROP = 15.0  # the east block's contacts are this much lower
+
+
+def shifted_host(host: UnitFields) -> UnitFields:
+    """The host fields fitted again from the same points with the contacts 15 m lower."""
+    points = host.inputs[0][0]
+    data = signed_distances(points + [0.0, 0.0, DROP])
+    return UnitFields(
+        host.units,
+        [fit_field(points, data[:, i]) for i in range(3)],
+        cap=CAP,
+        sample_spacing=5.0,
+        far_spacing=5.0,
+        inputs=[(points, data[:, i]) for i in range(3)],
+        hole_spacing=18.0,
+    )
+
+
+def fault_surface(kind: str):
+    """The vertical fault x = FAULT_X as a plane or as an imported mesh (two triangles)."""
+    from bakumine.core.geology.faults import Plane, import_fault
+    from bakumine.core.geometry.mesh import Mesh
+
+    if kind == "plane":
+        point = (FAULT_X, LO[1] + 50.0, LO[2] + 45.0)
+        return import_fault("F1", plane=Plane.from_dip(point, 90.0, 90.0), blocks=("W", "E"))
+    y0, y1 = LO[1] - 20.0, LO[1] + SIZE[1] + 20.0
+    z0, z1 = LO[2] - 20.0, LO[2] + SIZE[2] + 20.0
+    vertices = np.array(
+        [[FAULT_X, y0, z0], [FAULT_X, y1, z0], [FAULT_X, y1, z1], [FAULT_X, y0, z1]]
+    )
+    faces = np.array([[0, 1, 2], [0, 2, 3]])
+    return import_fault("F1", mesh=Mesh(vertices, faces), blocks=("W", "E"))
+
+
+def faulted_model(host, kind: str, *, pooled: bool = False) -> GeologyModel:
+    from bakumine.core.geology.faults import FaultNetwork
+
+    network = FaultNetwork.fit([fault_surface(kind)], np.zeros((0, 3)), [])
+    west = LithologyStack("ALL" if pooled else "W", (host,))
+    east = west if pooled else LithologyStack("E", (shifted_host(host),))
+    made = make_model(host, network=network, stacks={"W": west, "E": east})
+    made.pooled_blocks = ["E", "W"] if pooled else []
+    return made
+
+
+@pytest.mark.parametrize("kind", ["plane", "mesh"])
+def test_fault_layer_round_trip(host, tmp_path, kind):
+    """A model with a fault network: the folder holds the fault layer, and the loaded
+    model gives identical labels for every layer, from the grid and exactly."""
+    model = faulted_model(host, kind)
+    assert model.blocks == ("E", "W")
+    folder = model.save(tmp_path / "faulted.geology")
+    fault_files = {"faults/F1.json", "faults/F1.obj", "grid/fault_block.npy"}
+    if kind == "mesh":
+        fault_files.add("faults/F1_source.obj")
+    assert files_of(folder) == (
+        EXPECTED_FILES
+        - {"grid/values_ALL_0.npy"}
+        - {f"fields/ALL_0_{u}.npz" for u in ("TOP", "MID", "BOT")}
+        | {f"grid/values_{b}_0.npy" for b in ("E", "W")}
+        | {f"fields/{b}_0_{u}.npz" for b in ("E", "W") for u in ("TOP", "MID", "BOT")}
+        | fault_files
+    )
+    manifest = json.loads((folder / "geology.json").read_text())
+    assert manifest["blocks"] == ["E", "W"] and manifest["layers"]["fault_block"] == ["E", "W"]
+    assert manifest["faults"] == [{"name": "F1", "file": "faults/F1.json", "mesh": "faults/F1.obj"}]
+    assert manifest["fault_network"] == {
+        "cells": [{"signs": [-1], "block": "W"}, {"signs": [1], "block": "E"}],
+        "terminations": {},
+    }
+    assert [e["values"] for e in manifest["stacks"]["E"]] == ["grid/values_E_0.npy"]
+    blocks = np.load(folder / "grid/fault_block.npy")
+    assert blocks.dtype == np.int16 and blocks.shape == SHAPE
+    east_nodes = LO[0] + H * np.arange(SHAPE[0]) > FAULT_X
+    np.testing.assert_array_equal(blocks[:, 0, 0], np.where(east_nodes, 0, 1))
+    record = Provenance.load(folder / "provenance.json")
+    assert any(e.stage == "faults" for e in record.entries)  # the fault's own lines are kept
+    assert "fault_network" in json.loads((folder / "diagnostics.json").read_text())
+
+    loaded = GeologyModel.load(folder)
+    assert loaded.blocks == model.blocks and loaded.network.cells == model.network.cells
+    fault = loaded.network.faults[0]
+    assert fault.source == ("imported-plane" if kind == "plane" else "imported-mesh")
+    assert (fault.mesh is not None) == (kind == "mesh") and fault.blocks == ("W", "E")
+    grid = GridSpec(LO - 6.0, (4.0, 4.0, 4.0), tuple(int(n) for n in (SIZE + 12.0) / 4.0 + 1))
+    pts = grid.slab_points(0, grid.shape[0]).reshape(-1, 3)  # reaches outside the model grid
+    for layer in LAYERS:
+        np.testing.assert_array_equal(loaded.labels(pts, layer), model.labels(pts, layer))
+    some = pts[::7]
+    np.testing.assert_array_equal(loaded.labels(some, exact=True), model.labels(some, exact=True))
+    # the fault block is the side of the fault, and the two blocks do differ in rock units
+    east = pts[:, 0] > FAULT_X
+    np.testing.assert_array_equal(
+        loaded.decode(loaded.labels(pts, "fault_block"), "fault_block"), np.where(east, "E", "W")
+    )
+    names = np.array(model.categories("lith"), dtype=object)
+    inside = east & (pts[:, 0] < TOPO_EDGE - H) & (pts[:, 2] < LO[2] + 60.0)
+    lowered = names[make_model(host).labels(pts[inside] + [0.0, 0.0, DROP], exact=True)]
+    # (two separate fits of the same layers, so not identical)
+    assert (names[loaded.labels(pts[inside], exact=True)] == lowered).mean() > 0.95
+    # saving the loaded model again (values memory-mapped from the folder) changes nothing
+    loaded.save(folder, overwrite=True)
+    again = GeologyModel.load(folder)
+    np.testing.assert_array_equal(again.labels(pts), model.labels(pts))
+    assert (folder / "faults/F1_source.obj").is_file() == (kind == "mesh")
+
+
+def test_fault_layer_meshes_are_cut_at_the_fault(host):
+    """Unit meshes across two blocks: closed, each within 3 % of the volume of the nodes
+    with that label, their sum within 1 % of all rock nodes (no gaps, no overlaps), and
+    the step at the fault is in the mesh."""
+    model = faulted_model(host, "plane")
+    meshes = model.meshes("lith")
+    assert list(meshes) == ["BOT", "TOP", "MID"]
+    nodes = model.grid.slab_points(0, SHAPE[0]).reshape(-1, 3)
+    labels = model.decode(model.labels(nodes), "lith")
+    weight = node_weights(SHAPE) * H**3
+    total = 0.0
+    for code, mesh in meshes.items():
+        other = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False)
+        assert mesh.is_closed and other.is_watertight, code
+        assert mesh.volume == pytest.approx(float(weight[labels == code].sum()), rel=0.03), code
+        total += mesh.volume
+    solid = float(weight[np.isin(labels, ["BOT", "TOP", "MID"])].sum())
+    print(f"\nfaulted meshes: volumes sum to {total / solid:.4f} of the rock volume")
+    assert total == pytest.approx(solid, rel=0.01)
+    # BOT's top is DROP lower east of the fault than west of it (same y, 10 m either side)
+    v = meshes["BOT"].vertices
+    row = np.abs(v[:, 1] - (LO[1] + 50.0)) < 0.01
+    west = v[row & (np.abs(v[:, 0] - (FAULT_X - 11.0)) < 0.01), 2].max()
+    east = v[row & (np.abs(v[:, 0] - (FAULT_X + 14.0)) < 0.01), 2].max()
+    slope = -25.0 * NORMAL[0] / NORMAL[2]  # the contact's own change over the 25 m between them
+    assert west - east == pytest.approx(DROP - slope, abs=2.0)
+
+
+def test_pooled_stack_is_stored_once(host, tmp_path):
+    """Two blocks that share one stack (pooled): one set of files, named after the first
+    block of ``stacks`` that uses it; after loading both blocks hold the same event and the
+    same grid array, and the labels are those of the model without faults."""
+    model = faulted_model(host, "plane", pooled=True)
+    folder = model.save(tmp_path / "pooled.geology")
+    manifest = json.loads((folder / "geology.json").read_text())
+    assert manifest["pooled_blocks"] == ["E", "W"]
+    assert manifest["stacks"]["E"] == manifest["stacks"]["W"]
+    assert manifest["stacks"]["E"][0]["values"] == "grid/values_W_0.npy"
+    assert not (folder / "grid/values_E_0.npy").exists()
+    assert sorted(p.name for p in (folder / "fields").iterdir()) == sorted(
+        f"W_0_{u}.npz" for u in ("TOP", "MID", "BOT")
+    )
+    loaded = GeologyModel.load(folder)
+    assert loaded.pooled_blocks == ["E", "W"]
+    assert loaded.stacks["E"].events[0] is loaded.stacks["W"].events[0]
+    assert loaded.grid_values("E", 0) is loaded.grid_values("W", 0)
+    pts = box_points(8000, 21)
+    plain = make_model(host)
+    for exact in (False, True):
+        np.testing.assert_array_equal(
+            loaded.labels(pts, exact=exact), plain.labels(pts, exact=exact)
+        )
+    record = [e.item for e in model.provenance_entries()]
+    assert len(record) == len(set(record))

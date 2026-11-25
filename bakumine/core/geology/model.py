@@ -16,8 +16,13 @@ Layers and their categories:
 ``weathering``   the weathering zones of the dictionary, ``AIR``
 ``fault_block``  the block names
 
-Parts left to later tasks, marked in the code: the fault layer of the folder and the
-meshes across fault blocks (P9.T13), ``spec.json`` and the surface side files (P9.T14).
+With a fault network (P9.T13) every block has its own stack; an event that is younger
+than the faults, and the stack of pooled blocks, are the same objects in several stacks
+and are sampled and stored once. The unit meshes are cut at the faults: the margin of a
+unit in a block is limited by the block's own signed distance to its faults, and a unit's
+mesh is the union over the blocks.
+
+Parts left to a later task: ``spec.json`` and the surface side files (P9.T14).
 """
 
 from __future__ import annotations
@@ -48,7 +53,7 @@ from bakumine.core.geometry.isosurface import GridSpec
 from bakumine.core.geometry.mesh import Mesh
 from bakumine.core.io.obj import read_obj, write_obj
 
-if TYPE_CHECKING:  # the fault network is P9.T8 / P9.T13
+if TYPE_CHECKING:
     from bakumine.core.geology.faults import FaultNetwork
 
 __all__ = ["AIR", "FORMAT", "LAYERS", "VERSION", "GeologyModel"]
@@ -225,19 +230,42 @@ class GeologyModel:
         t0 = time.perf_counter()
         nx, ny, nz = self.grid.shape
         slab = max(1, _CHUNK // (ny * nz))
+        done: dict[int, np.ndarray] = {}  # an event shared by several stacks is sampled once
         for block, stack in self.stacks.items():
             for e, event in enumerate(stack.events):
-                out: np.ndarray | None = None
-                for i0 in range(0, nx, slab):
-                    i1 = min(i0 + slab, nx)
-                    pts = self.grid.slab_points(i0, i1).reshape(-1, 3)
-                    values = np.asarray(event.node_values(pts))
-                    if out is None:
-                        out = np.empty((values.shape[1], nx, ny, nz), dtype=np.float32)
-                    out[:, i0:i1] = values.T.reshape(-1, i1 - i0, ny, nz)
+                out: np.ndarray | None = done.get(id(event))
+                if out is None:
+                    for i0 in range(0, nx, slab):
+                        i1 = min(i0 + slab, nx)
+                        pts = self.grid.slab_points(i0, i1).reshape(-1, 3)
+                        values = np.asarray(event.node_values(pts))
+                        if out is None:
+                            out = np.empty((values.shape[1], nx, ny, nz), dtype=np.float32)
+                        out[:, i0:i1] = values.T.reshape(-1, i1 - i0, ny, nz)
+                    done[id(event)] = out
                 self._grid_values[(block, e)] = out
         self.diagnostics.setdefault("timing", {})["sample_grid_seconds"] = time.perf_counter() - t0
         self.diagnostics["grid_nodes"] = self.grid.n_nodes
+
+    def fault_block_grid(self) -> np.ndarray:
+        """Fault block of every grid node: int16 ``(nx, ny, nz)`` index into ``blocks``."""
+        nodes = self.grid.slab_points(0, self.grid.shape[0]).reshape(-1, 3)
+        return self._block_index(nodes).astype(np.int16).reshape(self.grid.shape)
+
+    def _block_margins(self, nodes: np.ndarray) -> dict[str, np.ndarray]:
+        """For every block, a value at the nodes that is positive inside the block: over
+        the cells of the block, the largest of the smallest signed offsets from the faults
+        that bound the cell (a fault that does not exist in a cell does not bound it)."""
+        network = self.network
+        out = {block: np.full(len(nodes), -np.inf) for block in self.blocks}
+        offsets = [np.asarray(fault.offset(nodes), dtype=np.float64) for fault in network.faults]
+        for cell, block in network.cells.items():
+            inside = np.full(len(nodes), np.inf)
+            for sign, offset in zip(cell, offsets, strict=True):
+                if sign:
+                    np.minimum(inside, sign * offset, out=inside)
+            np.maximum(out[block], inside, out=out[block])
+        return out
 
     def grid_values(self, block: str, event: int) -> np.ndarray:
         """The sampled node values of one event (sampling the grid first if needed)."""
@@ -373,10 +401,28 @@ class GeologyModel:
             raise ValueError(
                 "meshes exist for the layer 'lith' only (the other layers are surfaces)"
             )
-        if self.network is not None:
-            raise NotImplementedError("unit meshes across fault blocks are part of P9.T13")
-        categories, node_margins = self._stack_margins(self.blocks[0])
         nodes = self.grid.slab_points(0, self.grid.shape[0]).reshape(-1, 3)
+        if self.network is None:
+            categories, node_margins = self._stack_margins(self.blocks[0])
+        else:
+            # a unit's margin in a block, cut at the block's faults; the union over the blocks
+            modelled = {c for stack in self.stacks.values() for c in stack.categories}
+            categories = tuple(c for c in self._categories["lith"] if c in modelled)
+            index = {c: i for i, c in enumerate(categories)}
+            node_margins = np.full((len(categories), *self.grid.shape), -np.inf)
+            inside = self._block_margins(nodes)
+            done: dict[int, tuple[tuple[str, ...], np.ndarray]] = {}
+            for block in self.blocks:
+                stack = self.stacks[block]
+                if not stack.events:
+                    continue
+                if id(stack) not in done:
+                    done[id(stack)] = self._stack_margins(block)
+                names, own = done[id(stack)]
+                limit = inside[block].reshape(self.grid.shape)
+                for u, unit in enumerate(names):
+                    i = index[unit]
+                    node_margins[i] = np.maximum(node_margins[i], np.minimum(own[u], limit))
         clip = np.full(len(nodes), np.inf)
         covered = np.ones(len(nodes), dtype=bool)
         if self.topography is not None:
@@ -429,13 +475,17 @@ class GeologyModel:
         )
 
     def provenance_entries(self) -> list[ProvenanceEntry]:
-        """The entries of the stacks' events plus the extrapolated volume share."""
+        """The entries of the faults and of the stacks' events, plus the extrapolated
+        volume share."""
         entries: list[ProvenanceEntry] = []
+        if self.network is not None:
+            entries.extend(getattr(self.network, "provenance", []))
         seen: set[int] = set()
-        for stack in self.stacks.values():  # a pooled stack serves several blocks: list it once
-            if id(stack) not in seen:
-                seen.add(id(stack))
-                entries.extend(stack.provenance)
+        for stack in self.stacks.values():
+            for event in stack.events:  # an event may serve several blocks: list it once
+                if id(event) not in seen:
+                    seen.add(id(event))
+                    entries.extend(event.provenance)
         extrapolated = self._extrapolation_entry()
         if extrapolated is not None:
             entries.append(extrapolated)
@@ -446,21 +496,29 @@ class GeologyModel:
     def save(self, folder, *, overwrite: bool = False) -> Path:
         """Write the model folder (section 9). ``overwrite`` replaces an existing geology
         folder (``spec.json`` and ``coding/`` are kept); any other folder is refused."""
-        if self.network is not None:
-            raise NotImplementedError("saving the fault layer is part of P9.T13")
         folder = Path(folder)
         if not self.sampled:
             self.sample_grid()
+        # an event shared by several stacks (younger than the faults, or of a pooled block)
+        # is stored once, under the first block and position that use it
+        owner: dict[tuple[str, int], tuple[str, int]] = {}
+        first: dict[int, tuple[str, int]] = {}
+        for block, stack in self.stacks.items():
+            for e, event in enumerate(stack.events):
+                owner[(block, e)] = first.setdefault(id(event), (block, e))
         # values may be memory-mapped from this very folder: read them before removing files
-        grids = {key: np.array(value) for key, value in self._grid_values.items()}
+        grids = {key: np.array(self._grid_values[key]) for key in set(owner.values())}
         stored: dict[tuple[str, int], dict] = {}
         for block, stack in self.stacks.items():
             for e, event in enumerate(stack.events):
+                if owner[(block, e)] != (block, e):
+                    continue
                 files = getattr(event, "field_files", None)
                 if files is None:
                     raise ValueError(f"event {e} of block {block} ({event.mode}) cannot be stored")
                 stored[(block, e)] = files()
         meshes = self.meshes("lith")
+        fault_blocks = None if self.network is None else self.fault_block_grid()
 
         if folder.exists():
             if not folder.is_dir():
@@ -496,8 +554,8 @@ class GeologyModel:
             "blocks": list(self.blocks),
             "pooled_blocks": list(self.pooled_blocks),
             "stacks": {},
-            "faults": [],  # P9.T13
-            "fault_network": None,  # P9.T13
+            "faults": [],
+            "fault_network": None,
             "cover": None,
             "weathering": [],
             "max_extrapolation": self.max_extrapolation,
@@ -508,16 +566,39 @@ class GeologyModel:
         if self.topography is not None:
             write_obj(folder / "topography.obj", self.topography.mesh, decimals=None)
             manifest["topography"] = "topography.obj"
+        if self.network is not None:
+            record = self.network.save(folder)  # faults/<name>.json (+ <name>_source.obj)
+            lo = self.grid.origin
+            hi = lo + self.grid.spacing * (np.array(self.grid.shape) - 1)
+            for fault, item in zip(self.network.faults, record["faults"], strict=True):
+                entry = {"name": item["name"], "file": item["file"], "mesh": None}
+                try:
+                    display = fault.display_mesh(lo, hi)
+                except ValueError:  # the fault does not cross the grid box
+                    display = None
+                if display is not None:
+                    entry["mesh"] = f"faults/{fault.name}.obj"
+                    write_obj(folder / entry["mesh"], display, decimals=3)
+                manifest["faults"].append(entry)
+            manifest["fault_network"] = {
+                "cells": record["cells"],
+                "terminations": record["terminations"],
+            }
+            self.diagnostics["fault_network"] = record["diagnostics"]
+            np.save(folder / "grid/fault_block.npy", fault_blocks)
         for block, stack in self.stacks.items():
             entries = []
             for e, event in enumerate(stack.events):
-                values_file = f"grid/values_{block}_{e}.npy"
-                np.save(folder / values_file, grids[(block, e)])
-                field_files = []
-                for suffix, (fitted, xyz, values) in stored[(block, e)].items():
-                    field_file = f"fields/{block}_{e}_{suffix}.npz"
-                    save_field(folder / field_file, fitted, xyz, values)
-                    field_files.append(field_file)
+                source = owner[(block, e)]
+                name = f"{source[0]}_{source[1]}"
+                values_file = f"grid/values_{name}.npy"
+                field_files = [f"fields/{name}_{suffix}.npz" for suffix in stored[source]]
+                if source == (block, e):
+                    np.save(folder / values_file, grids[source])
+                    for file, (fitted, xyz, values) in zip(
+                        field_files, stored[source].values(), strict=True
+                    ):
+                        save_field(folder / file, fitted, xyz, values)
                 entry = {
                     "mode": event.mode,
                     "units": list(event.units),
@@ -572,31 +653,59 @@ class GeologyModel:
             raise ValueError(f"{path}: format is {manifest.get('format')!r}, expected {FORMAT!r}")
         if manifest.get("version") != VERSION:
             raise ValueError(f"{path}: version {manifest.get('version')!r} is not supported")
-        if manifest.get("faults") or manifest.get("fault_network"):
-            raise NotImplementedError("loading the fault layer is part of P9.T13")
         g = manifest["grid"]
         grid = GridSpec(g["origin"], g["spacing"], tuple(g["shape"]))
         topography = None
         if manifest.get("topography"):
             topography = DTM(read_obj(folder / manifest["topography"]))
 
+        diagnostics = None
+        if (folder / "diagnostics.json").is_file():
+            diagnostics = json.loads((folder / "diagnostics.json").read_text(encoding="utf-8"))
+        network = None
+        if manifest.get("faults") or manifest.get("fault_network"):
+            from bakumine.core.geology.faults import NETWORK_FORMAT, FaultNetwork
+            from bakumine.core.geology.faults import VERSION as NETWORK_VERSION
+
+            cells = manifest.get("fault_network") or {}
+            network = FaultNetwork.from_dict(
+                {
+                    "format": NETWORK_FORMAT,
+                    "version": NETWORK_VERSION,
+                    "faults": manifest.get("faults", []),
+                    "blocks": manifest["blocks"],
+                    "cells": cells.get("cells", []),
+                    "terminations": cells.get("terminations", {}),
+                    "diagnostics": (diagnostics or {}).get("fault_network"),
+                },
+                folder,
+            )
+
         stacks: dict[str, LithologyStack] = {}
         grids: dict[tuple[str, int], np.ndarray] = {}
+        # an event stored once and listed by several stacks is one object again
+        shared: dict[str, tuple[Any, np.ndarray]] = {}
         for block, entries in manifest["stacks"].items():
             events = []
             for e, entry in enumerate(entries):
-                prefix = f"{block}_{e}_"
-                fields, inputs = {}, {}
-                for file in entry["fields"]:
-                    stem = Path(file).stem
-                    if not stem.startswith(prefix):
-                        raise ValueError(
-                            f"{path}: field file {file!r} does not belong to {prefix}*"
-                        )
-                    fields[stem[len(prefix) :]] = load_field(folder / file)
-                    inputs[stem[len(prefix) :]] = load_field_inputs(folder / file)
-                events.append(event_from_manifest(entry, fields, inputs))
-                grids[(block, e)] = np.load(folder / entry["values"], mmap_mode="r")
+                if entry["values"] not in shared:
+                    # grid/values_<block>_<event>.npy names the block and position that own it
+                    prefix = Path(entry["values"]).stem.removeprefix("values_") + "_"
+                    fields, inputs = {}, {}
+                    for file in entry["fields"]:
+                        stem = Path(file).stem
+                        if not stem.startswith(prefix):
+                            raise ValueError(
+                                f"{path}: field file {file!r} does not belong to {prefix}*"
+                            )
+                        fields[stem[len(prefix) :]] = load_field(folder / file)
+                        inputs[stem[len(prefix) :]] = load_field_inputs(folder / file)
+                    shared[entry["values"]] = (
+                        event_from_manifest(entry, fields, inputs),
+                        np.load(folder / entry["values"], mmap_mode="r"),
+                    )
+                event, grids[(block, e)] = shared[entry["values"]]
+                events.append(event)
             stacks[block] = LithologyStack(block, tuple(events))
 
         cover = None
@@ -615,15 +724,13 @@ class GeologyModel:
         provenance = None
         if (folder / "provenance.json").is_file():
             provenance = Provenance.load(folder / "provenance.json")
-        diagnostics = None
-        if (folder / "diagnostics.json").is_file():
-            diagnostics = json.loads((folder / "diagnostics.json").read_text(encoding="utf-8"))
         model = cls(
             name=manifest["name"],
             units=UnitDictionary.load(folder / "units.json"),
             grid=grid,
             topography=topography,
             stacks=stacks,
+            network=network,
             cover=cover,
             weathering=weathering,
             hole_points=hole_points,

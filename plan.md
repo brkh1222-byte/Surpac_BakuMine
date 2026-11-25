@@ -232,7 +232,7 @@ software / inputs still needed.
 - [x] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
 - [x] **P9.T11 Hole-out cross-validation for geology.**
 - [x] **P9.T12 Geology constraint, project kind `geology`, block coding** (`lith`, `weathering`, `fault_block`, `density`).
-- [ ] **P9.T13 Rock model per fault block, throw diagnostic.**
+- [x] **P9.T13 Rock model per fault block, throw diagnostic.**
 - [ ] **P9.T14 Build spec, `geology build`, API, job-log replay, scene manifest.**
 - [ ] **P9.T15 Viewer Geology group and panel** (with the provenance tables).
 - [ ] **P9.T16 Synthetic gate:** the whole chain through the CLI against the targets in `geology_contracts.md` 14.

@@ -476,6 +476,24 @@ def throw_diagnostic(model: GeologyModel, fault: str, upper: str, lower: str, *,
     # keys: throw, n_footwall, n_hangingwall, plane_footwall, plane_hangingwall, note
 ```
 
+Recorded changes (T13, 2026-11-25):
+- `fit_block_stacks(..., post_fault=None)`: units younger than every fault. Their events are fitted once on all
+  intervals and shared by every block's stack (one object). Default: every unit is older than the faults. One
+  global split, not an age per fault. The build spec carries it as `faults.post_fault` (list of units).
+- Intervals are cut at fault crossings (`split_at_faults`) before the per-block fit; `assign_blocks` keeps the
+  midpoint rule. Crossings closer than 2 m can be missed.
+- A block is pooled (stack `ALL`) below `min_holes` and also when its own fit raises; the reason is an "assumed"
+  provenance entry. `GeologyModel.pooled_blocks` is an attribute set after construction.
+- `throw_diagnostic` also takes `logged=` and `scan=` and returns more keys: `throw` is the vertical separation
+  (research.md 5.7.5); `throw_dip_slip`, `heave_dip_slip`, `slip_dip_slip`; `holes_footwall` / `holes_hangingwall`.
+  The plane fit uses only contact points inside the plan outline of the drilling. Without `logged` the entry is
+  "assumed". `throw_diagnostics(model, table=, units=, traces=)` runs every fault.
+- Manifest: each `faults` entry has a `"mesh"` key (`faults/<name>.obj` or null). Shared events are stored once,
+  under the first block that uses them. Network diagnostics are in `diagnostics.json["fault_network"]`.
+- `network.blocks` is sorted, so `fault_block` indices are alphabetical.
+- Known limit: where a dipping fault cuts vertical holes before they reach a contact, `fit_sequence` bends the
+  contact near the fault (analytic case: 14.5 m vertical separation against 18.85 m).
+
 ## 8. Faults (T8)
 
 ```python
