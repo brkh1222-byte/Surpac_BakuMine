@@ -90,6 +90,10 @@ def _register_builtin() -> None:
     for name, (help_text, configure) in extract.COMMANDS.items():
         register(name, help_text, configure)
 
+    from bakumine.commands import geology
+
+    register("geology", geology.HELP, geology.configure)
+
 
 _register_builtin()
 
