@@ -229,7 +229,7 @@ software / inputs still needed.
 - [x] **P9.T7 Multi-unit rock model (largest field), grid sampling, meshes, save / load.**
 - [x] **P9.T8 Fault surfaces and fault blocks** (inferred from logged blocks, or imported).
 - [ ] **P9.T9 Cover / weathering surfaces**, `geology surface`.
-- [ ] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
+- [x] **P9.T10 Sequence mode, intrusion overprints, LoopStructural comparison** (dev dependency).
 - [ ] **P9.T11 Hole-out cross-validation for geology.**
 - [ ] **P9.T12 Geology constraint, project kind `geology`, block coding** (`lith`, `weathering`, `fault_block`, `density`).
 - [ ] **P9.T13 Rock model per fault block, throw diagnostic.**

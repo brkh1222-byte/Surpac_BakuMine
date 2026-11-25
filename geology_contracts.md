@@ -24,8 +24,8 @@ everything needed is public (`extract_constraints`, `fit_field`, `ImplicitField`
 | T8 faults | `bakumine/core/geology/faults.py` | `tests/geology/test_faults.py` |
 | T9 weathering / cover surfaces | `bakumine/core/geology/surfaces.py`, `bakumine/commands/geology_surface.py` (+1 line in `commands/geology.py`) | `tests/geology/test_surfaces.py`, `tests/cli/test_geology_surface_cli.py` |
 | T10 sequence, intrusions, LoopStructural | `bakumine/core/geology/sequence.py`, `pyproject.toml` + `uv.lock` (dev dependency `LoopStructural` only) | `tests/geology/test_sequence.py`, `tests/geology/test_loopstructural_oracle.py` |
-| T11 hole-out cross-validation | `bakumine/core/geology/validation.py`, `bakumine/commands/geology_cv.py` (+1 line) | `tests/geology/test_validation.py` |
-| T12 coding | `bakumine/core/blockmodel/constraints.py` (new type + resolver lookup), `bakumine/core/project.py` (kind `geology`), `bakumine/core/geology/coding.py`, `bakumine/commands/geology_code.py` (+1 line) | `tests/geology/test_coding.py`, `tests/blockmodel/test_geology_constraint.py`, additions to `tests/test_project.py` |
+| T11 hole-out cross-validation | `bakumine/core/geology/validation.py`, `bakumine/commands/geology_cv.py` (+1 line) | `tests/geology/test_geology_validation.py` |
+| T12 coding | `bakumine/core/blockmodel/constraints.py` (new type + resolver lookup), `bakumine/core/project.py` (kind `geology`), `bakumine/core/geology/coding.py`, `bakumine/commands/geology_code.py` (+1 line) | `tests/geology/test_geology_coding.py`, `tests/blockmodel/test_geology_constraint.py`, additions to `tests/test_project.py` |
 | T13 faulted rock model | `bakumine/core/geology/faulted.py`, `bakumine/core/geology/model.py` (fault layer parts) | `tests/geology/test_faulted.py` |
 | T14 build, API, replay, manifest | `bakumine/core/geology/spec.py`, `bakumine/commands/geology_build.py` (+1 line), `bakumine/commands/replay.py` (one `update` line), `bakumine/api/operations_geology.py`, `bakumine/api/routes_geology.py`, `bakumine/api/app.py` (router line), `bakumine/api/scene.py`, `bakumine/api/payloads.py`, `bakumine/api/project_source.py`, `bakumine/api/blocks.py` (category colours) | `tests/geology/test_spec.py`, `tests/cli/test_geology_build_cli.py`, `tests/api/test_geology_api.py` |
 | T15 viewer geology group + panel | `web/src/state/store.ts` (category), `web/src/meshes/display.ts`, object-tree component, `web/src/ui/ops/GeologyPanel.tsx`, `web/src/api/client.ts` (kinds / manifest fields other than `colours`) | vitest + one Playwright test |
@@ -83,7 +83,8 @@ Rules (all checked by `UnitDictionary.from_dict`; violations raise `UnitsError` 
 - `group`: optional reporting group (metres by group).
 - `colour`: `#rrggbb` (lower or upper case accepted, stored lower case). Missing colour: palette by order.
 - `density` in t/m3 > 0; `density_source` `measured | assumed` (default `assumed` when a density is given
-  without one). Weathering-zone densities override rock densities in that zone (research.md 5.7.6).
+  without one). Weathering-zone densities override rock densities in that zone (research.md 5.7.6), except in blocks of the
+  cover unit (kind `cover`), which keep the cover unit's own density.
 - `weathering_zones` are listed top to bottom; the last one is the deepest (no base surface).
 
 ```python
@@ -365,7 +366,7 @@ synthetic oxide base within 2.5 m RMS of the truth; the CLI writes the OBJ, the 
 @dataclass(frozen=True)
 class FieldSettings:
     anisotropy: Ellipsoid | str | None = None     # Ellipsoid | "auto" | None (anisotropy_from_spec format in specs)
-    cap: float | None = None                      # default: median length of all runs of the group's units
+    cap: float | None = None                      # default: smallest of the units' median run lengths, over runs with a logged contact
     sample_spacing: float | None = None           # default: min(cap / 4, median logged hole length / 10)
     far_spacing: float | None = None              # default: median logged hole length / 10
     kernel: str = "linear"
@@ -819,6 +820,18 @@ Scene manifest additions:
 - Viewer (T5): 20 categorical colours per theme; an explicit colour wins over the palette; the legend shows names.
 - Viewer (T15): one toggle per group; meshes use `style.colour`; the panel shows the build summary and the three
   provenance tables, and starts `geology code`.
+
+Recorded changes (wave 3, 2026-11-25):
+- `geology picks` is not a separate command: `geology surface --picks-out FILE` writes the combined picks.
+- `geology surface` excludes `conflict` picks by default (`--keep-conflicts`); with a threshold source the
+  conflict tolerance defaults to the median interval length of the threshold table.
+- `fit_intrusion(..., shape="auto" | "body" | "sheet")`: thin planar intrusions are fitted as a sheet (reference
+  surface + true thickness); `order_intrusions` gives the age order and its provenance entries; the caller masks
+  cover / weathering units to NaN before `fit_stack`.
+- Geology constraint: optional `"boundaries": true` (straddle whenever the sampled labels differ); sub-blocking
+  runs in the first category step of each layer.
+- Volume reports separate the drilled volume from the extrapolated one (`max_extrapolation`); thin bodies need
+  partial volumes or finer sub-blocks (centroid coding of an 8 m sheet in 2.5 m sub-blocks is off by 10 %).
 
 ## 13. Synthetic layered deposit (T2)
 

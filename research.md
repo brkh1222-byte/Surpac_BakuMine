@@ -210,7 +210,7 @@ Properties, used as tests:
 - **Partition.** Every point gets exactly one unit; there are no gaps and no overlaps, whatever the fields.
 - **The logs are reproduced at the constraint points.** At a point logged as `i`, `d_i >= 0` and `d_j <= 0` for every other `j`, and an exact (global) RBF reproduces the data, so `L = i` there (contact points, where several values are 0, excepted).
 - **Two units reduce to the single solid.** If only two units are logged, and both fields use the same points, then `d_1 = -d_2` at every point. The interpolant is linear in the data, so `f_1 = -f_2` and the boundary `f_1 = f_2` is the zero level `f_1 = 0` of the binary solid of unit 1.
-- **Common scale.** All fields of a group use the same cap `C`, the same point spacing, the same kernel and the same anisotropy. With caps that differ, the unit with the larger cap wins the comparison between holes for no geological reason. The default `C` is the median length of all the group's logged runs. `extract_constraints` computes its own defaults per call, so the group passes `cap`, `sample_spacing` and `far_spacing` explicitly.
+- **Common scale.** All fields of a group use the same cap `C`, the same point spacing, the same kernel and the same anisotropy. With caps that differ, the unit with the larger cap wins the comparison between holes for no geological reason. The default `C` is the smallest of the units' median run lengths, counting only runs that touch a logged contact (the median over all runs is dominated by long barren holes in the host: a test sphere went from IoU 0.88 to 0.75). `extract_constraints` computes its own defaults per call, so the group passes `cap`, `sample_spacing` and `far_spacing` explicitly.
 
 The boundary of unit `i` is where its **margin** changes sign:
 
@@ -335,7 +335,7 @@ A geology model gives three independent categorical layers, each coded into its 
 | `fault_block` | block names | one step per block, from the fault cells |
 | `lith` | rock units, cover unit, `AIR` | host units -> intrusions (oldest first) -> cover above its base -> `AIR` above the topography |
 | `weathering` | zones top to bottom, `AIR` | deepest zone everywhere -> each shallower zone above its base surface -> `AIR` |
-| `density` (float) | t/m3 | default density -> per rock unit -> per weathering zone where given -> NaN in `AIR` |
+| `density` (float) | t/m3 | default density -> per rock unit -> per weathering zone where given (not in cover blocks) -> NaN in `AIR` |
 
 The existing ore attribute (`rock = ORE / WASTE / AIR`, from the ore solids) is not touched. Ore does not overwrite the rock unit; a display attribute can combine them (`geo`: the rock unit, then `ORE` where `rock == "ORE"`).
 

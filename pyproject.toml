@@ -35,6 +35,7 @@ dev = [
     "gstools>=1.7.0",
     "pykrige>=1.7.3",
     "reportlab>=5.1.0",
+    "loopstructural>=1.12.0",
 ]
 
 [build-system]

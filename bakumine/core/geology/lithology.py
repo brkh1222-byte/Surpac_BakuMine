@@ -390,6 +390,30 @@ def _hole_spacing(constraints: Sequence[Constraints]) -> float | None:
     return float(np.median(per_hole))
 
 
+def _default_cap(runs: pd.DataFrame, tol: float = 1e-6) -> float:
+    """The default cap of a group: the smallest of its units' median run lengths.
+
+    Only runs with at least one logged contact count (a run that abuts another unit's
+    run): a run without a contact, such as a barren hole, measures no distance to a
+    contact, and its length says nothing about the size of the units. If no run has a
+    contact, all runs count. The smallest unit median is taken because the value inside
+    a unit never exceeds half a run, and a cap set by a dominant host outweighs a small
+    unit between the holes (see ``extract_constraints``).
+    """
+    hole = runs["hole_id"].to_numpy(dtype=object)
+    a = runs["depth_from"].to_numpy(dtype=np.float64)
+    b = runs["depth_to"].to_numpy(dtype=np.float64)
+    contact = np.zeros(len(runs), dtype=bool)
+    if len(runs) > 1:
+        touch = (hole[1:] == hole[:-1]) & (np.abs(a[1:] - b[:-1]) <= tol)
+        contact[1:] |= touch
+        contact[:-1] |= touch
+    if not contact.any():
+        contact[:] = True
+    length = pd.Series((b - a)[contact])
+    return float(length.groupby(runs["unit"].to_numpy(dtype=object)[contact]).median().min())
+
+
 def _auto_anisotropy(contacts: pd.DataFrame) -> tuple[Ellipsoid | None, str]:
     """The plane of the contacts: principal components after each contact's mean is removed."""
     parts = []
@@ -568,8 +592,9 @@ def fit_unit_fields(
 
     ``table`` has ``hole_id, depth_from, depth_to``; ``units`` gives the unit of each row
     (same index). Units outside ``group`` (and NaN) are unknown: no points, and no contact
-    at their ends. Defaults, the same for every unit: ``cap`` = the median length of all
-    runs of the group's units; ``far_spacing`` = a tenth of the median logged hole length;
+    at their ends. Defaults, the same for every unit: ``cap`` = the smallest of the units'
+    median run lengths, over the runs with at least one logged contact
+    (:func:`_default_cap`); ``far_spacing`` = a tenth of the median logged hole length;
     ``sample_spacing`` = ``min(cap / 4, far_spacing default)``.
 
     ``anisotropy="auto"`` takes the plane of the contacts between the group's units: the
@@ -594,7 +619,7 @@ def fit_unit_fields(
 
     length = (runs["depth_to"] - runs["depth_from"]).to_numpy(dtype=np.float64)
     hole_length = float(np.median(pd.Series(length).groupby(runs["hole_id"].to_numpy()).sum()))
-    cap = float(settings.cap) if settings.cap is not None else float(np.median(length))
+    cap = float(settings.cap) if settings.cap is not None else _default_cap(runs)
     far = hole_length / 10.0 if settings.far_spacing is None else float(settings.far_spacing)
     if settings.sample_spacing is not None:
         near = float(settings.sample_spacing)
@@ -710,7 +735,8 @@ def fit_unit_fields(
     )
     spacing_rule = "a tenth of the median logged hole length"
     for item, value, given, default in (
-        ("Cap of the signed distance", cap, settings.cap, "median length of the group's runs"),
+        ("Cap of the signed distance", cap, settings.cap,
+         "smallest of the units' median run lengths, runs with a contact"),
         ("Point spacing near contacts", near, settings.sample_spacing,
          f"smaller of cap / 4 and {spacing_rule}"),
         ("Point spacing away from contacts", far, settings.far_spacing, spacing_rule),

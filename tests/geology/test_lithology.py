@@ -292,10 +292,11 @@ def test_sphere_volume(ball):
     Tolerance, with a cap of 30 m and points 5 m apart: volume within 8 % of 4/3 pi r^3,
     by lattice count of exact labels and by the closed mesh, and IoU >= 0.88.
 
-    With the group defaults the cap is the median run length, here the 200 m of the barren
-    holes, and the body is distorted (the large negative values of the host outweigh it,
-    see ``extract_constraints``): only a loose 15 % / IoU 0.70 is asserted, and the
-    figures are printed.
+    With the group defaults the cap is the smallest of the units' median run lengths over
+    the runs that have a contact, here about 62 m (the host's runs above and below the
+    sphere), and the points are 15 m apart: volume within 15 %, IoU >= 0.85 (measured
+    -9.4 %, 0.883). The earlier default, the median length of all runs, was the 200 m of
+    the barren holes and gave IoU 0.753 (P9.T10 changed the rule).
     """
     table, traces, default = ball
     analytic = 4.0 / 3.0 * np.pi * SPHERE_RADIUS**3
@@ -309,7 +310,7 @@ def test_sphere_volume(ball):
     nodes = grid.slab_points(0, 41).reshape(-1, 3)
     for name, fields, tolerance, floor in (
         ("cap 30 m", capped, 0.08, 0.88),
-        ("defaults", default, 0.15, 0.70),
+        ("defaults", default, 0.15, 0.85),
     ):
         inside = fields.labels(pts) == 1
         counted = inside.sum() * 2.5**3
@@ -434,12 +435,16 @@ def test_unit_meshes_clip_and_empty_unit():
 
 
 def test_group_defaults_against_pandas(layers):
-    """Cap = median run length, far spacing = median logged hole length / 10, near spacing
-    = min(cap / 4, that): computed here from the table (the synthetic log has one interval
-    per run), and identical for every unit."""
+    """Cap = the smallest of the units' median run lengths over the runs with a contact,
+    far spacing = median logged hole length / 10, near spacing = min(cap / 4, that):
+    computed here from the table (the synthetic log has one interval per run and no gaps,
+    so a run has a contact exactly when its hole has more than one interval), and
+    identical for every unit."""
     table, traces, fields = layers
     length = table["depth_to"] - table["depth_from"]
-    cap = float(length.median())
+    with_contact = table.groupby("hole_id")["unit"].transform("size") > 1
+    cap = float(length[with_contact].groupby(table["unit"][with_contact]).median().min())
+    assert cap < float(length.median())  # not the earlier rule (median of all runs)
     far = float(length.groupby(table["hole_id"]).sum().median()) / 10.0
     assert fields.cap == pytest.approx(cap, rel=1e-12)
     assert fields.far_spacing == pytest.approx(far, rel=1e-12)
