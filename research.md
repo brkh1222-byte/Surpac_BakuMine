@@ -278,11 +278,11 @@ Weathering and cover follow the ground surface, so the **depth below the topogra
 
 Here `K` is the covariance between all data and bound points and `P` holds the drift monomials. From the Lagrangian, the coefficient `b_j` of a bound point is its multiplier: `b_j >= 0` at an active lower bound, `b_j <= 0` at an active upper bound, and `b_j = 0` at an inactive bound (derived here, **[unverified against the paper]**). This gives a **primal active-set method** (Nocedal & Wright 2006, ch. 16):
 
-1. Solve with the equalities only (active set `A` empty).
-2. Evaluate `f` at all bound points outside `A`. If some are violated, add the most violated one to `A` as an equality at its bound and solve again.
-3. If none is violated, check the signs of `b_j` for `j` in `A`. If one has the wrong sign, remove the worst one from `A` and solve again. Otherwise stop.
+1. Start from the equality-only surface, with its values `v` at the bound points clipped into the bounds; the bounds it violated form the working set `A`.
+2. Solve with `A` as equalities, giving values `v*` at the bound points. If `v*` violates a bound outside `A`, move from `v` towards `v*` only as far as the first bound met (`v <- v + alpha (v* - v)`, `0 <= alpha < 1`), add that bound to `A` and solve again.
+3. If nothing is violated, take `v = v*` and check the signs of `b_j` for `j` in `A`. If one has the wrong sign, remove the worst one from `A` and solve again. Otherwise stop.
 
-The programme is strictly convex in `b` when `K` is positive definite on `P^T b = 0`, so the method ends in a finite number of steps. A cap on the number of iterations is still kept; reaching it is an error, not a silent result. A "between" pick contributes one lower and one upper bound at the same location.
+This is the primal active-set method (Nocedal & Wright, algorithm 16.3): every iterate honours all bounds and the objective never increases, so with a strictly convex programme (`K` positive definite on `P^T b = 0`) it ends in a finite number of steps, barring degenerate ties. (The simpler scheme "add the most violated bound, re-solve" has infeasible iterates and no such guarantee, although it gave the same surfaces in trials.) A cap on the number of iterations is still kept; reaching it is an error, not a silent result. A "between" pick contributes one lower and one upper bound at the same location.
 
 **Nested surfaces never cross.** The surfaces of one profile are listed top to bottom (cover base, oxide base, transition base). Each is interpolated on its own, then the depths are made non-decreasing at every grid node:
 
