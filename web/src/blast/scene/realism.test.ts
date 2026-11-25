@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   blastCentre, depthBelowCollars, DUST_DRAG_S, DUST_RISE, DUST_WIND, dustCentre, dustRadius, EQUIPMENT_MARGIN_M, equipmentSites, fragmentOffset,
-  fragmentSize, hash01, machineIdle, SHAKE_DECAY_MS, shakeEnvelope,
+  fragmentSize, groundRelief, hash01, machineIdle, RELIEF_MAX_M, reliefWeight, SHAKE_DECAY_MS, shakeEnvelope,
 } from './realism'
 import { heightSampler } from './topography'
 
@@ -149,6 +149,38 @@ describe('waiting machines', () => {
     expect(machineIdle(3.2, 0)).toEqual(machineIdle(3.2, 0))
     expect(machineIdle(3.2, 0).swing).not.toBeCloseTo(machineIdle(3.2, 2.3).swing, 3)
     expect(machineIdle(0, 0).swing).toBe(0)
+  })
+})
+
+describe('fine relief of the ground', () => {
+  it('is never negative, bounded, continuous and not flat', () => {
+    let lo = Infinity
+    let hi = -Infinity
+    let step = 0
+    for (let i = 0; i < 4000; i++) {
+      const x = 480000 + i * 0.37
+      const y = 4860000 + i * 0.21
+      const z = groundRelief(x, y)
+      lo = Math.min(lo, z)
+      hi = Math.max(hi, z)
+      step = Math.max(step, Math.abs(z - groundRelief(x + 0.05, y)))
+    }
+    expect(lo).toBeGreaterThanOrEqual(0)
+    expect(hi).toBeLessThanOrEqual(RELIEF_MAX_M)
+    expect(hi - lo).toBeGreaterThan(0.15)
+    expect(step).toBeLessThan(0.01) // 5 cm aside: under a centimetre of height
+  })
+
+  it('is applied inside a patch, fades to its edge and stays off the bench', () => {
+    const patches = [{ x: 100, y: 200, half: 50 }]
+    const hole = [90, 190, 110, 210] as const
+    expect(reliefWeight(100, 240, patches, null)).toBeCloseTo(1, 12) // 80 % out: still full
+    expect(reliefWeight(100, 245, patches, null)).toBeCloseTo(0.5, 12) // half way through the outer fifth
+    expect(reliefWeight(100, 250, patches, null)).toBe(0)
+    expect(reliefWeight(400, 200, patches, null)).toBe(0)
+    expect(reliefWeight(100, 200, patches, hole)).toBe(0) // inside the hole
+    expect(reliefWeight(100, 216, patches, hole)).toBeCloseTo(0.5, 12) // 6 m outside it: half
+    expect(reliefWeight(100, 222, patches, hole)).toBeCloseTo(1, 12) // 12 m outside it: full
   })
 })
 

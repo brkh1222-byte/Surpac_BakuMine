@@ -73,7 +73,8 @@ export function LayersPanel() {
               Added by the viewer for looks, not measured: relief shading, sharpening and fine relief from the picture, grain up close,
               rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs, the two excavators, shadows (assumed sun), the flash, the tremble and
               the sound (their timing is physical, their strength is for effect).
-              Fragment paths, sizes and the clearance distance come from the simulation. The surface itself is unchanged.
+              Near the blast and the machines the ground also gets invented low mounds and hollows (up to 0.4 m). Fragment paths, sizes and
+              the clearance distance come from the simulation. The stored surface and every result are unchanged.
             </p>
           )}
         </div>

@@ -1014,6 +1014,15 @@ Third pass (task B15):
   when the player time passed the computed arrival (2.44 s at 828 m), with the audio context running. How it
   sounds on a given loudspeaker was not judged by ear.
 
+Fourth pass (task B16):
+
+- **Fine relief of the ground.** Within 260 m of the blast and 90 m of the machines the surveyed surface is
+  resampled on a 2.5 m and a 1 m grid and low mounds and hollows are added: value noise 18 m across (0.24 m), 6 m
+  across (0.11 m) and 2 m across (0.05 m), never negative, fading to nothing at the edge of the area and within
+  12 m of the bench and muckpile. The elevation model has one height per 30 m and shows none of this; the relief
+  is invented so that ground seen from eye height is not flat facets. Stones, shrubs, grass, machines and the
+  camera stand on the refined ground. No volume, no result and no stored surface uses it.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

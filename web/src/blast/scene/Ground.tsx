@@ -15,6 +15,7 @@ import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
 import { ShadowCatcher } from './Effects'
 import { cutRock, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
+import { reliefWeight } from './realism'
 import { useTopography } from './topography'
 
 /** Triangles of a node grid; cells with a missing node (or rejected by `skip`) are left out. */
@@ -260,6 +261,84 @@ export function Topography({ bundle, origin }: LayerProps) {
           />
         )}
       </mesh>
+    </>
+  )
+}
+
+/** Grid spacing of the refined ground: around the blast and (finer) around the machines, m. */
+const DETAIL_CELL_M = [2.5, 1] as const
+
+/**
+ * The ground refined near the blast and the machines (site view): the surveyed surface
+ * resampled on a fine grid with the invented fine relief added (realism.groundRelief). It
+ * lies on or above the surveyed surface, which stays drawn underneath and beyond.
+ */
+export function TerrainDetail({ bundle, origin }: LayerProps) {
+  const invalidate = useThree((s) => s.invalidate)
+  const satellite = useSatellite()
+  const topography = useTopography(bundle, origin)
+  const geometries = useMemo(() => {
+    if (!topography || !satellite) return []
+    const { hole } = topography
+    return topography.patches.map((patch, k) => {
+      const cell = DETAIL_CELL_M[Math.min(k, DETAIL_CELL_M.length - 1)]
+      const n = Math.round((2 * patch.half) / cell) + 1
+      const position = new Float32Array(n * n * 3)
+      const ok = new Uint8Array(n * n)
+      for (let ix = 0; ix < n; ix++) {
+        for (let iy = 0; iy < n; iy++) {
+          const x = patch.x - patch.half + ix * cell
+          const y = patch.y - patch.half + iy * cell
+          const base = topography.surveyed(x, y)
+          const i = ix * n + iy
+          // A hair above the surveyed surface where the relief is zero, so the two do not flicker.
+          const lift = reliefWeight(x, y, topography.patches, hole) > 0 ? 0.03 : -1
+          ok[i] = Number.isFinite(base) && lift > 0 ? 1 : 0
+          position[i * 3] = x - origin[0]
+          position[i * 3 + 1] = y - origin[1]
+          position[i * 3 + 2] = (Number.isFinite(base) ? topography.heightAt(x, y) : 0) - origin[2] + lift
+        }
+      }
+      const index: number[] = []
+      for (let ix = 0; ix + 1 < n; ix++) {
+        for (let iy = 0; iy + 1 < n; iy++) {
+          const a = ix * n + iy
+          const b = (ix + 1) * n + iy
+          const c = (ix + 1) * n + iy + 1
+          const d = ix * n + iy + 1
+          if (!ok[a] || !ok[b] || !ok[c] || !ok[d]) continue
+          // Not over the bench and muckpile: that ground is the simulation's.
+          const x = patch.x - patch.half + ix * cell
+          const y = patch.y - patch.half + iy * cell
+          if (x + cell > hole[0] && x < hole[2] && y + cell > hole[1] && y < hole[3]) continue
+          index.push(a, b, c, a, c, d)
+        }
+      }
+      const g = new BufferGeometry()
+      g.setAttribute('position', new BufferAttribute(position, 3))
+      g.setIndex(new BufferAttribute(Uint32Array.from(index), 1))
+      g.computeVertexNormals()
+      g.setAttribute('uv', new BufferAttribute(uvArray(satellite.plan, position, origin), 2))
+      return g
+    })
+  }, [topography, satellite, origin])
+  useEffect(() => {
+    invalidate()
+    return () => {
+      for (const g of geometries) g.dispose()
+    }
+  }, [geometries, invalidate])
+  if (!satellite) return null
+  return (
+    <>
+      {geometries.map((g, i) => (
+        <group key={i}>
+          <ShadowCatcher geometry={g} />
+          <mesh geometry={g} renderOrder={1}>
+            <TerrainMaterial texture={satellite.texture} />
+          </mesh>
+        </group>
+      ))}
     </>
   )
 }

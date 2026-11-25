@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { fetchManifest, fetchMesh, type MeshData } from '../../api/client'
 import type { BlastBundle } from '../types'
 import { blastView } from './common'
+import { groundRelief, reliefPatches, reliefWeight, type ReliefHole, type ReliefPatch } from './realism'
 
 /** Height of a surface at a plan point, in the units of its vertices; NaN outside it. */
 export type HeightAt = (x: number, y: number) => number
@@ -113,13 +114,24 @@ function regularGrid(position: ArrayLike<number>, n: number, x0: number, y0: num
 
 export interface Topography {
   mesh: MeshData
-  /** World height of the surface at a world plan point; NaN outside it. */
+  /** World height of the surveyed surface at a world plan point; NaN outside it. */
+  surveyed: HeightAt
+  /** The same with the fine relief of the site view added (realism.groundRelief): what things stand on. */
   heightAt: HeightAt
+  patches: ReliefPatch[]
+  hole: ReliefHole
 }
+
+/**
+ * The refined ground is lifted by this much, m, where the relief is fully on: the surveyed
+ * mesh is two flat triangles per cell and can rise above the bilinear height by a quarter of
+ * the cell's twist, and must stay hidden under the refined ground.
+ */
+export const RELIEF_LIFT_M = 0.15
 
 let cached: { key: string; promise: Promise<Topography | null> } | null = null
 
-async function load(x: number, y: number): Promise<Topography | null> {
+async function load(x: number, y: number, bundle: BlastBundle): Promise<Topography | null> {
   try {
     const manifest = await fetchManifest()
     const surfaces = manifest.objects.filter((o) => o.kind === 'mesh' && o.category === 'surfaces' && o.bounds)
@@ -129,7 +141,10 @@ async function load(x: number, y: number): Promise<Topography | null> {
     const pick = inside.find((o) => /topo|dtm|dem|surface/i.test(o.name)) ?? inside[0]
     if (!pick) return null
     const mesh = await fetchMesh(pick)
-    return { mesh, heightAt: heightSampler(mesh.vertices) }
+    const surveyed = heightSampler(mesh.vertices)
+    const { patches, hole } = reliefPatches(bundle)
+    const heightAt: HeightAt = (px, py) => surveyed(px, py) + (RELIEF_LIFT_M + groundRelief(px, py)) * reliefWeight(px, py, patches, hole)
+    return { mesh, surveyed, heightAt, patches, hole }
   } catch {
     return null // no project or no surface: the blast draws without it
   }
@@ -148,7 +163,7 @@ export function useTopography(bundle: BlastBundle, origin: readonly number[], on
     }
     let alive = true
     const key = `${origin[0]},${origin[1]},${bundle.timeline.t_end_ms},${bundle.timeline.holes.length}`
-    if (!cached || cached.key !== key) cached = { key, promise: load(origin[0], origin[1]) }
+    if (!cached || cached.key !== key) cached = { key, promise: load(origin[0], origin[1], bundle) }
     void cached.promise.then((t) => {
       if (!alive) return
       setTopography(t)

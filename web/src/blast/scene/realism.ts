@@ -93,6 +93,83 @@ export function dustRadius(r0: number, growth: number, dt: number): number {
 /** The player runs this long after the last fragment has settled, so the dust can drift, ms. */
 export const DUST_TAIL_MS = 7000
 
+// ---- fine relief of the ground -----------------------------------------------------
+
+/** Smooth 2-D value noise in [0, 1): hash01 at the integer lattice, smoothstep between. */
+function valueNoise(x: number, y: number, salt: number): number {
+  const ix = Math.floor(x)
+  const iy = Math.floor(y)
+  const fx = x - ix
+  const fy = y - iy
+  const u = fx * fx * (3 - 2 * fx)
+  const v = fy * fy * (3 - 2 * fy)
+  const a = hash01(ix * 7919 + iy, salt)
+  const b = hash01((ix + 1) * 7919 + iy, salt)
+  const c = hash01(ix * 7919 + iy + 1, salt)
+  const d = hash01((ix + 1) * 7919 + iy + 1, salt)
+  return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v
+}
+
+/** Largest height the fine relief adds, m. */
+export const RELIEF_MAX_M = 0.4
+
+/**
+ * Fine relief of the ground at a world plan point, m, in [0, RELIEF_MAX_M]: low mounds and
+ * hollows 18 m across (0.24 m), bumps 6 m across (0.11 m) and 2 m across (0.05 m). The
+ * elevation model has one height per 30 m and cannot show any of this; the relief is
+ * invented so that ground seen from eye height is not a set of flat facets. It is never
+ * negative, so the refined ground lies on or above the surveyed surface.
+ */
+export function groundRelief(x: number, y: number): number {
+  return 0.24 * valueNoise(x / 18, y / 18, 71) + 0.11 * valueNoise(x / 6, y / 6, 72) + 0.05 * valueNoise(x / 2, y / 2, 73)
+}
+
+export interface ReliefPatch {
+  /** Centre and half side of the square where the relief is applied, world plan. */
+  x: number
+  y: number
+  half: number
+}
+
+/** A rectangle (xmin, ymin, xmax, ymax) where no relief is added, with a margin around it. */
+export type ReliefHole = readonly [number, number, number, number]
+
+/**
+ * Share (0..1) of the relief applied at a plan point: 1 well inside a patch, falling
+ * smoothly to 0 over the outer fifth of it, and to 0 within 12 m of the hole (the bench
+ * and muckpile area, whose ground comes from the simulation).
+ */
+export function reliefWeight(x: number, y: number, patches: readonly ReliefPatch[], hole: ReliefHole | null): number {
+  let w = 0
+  for (const p of patches) {
+    const d = Math.max(Math.abs(x - p.x), Math.abs(y - p.y)) / p.half
+    const t = Math.min(1, Math.max(0, (1 - d) / 0.2))
+    w = Math.max(w, t * t * (3 - 2 * t))
+  }
+  if (w > 0 && hole) {
+    const dx = Math.max(hole[0] - x, 0, x - hole[2])
+    const dy = Math.max(hole[1] - y, 0, y - hole[3])
+    const t = Math.min(1, Math.hypot(dx, dy) / 12)
+    w *= t * t * (3 - 2 * t)
+  }
+  return w
+}
+
+/** Where the ground is refined: 260 m around the blast and 90 m around the machines; the hole is the muckpile grid. */
+export function reliefPatches(bundle: Pick<BlastBundle, 'timeline' | 'muckpile' | 'flyrock' | 'design'>): { patches: ReliefPatch[]; hole: ReliefHole } {
+  const [bx, by] = blastCentre(bundle)
+  const sites = equipmentSites(bundle)
+  const patches: ReliefPatch[] = [{ x: bx, y: by, half: 260 }]
+  if (sites.length > 0) {
+    patches.push({ x: sites.reduce((a, s) => a + s.x, 0) / sites.length, y: sites.reduce((a, s) => a + s.y, 0) / sites.length, half: 90 })
+  }
+  const m = bundle.muckpile
+  return {
+    patches,
+    hole: [m.origin[0], m.origin[1], m.origin[0] + (m.shape[0] - 1) * m.spacing, m.origin[1] + (m.shape[1] - 1) * m.spacing],
+  }
+}
+
 // ---- shake and sound ---------------------------------------------------------------
 
 /** Speed of sound in air used for the delay of the rumble, m/s (about 15 degrees C). */
