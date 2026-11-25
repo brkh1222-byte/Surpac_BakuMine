@@ -28,6 +28,7 @@ export const LAYERS = [
   { id: 'dust', label: 'Dust' },
   { id: 'equipment', label: 'Excavators (safe zone)' },
   { id: 'scatter', label: 'Stones and shrubs' },
+  { id: 'effects', label: 'Tremble and sound' },
 ] as const
 
 export type LayerId = (typeof LAYERS)[number]['id']
@@ -109,7 +110,7 @@ export const useBlast = create<BlastState>((set, get) => ({
 
   layers: {
     ground: true, holes: true, labels: true, allLabels: false, waves: true, ppv: false, damage: true, throw: true,
-    flyrock: true, airblast: false, monitors: true, topography: true, satellite: true, dust: true, equipment: true, scatter: true,
+    flyrock: true, airblast: false, monitors: true, topography: true, satellite: true, dust: true, equipment: true, scatter: true, effects: true,
   },
   exaggerateHoles: true,
   groundOpacity: 1,
@@ -189,7 +190,7 @@ export const useBlast = create<BlastState>((set, get) => ({
       return {
         layers: {
           ...s.layers,
-          ground: true, throw: true, topography: true, dust: true, equipment: true, scatter: true,
+          ground: true, throw: true, topography: true, dust: true, equipment: true, scatter: true, effects: true,
           holes: diagram, labels: diagram, waves: diagram, damage: diagram, flyrock: diagram, monitors: diagram,
           allLabels: false, ppv: false, airblast: false,
         },

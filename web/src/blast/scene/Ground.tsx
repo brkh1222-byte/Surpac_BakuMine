@@ -13,6 +13,7 @@ import { landedFraction, sortedFinite } from '../math'
 import { useBlast } from '../state'
 import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
+import { ShadowCatcher } from './Effects'
 import { cutRock, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
 import { useTopography } from './topography'
 
@@ -140,13 +141,16 @@ export function Muckpile({ bundle, origin }: LayerProps) {
   })
 
   return (
-    <mesh geometry={built.g} renderOrder={2} frustumCulled={false}>
-      {satellite ? (
-        <TerrainMaterial key="satellite" texture={satellite.texture} opacity={opacity} />
-      ) : (
-        <meshStandardMaterial key="plain" vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
-      )}
-    </mesh>
+    <>
+      {satellite && opacity >= 1 && <ShadowCatcher geometry={built.g} />}
+      <mesh geometry={built.g} renderOrder={2} frustumCulled={false} castShadow={satellite !== null}>
+        {satellite ? (
+          <TerrainMaterial key="satellite" texture={satellite.texture} opacity={opacity} />
+        ) : (
+          <meshStandardMaterial key="plain" vertexColors side={DoubleSide} roughness={1} metalness={0} flatShading transparent={opacity < 1} opacity={opacity} />
+        )}
+      </mesh>
+    </>
   )
 }
 
@@ -236,23 +240,26 @@ export function Topography({ bundle, origin }: LayerProps) {
 
   if (!geometry) return null
   return (
-    <mesh geometry={geometry}>
-      {satellite ? (
-        <TerrainMaterial key="satellite" texture={satellite.texture} planes={planes} offset />
-      ) : (
-        <meshStandardMaterial
-          key="plain"
-          color={BLAST_COLORS[theme].context}
-          side={DoubleSide}
-          roughness={1}
-          metalness={0}
-          clippingPlanes={planes}
-          clipIntersection
-          polygonOffset
-          polygonOffsetFactor={2}
-          polygonOffsetUnits={2}
-        />
-      )}
-    </mesh>
+    <>
+      {satellite && <ShadowCatcher geometry={geometry} planes={planes} />}
+      <mesh geometry={geometry}>
+        {satellite ? (
+          <TerrainMaterial key="satellite" texture={satellite.texture} planes={planes} offset />
+        ) : (
+          <meshStandardMaterial
+            key="plain"
+            color={BLAST_COLORS[theme].context}
+            side={DoubleSide}
+            roughness={1}
+            metalness={0}
+            clippingPlanes={planes}
+            clipIntersection
+            polygonOffset
+            polygonOffsetFactor={2}
+            polygonOffsetUnits={2}
+          />
+        )}
+      </mesh>
+    </>
   )
 }

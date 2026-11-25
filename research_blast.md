@@ -978,7 +978,26 @@ Added by the viewer:
 - **Height lookup.** Machines and scatter stand on the project topography: bilinear in the grid cell when the
   surface is a complete regular grid (exact on a plane), else an inverse-distance mean of nearby vertices.
 
-Not done: fragments and dust cast no shadows and do not light up; no sound; no shock or camera shake; dust does
-not hide behind terrain softly (it is cut where it meets the ground); machines do not move; the terrain is still
+Second pass (task B14):
+
+- **Shadows.** Two weak lights from the sun's direction own shadow maps: one over 460 m around the blast (4096
+  pixels, about 11 cm each), one over 80 m around the machines. Fragments, the bench walls and the muckpile,
+  stones, shrubs and the machines cast shadows. The terrain shows them through a copy of its mesh that draws only
+  the shadow, so its picture and relief shading are not changed. The sun direction is the assumed one of part 5.
+- **Excavators.** Rebuilt from extruded side profiles with bevelled edges: track loops with grouser bars and
+  rollers, house with engine cover and counterweight, cab with glass, gooseneck boom, stick, bucket with teeth,
+  four hydraulic rams, handrail, exhaust. Still generic, still not moving.
+- **Flash.** A glow of 110 ms at each collar when its hole fires. Strength chosen for effect.
+- **Tremble.** While the ground wave passes the camera it trembles: each hole adds `exp(-(t - t_a) / 140 ms)`
+  from its arrival `t_a = t_fire + d / c_p`, the sum is limited to 1 and falls as 150 m / d beyond 150 m; the
+  largest offset is 0.16 % of the viewing distance. The arrival time is physics; the size is for effect (a real
+  camera there moves by millimetres or less).
+- **Sound.** A rumble made in the browser (filtered noise over a falling 62 to 28 Hz tone) starts when the player
+  time passes `t_first + d / 340 m/s`, so at the machines it comes more than two seconds after the picture. It
+  is a generic rumble, not a prediction of the airblast, and plays at normal speed also in slow motion.
+- **Dust edge.** The lower edge of a puff thins out, which hides most of the hard line where it met the ground.
+- **Camera.** In the site view the camera cannot go below 1.6 m above the topography.
+
+Not done: dust casts no shadow and is not lit by the flash; machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

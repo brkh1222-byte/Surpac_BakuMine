@@ -68,6 +68,7 @@ export function Scatter({ bundle, origin }: LayerProps) {
       }
       mesh.count = n
       mesh.frustumCulled = false
+      mesh.castShadow = true
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       return mesh

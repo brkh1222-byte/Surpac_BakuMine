@@ -80,7 +80,8 @@ void main() {
   float body = smoothstep(1.0, 0.1, r + 0.6 * (billow - 0.5)) * (0.45 + 1.1 * billow);
   // Quick to appear, slow to thin out.
   float life = smoothstep(0.0, 0.04, vAge) * (1.0 - smoothstep(0.35, 1.0, vAge));
-  float alpha = vTint.a * body * life;
+  // The lower edge thins out, so a puff does not end in a hard line where it meets the ground.
+  float alpha = vTint.a * body * life * smoothstep(-1.0, -0.25, vCorner.y);
   if (alpha < 0.004) discard;
   // Lit from above and the sun side; the first instant is bright (the hot gases).
   float light = 0.74 + 0.3 * vCorner.y + 0.1 * vCorner.x + 0.3 * (billow - 0.5);

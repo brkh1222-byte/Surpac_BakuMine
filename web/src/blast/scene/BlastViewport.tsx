@@ -16,6 +16,7 @@ import { Legends } from '../ui/Legends'
 import { blastView, bundleOrigin, type LayerProps } from './common'
 import { Damage } from './Damage'
 import { Dust } from './Dust'
+import { BlastShadows, BlastSound, Flashes, Shake, StayAboveGround } from './Effects'
 import { Equipment } from './Equipment'
 import { ContextGround, Muckpile, Topography } from './Ground'
 import { Holes } from './Holes'
@@ -167,6 +168,11 @@ function Layers({ bundle, origin }: LayerProps) {
       {topography && layers.equipment && <Equipment bundle={bundle} origin={origin} />}
       {topography && layers.scatter && <Scatter bundle={bundle} origin={origin} />}
       {layers.dust && layers.throw && <Dust bundle={bundle} origin={origin} />}
+      {realistic && <BlastShadows bundle={bundle} origin={origin} />}
+      {realistic && <StayAboveGround origin={origin} />}
+      {realistic && layers.dust && <Flashes bundle={bundle} origin={origin} />}
+      {realistic && layers.effects && <Shake bundle={bundle} origin={origin} />}
+      {realistic && layers.effects && <BlastSound bundle={bundle} origin={origin} />}
       {layers.ground && <Muckpile bundle={bundle} origin={origin} />}
       {layers.ppv && <PpvMap bundle={bundle} origin={origin} />}
       {layers.waves && <Waves bundle={bundle} origin={origin} />}

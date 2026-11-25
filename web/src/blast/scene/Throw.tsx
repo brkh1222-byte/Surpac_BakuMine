@@ -68,6 +68,7 @@ export function Throw({ bundle, origin }: LayerProps) {
     const mesh = new InstancedMesh(geometry, new MeshStandardMaterial({ roughness: 0.95, metalness: 0, flatShading: true }), Math.max(1, count))
     mesh.count = count
     mesh.frustumCulled = false
+    mesh.castShadow = true
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(Math.max(1, count) * 3), 3)
     mesh.instanceMatrix.array.fill(0)
 

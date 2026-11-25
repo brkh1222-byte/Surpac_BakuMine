@@ -14,7 +14,7 @@ export function LayersPanel() {
   const imageryError = useBlast((s) => s.imageryError)
   const s = useBlast.getState()
   const shown = (id: string) =>
-    (!['topography', 'equipment', 'scatter'].includes(id) || source === 'api') && (id !== 'satellite' || imagery !== null)
+    (!['topography', 'equipment', 'scatter', 'effects'].includes(id) || source === 'api') && (id !== 'satellite' || imagery !== null)
   return (
     <section className="blast-section">
       <h3>Layers</h3>
@@ -71,7 +71,8 @@ export function LayersPanel() {
           {imagery && (
             <p className="blast-note" data-testid="blast-imagery-look">
               Added by the viewer for looks, not measured: relief shading, sharpening and fine relief from the picture, grain up close,
-              rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs and the two excavators.
+              rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs, the two excavators, shadows (assumed sun), the flash, the tremble and
+              the sound (their timing is physical, their strength is for effect).
               Fragment paths, sizes and the clearance distance come from the simulation. The surface itself is unchanged.
             </p>
           )}

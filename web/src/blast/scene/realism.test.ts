@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   blastCentre, depthBelowCollars, DUST_DRAG_S, DUST_RISE, DUST_WIND, dustCentre, dustRadius, EQUIPMENT_MARGIN_M, equipmentSites, fragmentOffset,
-  fragmentSize, hash01,
+  fragmentSize, hash01, SHAKE_DECAY_MS, shakeEnvelope,
 } from './realism'
 import { heightSampler } from './topography'
 
@@ -111,6 +111,24 @@ describe('site-view rules', () => {
     // Face to the east (90): behind is west.
     const east = equipmentSites({ ...bundle, design: { face_azimuth: 90 } } as unknown as Parameters<typeof equipmentSites>[0])
     for (const s of east) expect(s.x).toBeLessThan(centre[0] - 400)
+  })
+})
+
+describe('camera tremble', () => {
+  it('starts when the wave arrives, decays, sums over holes and weakens with distance', () => {
+    const cp = 5000
+    // 100 m from the blast: the wave of a hole fired at 50 ms arrives at 50 + 100 / 5000 s = 70 ms.
+    expect(shakeEnvelope([50], 69.9, 100, cp)).toBe(0)
+    expect(shakeEnvelope([50], 70, 100, cp)).toBeCloseTo(1, 12)
+    expect(shakeEnvelope([50], 70 + SHAKE_DECAY_MS, 100, cp)).toBeCloseTo(Math.exp(-1), 12)
+    // Two holes: the sum of their decays, limited to 1.
+    const two = shakeEnvelope([0, 100], 300, 0, cp)
+    expect(two).toBeCloseTo(Math.exp(-300 / SHAKE_DECAY_MS) + Math.exp(-200 / SHAKE_DECAY_MS), 12)
+    expect(shakeEnvelope([0, 1, 2, 3], 3, 0, cp)).toBe(1)
+    // Beyond 150 m it falls as 150 / distance; the arrival is later too.
+    expect(shakeEnvelope([0], 160, 800, cp)).toBeCloseTo(150 / 800, 12)
+    expect(shakeEnvelope([0], 159, 800, cp)).toBe(0)
+    expect(shakeEnvelope([], 1000, 100, cp)).toBe(0)
   })
 })
 
