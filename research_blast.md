@@ -1036,6 +1036,24 @@ Sixth pass (task B18):
 - **Cloud shade.** Soft patches a few hundred metres across darken the ground by up to 20 %. They are fixed noise
   on the ground and are not the shadows of the clouds drawn in the sky.
 
+Seventh pass (task B19): drone-level ground from above.
+
+The satellite picture resolves about 0.9 m, so from above the ground looked blurred. The picture is now used only
+for the colour at a metre and more; everything finer is synthesised in the terrain shader, at every viewing
+height. A detail of size l is drawn only while it covers a few pixels (weight `smoothstep(1.5 p, 5 p, l)` with p
+the metres of ground per pixel), which keeps the ground crisp without shimmer.
+
+- Bare ground: tone drifting over 3 and 8 m, patches of gravel and sand, grain at 45, 15 and 6 cm, dark and pale
+  stones, sand ripples.
+- Plants: the picture is read as "plants grow here" where it is greener than grey or dark. The plane is cut into
+  cells of 1.7 m (shrubs) and 0.42 m (grass tufts); a cell holds a plant with a probability of 5 % on bare ground
+  rising to 60 % where plants grow, at a random place and size. Each shrub darkens the ground 0.55 m away from
+  the sun (its shadow).
+- The same details form a height (shrubs 0.5 m, stones a few centimetres) that the sun models.
+
+All of it is invented from fixed noise and from the colour of the picture: no plant, stone or patch is where a
+real one is. It is what a drone photograph of such ground looks like, not a drone photograph of this ground.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

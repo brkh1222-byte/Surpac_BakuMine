@@ -10,9 +10,12 @@
  *   bushes, rills and tracks catch the light;
  * - sharpening: an unsharp mask on the picture (the picture plus 0.9 of its difference
  *   from the mean of four neighbours 1.5 pixels away);
- * - grain: fractal value noise multiplied in at close range, where one pixel of the picture
- *   covers more than one pixel of the screen; within 150 m also dark pebble specks and a
- *   rough ground (a few centimetres of the same noise) that catches the light;
+ * - drone-level detail: the picture resolves about a metre, so everything finer is made
+ *   here and drawn at every viewing height, each detail only while it covers a few pixels:
+ *   tone drifting over metres, patches of gravel and sand, grain down to centimetres, dark
+ *   and pale stones, sand ripples, and plants (shrubs about a metre across with their
+ *   shadows, grass tufts), dense where the picture is green or dark and sparse on bare
+ *   ground. The same details are a height that the sun models;
  * - fresh rock: ground that was cut (the bench face and floor) or broken (the muckpile) is
  *   drawn as procedural rock (bands along the bedding, mottling, grit) in the vertex colour, not as the picture
  *   of the old surface;
@@ -80,6 +83,34 @@ float fbm(vec3 p) {
 }
 `
 
+/**
+ * Separate plants: the plane is cut into square cells; a cell holds a plant with probability
+ * `chance`, at a random place in it with a random radius. Returns 1 inside the plant nearest
+ * to `p`, falling to 0 at its edge.
+ */
+const PLANTS = /* glsl */ `
+float cellHash(vec2 c) {
+  return fract(sin(dot(c, vec2(41.3, 289.1))) * 24634.6345);
+}
+vec2 cellHash2(vec2 c) {
+  return fract(sin(vec2(dot(c, vec2(127.1, 311.7)), dot(c, vec2(269.5, 183.3)))) * 43758.5453);
+}
+float plants(vec2 p, float cell, float chance) {
+  vec2 g = floor(p / cell);
+  float best = 0.0;
+  for (int i = -1; i <= 1; i++) {
+    for (int j = -1; j <= 1; j++) {
+      vec2 c = g + vec2(float(i), float(j));
+      if (cellHash(c) > chance) continue;
+      vec2 centre = (c + 0.2 + 0.6 * cellHash2(c)) * cell;
+      float radius = cell * (0.16 + 0.26 * cellHash(c + 17.0));
+      best = max(best, 1.0 - smoothstep(0.5, 1.0, length(p - centre) / radius));
+    }
+  }
+  return best;
+}
+`
+
 /** Shade under the clouds: soft darker patches a few hundred metres across, fixed on the ground. */
 const CLOUD_SHADE = /* glsl */ `
 float cloudShade(vec2 xy) {
@@ -129,6 +160,7 @@ varying float vDist;
 #include <clipping_planes_pars_fragment>
 ${NOISE}
 ${CLOUD_SHADE}
+${PLANTS}
 void main() {
   #include <clipping_planes_fragment>
   vec3 n = normalize(vNormal);
@@ -136,35 +168,55 @@ void main() {
   vec3 dpdx = dFdx(vPos);
   vec3 dpdy = dFdy(vPos);
 
-  // The picture, with grain at close range.
+  // The picture.
   vec3 base = texture2D(map, vUv).rgb;
   // Unsharp mask: the picture minus its local mean, added back, makes edges crisper.
   vec3 mean = 0.25 * (texture2D(map, vUv + vec2(texel.x, 0.0)).rgb + texture2D(map, vUv - vec2(texel.x, 0.0)).rgb
                     + texture2D(map, vUv + vec2(0.0, texel.y)).rgb + texture2D(map, vUv - vec2(0.0, texel.y)).rgb);
   base = clamp(base + sharpen * (base - mean), 0.0, 1.0);
-  float close = 1.0 - smoothstep(30.0, 450.0, vDist);
-  float grain = 0.6 * fbm(vPos * 0.9) + 0.4 * fbm(vPos * 5.0);
-  base *= 1.0 + close * 0.3 * (grain - 0.5);
-
-  // Pebbles: dark specks within about 150 m, where the picture has no detail left.
-  float near = 1.0 - smoothstep(25.0, 150.0, vDist);
-  float speck = smoothstep(0.74, 0.84, vnoise(vPos * 5.5)) * near;
-  base *= 1.0 - 0.32 * speck;
-  // Patches of gravel (greyer, rougher) and of sand (paler, smoother) a few metres across,
-  // fine sand ripples, and small bright stones: within 150 m only.
-  float soil = fbm(vPos * 0.23 + 3.7);
-  float gravel = smoothstep(0.52, 0.66, soil) * near;
-  float sand = smoothstep(0.48, 0.34, soil) * near;
+  // ---- Drone-level detail -------------------------------------------------------------
+  // The satellite picture gives the colour of the ground at about a metre; everything finer
+  // is made here. A detail of size l (metres) is drawn only while it covers a few pixels
+  // (SEEN), so the ground stays crisp at every height without shimmering.
+  float fp = max(length(dpdx), length(dpdy)); // metres of ground per pixel
+  #define SEEN(l) smoothstep(1.5 * fp, 5.0 * fp, l)
   float lum = dot(base, vec3(0.299, 0.587, 0.114));
+  // Where the picture is greener or darker than bare soil, plants grow.
+  float veg = clamp(0.75 * smoothstep(-0.004, 0.03, base.g - 0.5 * (base.r + base.b)) + 0.55 * smoothstep(0.34, 0.16, lum), 0.0, 1.0);
+
+  // Bare ground: tone drifting over metres, patches of gravel and of sand, grain down to
+  // centimetres, dark and pale stones.
+  float tone = 0.18 * (vnoise(vPos * 0.125 + 1.3) - 0.5) * SEEN(8.0) + 0.16 * (vnoise(vPos * 0.34 + 7.1) - 0.5) * SEEN(3.0);
+  float soil = fbm(vPos * 0.23 + 3.7);
+  float gravel = smoothstep(0.52, 0.66, soil) * SEEN(4.0) * (1.0 - veg);
+  float sand = smoothstep(0.48, 0.34, soil) * SEEN(4.0) * (1.0 - veg);
+  float grain = (vnoise(vPos * 2.2) - 0.5) * SEEN(0.45) + 0.8 * (vnoise(vPos * 6.5) - 0.5) * SEEN(0.15) + 0.6 * (vnoise(vPos * 17.0) - 0.5) * SEEN(0.06);
+  float darkStone = smoothstep(0.76, 0.86, vnoise(vPos * 4.5 + 5.1)) * SEEN(0.22) * (1.0 - veg);
+  float paleStone = smoothstep(0.8, 0.9, vnoise(vPos * 7.5 + 9.4)) * SEEN(0.13) * (0.35 + gravel) * (1.0 - veg);
+  float ripple = sin(dot(vPos.xy, vec2(2.3, 1.1)) + 4.0 * fbm(vPos * 0.6)) * sand * SEEN(2.5);
+  base *= 1.0 + tone;
   base = mix(base, vec3(lum) * vec3(0.98, 0.96, 0.93), 0.35 * gravel);
   base = mix(base, base * vec3(1.1, 1.06, 0.98), 0.5 * sand);
-  float pebble = smoothstep(0.8, 0.9, vnoise(vPos * 9.0 + 5.1)) * near * (0.4 + gravel);
-  base = mix(base, vec3(0.62, 0.6, 0.56), 0.45 * pebble);
-  float ripple = sin(dot(vPos.xy, vec2(2.3, 1.1)) + 4.0 * fbm(vPos * 0.6)) * sand;
+  base *= 1.0 + 0.34 * grain * (1.0 - 0.4 * veg);
+  base *= 1.0 - 0.36 * darkStone;
+  base = mix(base, vec3(0.62, 0.6, 0.56), 0.45 * paleStone);
 
-  // Fine relief: the brightness of the picture as a height of "bump" metres, plus near the
-  // camera a rough ground of the same noise as the grain (a few centimetres) and the pebbles.
-  float h = dot(base, vec3(0.299, 0.587, 0.114)) * bump + near * (0.22 * grain + 0.05 * speck + 0.04 * vnoise(vPos * 14.0) + 0.07 * pebble + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0));
+  // Plants: separate shrubs up to a metre and a half across, many where the picture is green
+  // and few on bare ground, each with its shadow on the side away from the sun; grass tufts
+  // between them.
+  vec2 wobble = 0.16 * vec2(vnoise(vPos * 4.0) - 0.5, vnoise(vPos * 4.0 + 9.0) - 0.5); // ragged outlines
+  float chance = mix(0.05, 0.6, veg);
+  float shrub = plants(vPos.xy + wobble, 1.7, chance) * SEEN(0.8);
+  float shrubShadow = plants(vPos.xy + wobble - sun.xy * 0.55, 1.7, chance) * SEEN(0.8) * (1.0 - shrub);
+  float tuft = plants(vPos.xy + 0.3 * wobble, 0.42, mix(0.06, 0.5, veg)) * SEEN(0.2) * (1.0 - shrub);
+  vec3 leaf = mix(vec3(0.085, 0.1, 0.045), vec3(0.16, 0.17, 0.075), vnoise(vPos * 5.0 + 1.9));
+  base = mix(base, leaf * (0.7 + 1.2 * lum), 0.8 * shrub);
+  base *= 1.0 - 0.34 * shrubShadow;
+  base = mix(base, base * vec3(0.8, 0.88, 0.62), 0.55 * tuft);
+
+  // All of it as a height in metres, so the sun models it: the picture's own brightness
+  // (weak), grain, stones, sand ripples, shrubs and tufts.
+  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.5 * shrub + 0.1 * tuft;
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
@@ -223,7 +275,7 @@ export function TerrainMaterial({
           haze: { value: new Color(HORIZON) },
           hazeLength: { value: HAZE_LENGTH },
           opacity: { value: 1 },
-          bump: { value: 1.6 },
+          bump: { value: 0.9 },
           texel: { value: new Vector2(1 / 2048, 1 / 2048) },
           sharpen: { value: 0.9 },
         },
