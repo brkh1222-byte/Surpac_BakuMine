@@ -1076,6 +1076,12 @@ picture is green, so the proportion of soil and green of the picture is kept. Th
 rubble patches and chips in place of round blocks. The 3-D ball shrubs and cone tufts are removed; small stones
 stay. The cell-plant rule of the seventh pass and the large bushes of the ninth are no longer used.
 
+Eleventh pass (task B23), after the owner's review ("texture looks painted"): the ground detail is turned down to
+what a photograph shows. The shift of the reading point is 0.4 and 0.55 m (was 1.0 and 1.3), sharpening 0.55,
+grain 17 % (was 34 %); rills and sand ripples are removed (they drew thin lines over everything); small stones
+and tufts change colour only and are no longer lit as relief (lit, each became a dark crescent). What remains:
+tone drifting over metres, gravel and sand patches, soft grain, faint stones, irregular soft plant cover.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

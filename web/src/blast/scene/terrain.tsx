@@ -13,7 +13,7 @@
  * - drone-level detail: the picture resolves about a metre, so everything finer is made
  *   here and drawn at every viewing height, each detail only while it covers a few pixels:
  *   tone drifting over metres, patches of gravel and sand, grain down to centimetres, dark
- *   and pale stones, sand ripples, and plants (shrubs about a metre across with their
+ *   and pale stones, and plants (soft irregular cover, no outlines, with their
  *   shadows, grass tufts), dense where the picture is green or dark and sparse on bare
  *   ground. The same details are a height that the sun models;
  * - fresh rock: ground that was cut (the bench face and floor) or broken (the muckpile) is
@@ -145,8 +145,8 @@ void main() {
   float fp0 = max(length(dpdx), length(dpdy));
   float uvPerMetre = min(length(fwidth(vUv)) / max(length(fwidth(vPos.xy)), 1e-6), 2.0 * texel.x);
   float ragged = smoothstep(1.5 * fp0, 5.0 * fp0, 1.2);
-  vec2 shift = (vec2(vnoise(vPos * 1.7 + 3.0), vnoise(vPos * 1.7 + 11.0)) - 0.5) * 1.0
-             + (vec2(vnoise(vPos * 0.45 + 5.0), vnoise(vPos * 0.45 + 17.0)) - 0.5) * 1.3;
+  vec2 shift = (vec2(vnoise(vPos * 1.7 + 3.0), vnoise(vPos * 1.7 + 11.0)) - 0.5) * 0.4
+             + (vec2(vnoise(vPos * 0.45 + 5.0), vnoise(vPos * 0.45 + 17.0)) - 0.5) * 0.55;
   vec2 uv = vUv + shift * uvPerMetre * ragged;
   vec3 base = texture2D(map, uv).rgb;
   // Unsharp mask: the picture minus its local mean, added back, makes edges crisper.
@@ -178,15 +178,14 @@ void main() {
   float gravel = smoothstep(0.52, 0.66, soil) * SEEN(4.0) * (1.0 - veg);
   float sand = smoothstep(0.48, 0.34, soil) * SEEN(4.0) * (1.0 - veg);
   float grain = (vnoise(vPos * 2.2) - 0.5) * SEEN(0.45) + 0.8 * (vnoise(vPos * 6.5) - 0.5) * SEEN(0.15) + 0.6 * (vnoise(vPos * 17.0) - 0.5) * SEEN(0.06);
-  float darkStone = smoothstep(0.76, 0.86, vnoise(vPos * 4.5 + 5.1)) * SEEN(0.22) * (1.0 - veg);
-  float paleStone = smoothstep(0.8, 0.9, vnoise(vPos * 7.5 + 9.4)) * SEEN(0.13) * (0.35 + gravel) * (1.0 - veg);
-  float ripple = sin(dot(vPos.xy, vec2(2.3, 1.1)) + 4.0 * fbm(vPos * 0.6)) * sand * SEEN(2.5);
+  float darkStone = smoothstep(0.7, 0.92, vnoise(vPos * 4.5 + 5.1)) * SEEN(0.22) * (1.0 - veg);
+  float paleStone = smoothstep(0.72, 0.94, vnoise(vPos * 7.5 + 9.4)) * SEEN(0.13) * (0.35 + gravel) * (1.0 - veg);
   base *= 1.0 + tone;
   base = mix(base, vec3(lum) * vec3(0.98, 0.96, 0.93), 0.35 * gravel);
   base = mix(base, base * vec3(1.1, 1.06, 0.98), 0.5 * sand);
-  base *= 1.0 + 0.34 * grain * (1.0 - 0.4 * veg);
-  base *= 1.0 - 0.36 * darkStone;
-  base = mix(base, vec3(0.62, 0.6, 0.56), 0.45 * paleStone);
+  base *= 1.0 + 0.17 * grain * (1.0 - 0.4 * veg);
+  base *= 1.0 - 0.08 * darkStone;
+  base = mix(base, vec3(0.62, 0.6, 0.56), 0.1 * paleStone);
 
   // Plants, as they look from above: no outlines, only a ground that is greener, darker and
   // more broken where the picture says plants grow. Irregular clumps come from fractal noise
@@ -200,21 +199,15 @@ void main() {
   float tuft = smoothstep(0.5, 0.78, vnoise(bent * 9.0 + 4.4)) * SEEN(0.12) * (0.15 + 0.85 * veg) * (1.0 - shrub);
   float shrubShadow = smoothstep(0.66 - 0.32 * cover, 0.8 - 0.32 * cover, 0.6 * fbm((bent - vec3(sun.xy, 0.0) * 0.25) * 1.3 + 2.2) + 0.4 * vnoise((bent - vec3(sun.xy, 0.0) * 0.25) * 4.2 + 6.0))
                      * SEEN(0.45) * (1.0 - shrub);
-  // Rills: where the ground slopes, water has cut thin darker lines down the slope.
-  vec2 fall = n.xy / max(length(n.xy), 1e-4);
-  float steep = smoothstep(0.03, 0.14, length(n.xy));
-  vec2 across = vec2(-fall.y, fall.x);
-  float rillNoise = vnoise(vec3(dot(vPos.xy, across) * 0.9, dot(vPos.xy, fall) * 0.07, 3.3));
-  float rill = (1.0 - smoothstep(0.0, 0.07, abs(rillNoise - 0.5))) * steep * SEEN(0.5) * (1.0 - veg);
   vec3 leaf = mix(vec3(0.1, 0.115, 0.055), vec3(0.2, 0.2, 0.1), vnoise(vPos * 5.0 + 1.9));
-  base *= 1.0 - 0.22 * rill;
   base = mix(base, mix(base * vec3(0.62, 0.7, 0.45), leaf * (0.8 + 1.1 * lum), 0.45), 0.55 * shrub);
   base *= 1.0 - 0.14 * shrubShadow;
-  base = mix(base, base * vec3(0.84, 0.9, 0.7), 0.4 * tuft);
+  base = mix(base, base * vec3(0.88, 0.93, 0.78), 0.14 * tuft);
 
   // All of it as a height in metres, so the sun models it: the picture's own brightness
-  // (weak), grain, stones, sand ripples, shrubs and tufts.
-  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.1 * shrub + 0.03 * tuft - 0.08 * rill;
+  // (weak), a little grain and the plant cover. Small stones and tufts are colour only: lit as
+  // relief, each one turns into a dark crescent and the ground looks drawn.
+  float h = lum * bump + 0.025 * grain + 0.04 * shrub;
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
@@ -238,15 +231,15 @@ void main() {
   float dust = fbm(vec3(vPos.xy * 0.16, 3.1));
   float fineGrit = (vnoise(vPos * 6.5) - 0.5) * SEEN(0.15) + 0.7 * (vnoise(vPos * 18.0) - 0.5) * SEEN(0.055);
   stone *= 0.84 + 0.34 * smoothstep(0.3, 0.7, dust) * SEEN(6.0);
-  stone *= 1.0 + 0.3 * fineGrit;
+  stone *= 1.0 + 0.14 * fineGrit;
   stone *= 1.0 + 0.16 * (rubble - 0.4) * (0.5 + vnoise(swept * 2.4));
-  stone *= 1.0 + 0.14 * (chip - 0.3);
+  stone *= 1.0 + 0.07 * (chip - 0.3);
 
   vec3 colour = base;
   // The rock itself is rough: blocks a metre or two across with sharper small breaks, read
   // as a height and lit like the fine relief of the picture.
   float hr = 0.45 * (1.0 - 0.6 * level) * fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)) + 0.12 * vnoise(vPos * 2.6) + 0.04 * vnoise(vPos * 9.0)
-           + 0.06 * rubble + 0.02 * chip + 0.04 * fineGrit;
+           + 0.012 * rubble + 0.008 * fineGrit;
   vec3 rockGradient = sign(det) * (dFdx(hr) * r1 + dFdy(hr) * r2);
   vec3 rough = normalize(abs(det) * normalize(mix(n, facet, 0.6)) - rockGradient);
   stone *= 0.86 + 0.28 * smoothstep(0.25, 0.75, fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)));
@@ -287,9 +280,9 @@ export function TerrainMaterial({
           haze: { value: new Color(HORIZON) },
           hazeLength: { value: HAZE_LENGTH },
           opacity: { value: 1 },
-          bump: { value: 0.9 },
+          bump: { value: 0.45 },
           texel: { value: new Vector2(1 / 2048, 1 / 2048) },
-          sharpen: { value: 1.0 },
+          sharpen: { value: 0.55 },
         },
         side: DoubleSide,
         clipping: true,
