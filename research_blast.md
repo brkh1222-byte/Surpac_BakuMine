@@ -1088,6 +1088,12 @@ contrast and embossing. Now: irregular texture 1 to 3 m across (fractal noise, 1
 per-pixel sensor grain of 3.5 % is laid over the ground; the picture's brightness is read as relief only up
 close; sharpening, contrast and saturation are lower (1.02 to 1.04).
 
+Thirteenth pass (task B25), after the owner's review ("wide view still painted"): the picture itself is soft and
+renders plants as smooth bluish-green smears. For the wide view only: irregular bush specks one to two metres
+across with a shadow beside them, following the plant cover, drawn when a pixel covers more than about 0.1 to
+0.26 m and fading out as the camera comes close; stronger mottling at 0.9, 1.8 and 5 m; plant areas turned from
+the picture's bluish green to olive (38 % towards olive at full cover).
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

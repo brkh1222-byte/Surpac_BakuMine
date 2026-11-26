@@ -184,7 +184,7 @@ void main() {
   // From a few hundred metres the fine grain is too small to see and the magnified picture
   // is all soft blots, like a watercolour. Texture one to three metres across, irregular and
   // weak, fills that range the way real ground does.
-  float middle = 0.16 * (fbm(vPos * 0.55 + 1.0) - 0.5) * SEEN(1.6) + 0.12 * (fbm(vPos * 1.15 + 2.0) - 0.5) * SEEN(0.8);
+  float middle = 0.14 * (fbm(vPos * 0.2 + 4.0) - 0.5) * SEEN(4.5) + 0.24 * (fbm(vPos * 0.55 + 1.0) - 0.5) * SEEN(1.6) + 0.18 * (fbm(vPos * 1.15 + 2.0) - 0.5) * SEEN(0.8);
   base *= 1.0 + middle;
   base = mix(base, vec3(lum) * vec3(0.98, 0.96, 0.93), 0.35 * gravel);
   base = mix(base, base * vec3(1.1, 1.06, 0.98), 0.5 * sand);
@@ -205,8 +205,23 @@ void main() {
   float shrubShadow = smoothstep(0.66 - 0.32 * cover, 0.8 - 0.32 * cover, 0.6 * fbm((bent - vec3(sun.xy, 0.0) * 0.25) * 1.3 + 2.2) + 0.4 * vnoise((bent - vec3(sun.xy, 0.0) * 0.25) * 4.2 + 6.0))
                      * SEEN(0.45) * (1.0 - shrub);
   vec3 leaf = mix(vec3(0.1, 0.115, 0.055), vec3(0.2, 0.2, 0.1), vnoise(vPos * 5.0 + 1.9));
+  // The satellite renders plants in a bluish green; dry steppe is olive.
+  base = mix(base, lum * vec3(1.04, 1.07, 0.72), 0.38 * veg);
+  // From far above, bushes are small dark specks with a shadow beside them, and that speckle
+  // is what makes ground look real at that height. They are irregular (noise read through
+  // noise), a metre or two across, follow the plant cover, and fade out when the camera
+  // comes close, where separate shapes would look drawn.
+  float far = smoothstep(0.1, 0.26, fp);
+  float seenSpeck = smoothstep(0.6 * fp, 1.8 * fp, 1.3);
+  vec3 drift = vPos + 1.4 * vec3(vnoise(vPos * 0.5 + 3.0) - 0.5, vnoise(vPos * 0.5 + 9.0) - 0.5, 0.0);
+  float limit = mix(0.72, 0.5, clamp(1.6 * cover, 0.0, 1.0));
+  float speck = smoothstep(limit, limit + 0.07, 0.55 * fbm(drift * 0.85 + 6.3) + 0.45 * vnoise(drift * 2.3 + 1.1)) * far * seenSpeck;
+  vec3 beside = drift - vec3(sun.xy, 0.0) * 0.6;
+  float speckShadow = smoothstep(limit, limit + 0.07, 0.55 * fbm(beside * 0.85 + 6.3) + 0.45 * vnoise(beside * 2.3 + 1.1)) * far * seenSpeck * (1.0 - speck);
   base = mix(base, mix(base * vec3(0.62, 0.7, 0.45), leaf * (0.8 + 1.1 * lum), 0.45), 0.4 * shrub);
   base *= 1.0 - 0.14 * shrubShadow;
+  base = mix(base, leaf * (0.75 + 1.1 * lum), 0.62 * speck);
+  base *= 1.0 - 0.2 * speckShadow;
   base = mix(base, base * vec3(0.88, 0.93, 0.78), 0.14 * tuft);
 
   // All of it as a height in metres, so the sun models it: the picture's own brightness
