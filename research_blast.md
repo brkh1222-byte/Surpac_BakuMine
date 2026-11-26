@@ -1069,6 +1069,13 @@ Ninth pass (task B21):
   stand where plants are dense.
 - **Rills.** On slopes, thin darker lines run down the slope (noise stretched along the fall line).
 
+Tenth pass (task B22), after the owner's review ("random green pits", "green circle like stuff"): every round
+shape is gone. Plants are no longer separate discs in cells but irregular soft clumps (fractal noise read through
+a second noise, blended in at about half strength, almost flat), covering 2 % of bare ground up to 50 % where the
+picture is green, so the proportion of soil and green of the picture is kept. The floor of the cut has irregular
+rubble patches and chips in place of round blocks. The 3-D ball shrubs and cone tufts are removed; small stones
+stay. The cell-plant rule of the seventh pass and the large bushes of the ninth are no longer used.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

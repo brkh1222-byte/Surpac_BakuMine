@@ -83,34 +83,6 @@ float fbm(vec3 p) {
 }
 `
 
-/**
- * Separate plants: the plane is cut into square cells; a cell holds a plant with probability
- * `chance`, at a random place in it with a random radius. Returns 1 inside the plant nearest
- * to `p`, falling to 0 at its edge.
- */
-const PLANTS = /* glsl */ `
-float cellHash(vec2 c) {
-  return fract(sin(dot(c, vec2(41.3, 289.1))) * 24634.6345);
-}
-vec2 cellHash2(vec2 c) {
-  return fract(sin(vec2(dot(c, vec2(127.1, 311.7)), dot(c, vec2(269.5, 183.3)))) * 43758.5453);
-}
-float plants(vec2 p, float cell, float chance) {
-  vec2 g = floor(p / cell);
-  float best = 0.0;
-  for (int i = -1; i <= 1; i++) {
-    for (int j = -1; j <= 1; j++) {
-      vec2 c = g + vec2(float(i), float(j));
-      if (cellHash(c) > chance) continue;
-      vec2 centre = (c + 0.2 + 0.6 * cellHash2(c)) * cell;
-      float radius = cell * (0.16 + 0.26 * cellHash(c + 17.0));
-      best = max(best, 1.0 - smoothstep(0.5, 1.0, length(p - centre) / radius));
-    }
-  }
-  return best;
-}
-`
-
 /** Shade under the clouds: soft darker patches a few hundred metres across, fixed on the ground. */
 const CLOUD_SHADE = /* glsl */ `
 float cloudShade(vec2 xy) {
@@ -160,7 +132,6 @@ varying float vDist;
 #include <clipping_planes_pars_fragment>
 ${NOISE}
 ${CLOUD_SHADE}
-${PLANTS}
 void main() {
   #include <clipping_planes_fragment>
   vec3 n = normalize(vNormal);
@@ -217,35 +188,33 @@ void main() {
   base *= 1.0 - 0.36 * darkStone;
   base = mix(base, vec3(0.62, 0.6, 0.56), 0.45 * paleStone);
 
-  // Plants: separate shrubs up to a metre and a half across, many where the picture is green
-  // and few on bare ground, each with its shadow on the side away from the sun; grass tufts
-  // between them.
-  vec2 wobble = 0.16 * vec2(vnoise(vPos * 4.0) - 0.5, vnoise(vPos * 4.0 + 9.0) - 0.5); // ragged outlines
-  // Plants stand in groups: their number changes over tens of metres.
-  float stand = 0.35 + 1.5 * smoothstep(0.3, 0.75, fbm(vPos * 0.045 + 8.8));
-  float chance = clamp(mix(0.03, 0.55, veg) * stand, 0.0, 0.9);
-  float shrub = plants(vPos.xy + wobble, 1.7, chance) * SEEN(0.8);
-  float shrubShadow = plants(vPos.xy + wobble - sun.xy * 0.55, 1.7, chance) * SEEN(0.8) * (1.0 - shrub);
-  float bush = plants(vPos.xy + 2.0 * wobble + 40.0, 4.6, clamp(0.5 * veg * stand - 0.08, 0.0, 0.6)) * SEEN(2.0);
-  float bushShadow = plants(vPos.xy + 2.0 * wobble + 40.0 - sun.xy * 1.2, 4.6, clamp(0.5 * veg * stand - 0.08, 0.0, 0.6)) * SEEN(2.0) * (1.0 - bush);
-  shrub = max(shrub, bush);
-  shrubShadow = max(shrubShadow * (1.0 - bush), bushShadow);
-  float tuft = plants(vPos.xy + 0.3 * wobble, 0.42, clamp(mix(0.05, 0.5, veg) * stand, 0.0, 0.9)) * SEEN(0.2) * (1.0 - shrub);
+  // Plants, as they look from above: no outlines, only a ground that is greener, darker and
+  // more broken where the picture says plants grow. Irregular clumps come from fractal noise
+  // read through a second noise (so no shape repeats and none is round); they are blended in
+  // softly and stay low, so the sun does not emboss them.
+  vec3 bent = vPos + 0.9 * vec3(vnoise(vPos * 0.8 + 4.1) - 0.5, vnoise(vPos * 0.8 + 12.6) - 0.5, 0.0);
+  float stand = 0.5 + smoothstep(0.3, 0.75, fbm(vPos * 0.045 + 8.8));
+  float cover = clamp(mix(0.02, 0.5, veg) * stand, 0.0, 0.7); // share of the ground under plants
+  float clumpNoise = 0.6 * fbm(bent * 1.3 + 2.2) + 0.4 * vnoise(bent * 4.2 + 6.0);
+  float shrub = smoothstep(0.66 - 0.32 * cover, 0.8 - 0.32 * cover, clumpNoise) * SEEN(0.45);
+  float tuft = smoothstep(0.5, 0.78, vnoise(bent * 9.0 + 4.4)) * SEEN(0.12) * (0.15 + 0.85 * veg) * (1.0 - shrub);
+  float shrubShadow = smoothstep(0.66 - 0.32 * cover, 0.8 - 0.32 * cover, 0.6 * fbm((bent - vec3(sun.xy, 0.0) * 0.25) * 1.3 + 2.2) + 0.4 * vnoise((bent - vec3(sun.xy, 0.0) * 0.25) * 4.2 + 6.0))
+                     * SEEN(0.45) * (1.0 - shrub);
   // Rills: where the ground slopes, water has cut thin darker lines down the slope.
   vec2 fall = n.xy / max(length(n.xy), 1e-4);
   float steep = smoothstep(0.03, 0.14, length(n.xy));
   vec2 across = vec2(-fall.y, fall.x);
   float rillNoise = vnoise(vec3(dot(vPos.xy, across) * 0.9, dot(vPos.xy, fall) * 0.07, 3.3));
   float rill = (1.0 - smoothstep(0.0, 0.07, abs(rillNoise - 0.5))) * steep * SEEN(0.5) * (1.0 - veg);
-  vec3 leaf = mix(vec3(0.085, 0.1, 0.045), vec3(0.16, 0.17, 0.075), vnoise(vPos * 5.0 + 1.9));
+  vec3 leaf = mix(vec3(0.1, 0.115, 0.055), vec3(0.2, 0.2, 0.1), vnoise(vPos * 5.0 + 1.9));
   base *= 1.0 - 0.22 * rill;
-  base = mix(base, leaf * (0.7 + 1.2 * lum), 0.8 * shrub);
-  base *= 1.0 - 0.34 * shrubShadow;
-  base = mix(base, base * vec3(0.8, 0.88, 0.62), 0.55 * tuft);
+  base = mix(base, mix(base * vec3(0.62, 0.7, 0.45), leaf * (0.8 + 1.1 * lum), 0.45), 0.55 * shrub);
+  base *= 1.0 - 0.14 * shrubShadow;
+  base = mix(base, base * vec3(0.84, 0.9, 0.7), 0.4 * tuft);
 
   // All of it as a height in metres, so the sun models it: the picture's own brightness
   // (weak), grain, stones, sand ripples, shrubs and tufts.
-  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.5 * shrub + 0.6 * bush + 0.1 * tuft - 0.08 * rill;
+  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.1 * shrub + 0.03 * tuft - 0.08 * rill;
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
@@ -260,25 +229,24 @@ void main() {
   float grit = 0.6 * fbm(vPos * 2.5) + 0.4 * vnoise(vPos * 11.0);
   vec3 stone = vTint * (0.82 + 0.36 * bands) * (0.88 + 0.24 * patches) * (0.84 + 0.32 * grit);
 
-  // The floor of a cut is not a clean slab: loose blocks and smaller stones lie on it, each
-  // with its shadow, on grit and dust that changes tone over a few metres.
+  // The floor of a cut is not a clean slab: irregular patches of rubble and chips lie on
+  // grit and dust that changes tone over a few metres. No shape is round or outlined.
   float level = smoothstep(0.6, 0.88, facet.z);
-  float block = plants(vPos.xy, 1.1, 0.42) * SEEN(0.5) * level;
-  float blockShadow = plants(vPos.xy - sun.xy * 0.3, 1.1, 0.42) * SEEN(0.5) * level * (1.0 - block);
-  float chip = plants(vPos.xy + 3.3, 0.33, 0.55) * SEEN(0.16) * level * (1.0 - block);
+  vec3 swept = vPos + 0.7 * vec3(vnoise(vPos * 1.1 + 2.0) - 0.5, vnoise(vPos * 1.1 + 8.0) - 0.5, 0.0);
+  float rubble = smoothstep(0.56, 0.74, 0.6 * fbm(swept * 1.6 + 5.5) + 0.4 * vnoise(swept * 5.0 + 1.2)) * SEEN(0.4) * level;
+  float chip = smoothstep(0.62, 0.8, vnoise(swept * 11.0 + 3.3)) * SEEN(0.1) * level;
   float dust = fbm(vec3(vPos.xy * 0.16, 3.1));
   float fineGrit = (vnoise(vPos * 6.5) - 0.5) * SEEN(0.15) + 0.7 * (vnoise(vPos * 18.0) - 0.5) * SEEN(0.055);
   stone *= 0.84 + 0.34 * smoothstep(0.3, 0.7, dust) * SEEN(6.0);
   stone *= 1.0 + 0.3 * fineGrit;
-  stone = mix(stone, vTint * mix(vec3(0.72, 0.7, 0.66), vec3(1.2, 1.17, 1.1), cellHash(floor(vPos.xy / 1.1) + 5.0)), 0.85 * block);
-  stone *= 1.0 - 0.38 * blockShadow;
-  stone = mix(stone, vTint * mix(vec3(0.66), vec3(1.22), cellHash(floor((vPos.xy + 3.3) / 0.33))), 0.6 * chip);
+  stone *= 1.0 + 0.16 * (rubble - 0.4) * (0.5 + vnoise(swept * 2.4));
+  stone *= 1.0 + 0.14 * (chip - 0.3);
 
   vec3 colour = base;
   // The rock itself is rough: blocks a metre or two across with sharper small breaks, read
   // as a height and lit like the fine relief of the picture.
   float hr = 0.45 * (1.0 - 0.6 * level) * fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)) + 0.12 * vnoise(vPos * 2.6) + 0.04 * vnoise(vPos * 9.0)
-           + 0.35 * block + 0.1 * chip + 0.05 * fineGrit;
+           + 0.06 * rubble + 0.02 * chip + 0.04 * fineGrit;
   vec3 rockGradient = sign(det) * (dFdx(hr) * r1 + dFdy(hr) * r2);
   vec3 rough = normalize(abs(det) * normalize(mix(n, facet, 0.6)) - rockGradient);
   stone *= 0.86 + 0.28 * smoothstep(0.25, 0.75, fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)));

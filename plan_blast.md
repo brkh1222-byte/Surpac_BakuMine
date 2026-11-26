@@ -125,6 +125,7 @@ that are not finite are written as `null`.
 | B19 | Site view, seventh pass: drone-level ground from above (detail synthesised at every viewing height from the picture's colour: soil grain, gravel, sand, stones, separate shrubs with shadows, grass) | orchestrator | B18 | seen from above at three heights in the browser without shader errors; existing tests |
 | B20 | Site view, eighth pass: loose rock, grit and dust tone on the floor of the cut | orchestrator | B19 | seen from above in the browser without shader errors; existing tests |
 | B21 | Site view, ninth pass: camera shake removed (owner's request); ragged edges of ground cover, satellite veil off, plants in groups with large bushes, rills on slopes | orchestrator | B20 | seen from above in the browser without shader errors; tests without the tremble |
+| B22 | Site view, tenth pass (owner's review): no round plants or stones; irregular soft plant cover in the picture's proportions, irregular rubble on the cut floor, 3-D shrubs and tufts removed | orchestrator | B21 | seen from above at two heights in the browser without shader errors; existing tests |
 
 Parallel waves: W1 = B2, B3, B4, B6 (fixture-driven), B7 research. W2 = B5. W3 = B6 wiring to the API, B8.
 Agents do not commit and do not run the full `make check`; they run their own tests and ruff on their files.

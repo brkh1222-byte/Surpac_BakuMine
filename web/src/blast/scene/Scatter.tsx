@@ -1,12 +1,12 @@
 /**
- * Loose stones, low shrubs and dry grass tufts on the ground near the blast and around the equipment. They
+ * Loose stones on the ground near the blast and around the equipment. They
  * are invented scenery (no survey of them exists): they give the flat satellite picture
  * depth and a sense of scale when the camera is close. Their places come from a fixed
  * pseudo-random sequence; none is put on the cut bench or the muckpile area.
  */
 import { useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
-import { Color, ConeGeometry, IcosahedronGeometry, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3, type BufferGeometry } from 'three'
+import { Color, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3, type BufferGeometry } from 'three'
 import type { LayerProps } from './common'
 import { blastCentre, equipmentSites, hash01 } from './realism'
 import { rockGeometry } from './Throw'
@@ -15,12 +15,8 @@ import { useTopography } from './topography'
 /** Stones and shrubs are scattered within these radii, m. */
 const NEAR_BLAST_M = 280
 const NEAR_EQUIPMENT_M = 110
-const STONES = 4200
-const SHRUBS = 3000
+const STONES = 2600
 const STONE_TONES = ['#8a8378', '#75695b', '#9c9488', '#5f5a53'] as const
-const TUFTS = 7000
-const TUFT_TONES = ['#b3a36c', '#c2b27a', '#9c9160', '#a89a58'] as const
-const SHRUB_TONES = ['#6d7150', '#7c7956', '#5d6446', '#8a8362'] as const
 
 export function Scatter({ bundle, origin }: LayerProps) {
   const invalidate = useThree((s) => s.invalidate)
@@ -61,7 +57,7 @@ export function Scatter({ bundle, origin }: LayerProps) {
         if (hash01(i, salt + 3) > 0.55 + 0.4 * patch) continue
         const z = topography.heightAt(x, y)
         if (!Number.isFinite(z)) continue
-        const size = kind === 'tuft' ? 0.04 + 0.06 * hash01(i, salt + 4) : shrub ? 0.14 + 0.3 * hash01(i, salt + 4) ** 2 : 0.05 + 0.4 * hash01(i, salt + 4) ** 4
+        const size = kind === 'tuft' ? 0.04 + 0.06 * hash01(i, salt + 4) : shrub ? 0.14 + 0.3 * hash01(i, salt + 4) ** 2 : 0.04 + 0.3 * hash01(i, salt + 4) ** 5
         scale.set(size * (0.8 + 0.5 * hash01(i, salt + 5)), size * (0.8 + 0.5 * hash01(i, salt + 6)), size * (kind === 'tuft' ? 2.0 + 1.6 * hash01(i, salt + 10) : shrub ? 0.7 : 0.6))
         q.setFromAxisAngle(up, hash01(i, salt + 7) * Math.PI * 2)
         position.set(x - origin[0], y - origin[1], z - origin[2] + scale.z * (kind === 'tuft' ? 0.45 : shrub ? 0.55 : 0.3))
@@ -78,13 +74,8 @@ export function Scatter({ bundle, origin }: LayerProps) {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
       return mesh
     }
-    // A grass tuft: a narrow five-sided cone standing on its base (z up).
-    const tuft = new ConeGeometry(0.5, 1, 5).rotateX(Math.PI / 2)
-    return [
-      make(STONES, 100, rockGeometry(), STONE_TONES, 'stone'),
-      make(SHRUBS, 200, new IcosahedronGeometry(1, 1), SHRUB_TONES, 'shrub'),
-      make(TUFTS, 300, tuft, TUFT_TONES, 'tuft'),
-    ]
+    // Stones only: from above, ball-shaped shrubs and cone tufts read as dots, not plants.
+    return [make(STONES, 100, rockGeometry(), STONE_TONES, 'stone')]
   }, [bundle, origin, topography])
 
   useEffect(() => {
