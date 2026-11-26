@@ -152,14 +152,14 @@ void main() {
   // Unsharp mask: the picture minus its local mean, added back, makes edges crisper.
   vec3 mean = 0.25 * (texture2D(map, uv + vec2(texel.x, 0.0)).rgb + texture2D(map, uv - vec2(texel.x, 0.0)).rgb
                     + texture2D(map, uv + vec2(0.0, texel.y)).rgb + texture2D(map, uv - vec2(0.0, texel.y)).rgb);
-  base = clamp(base + sharpen * (base - mean), 0.0, 1.0);
+  base = clamp(base + sharpen * (0.35 + 0.65 * ragged) * (base - mean), 0.0, 1.0);
   // A satellite looks through the whole atmosphere: its picture has a pale bluish veil and
   // flat colours. A drone at a hundred metres has neither: the veil is taken off, and
   // contrast and colour are raised.
   base = max(base - vec3(0.006, 0.009, 0.016), 0.0) * 1.04;
   float lum0 = dot(base, vec3(0.299, 0.587, 0.114));
-  base = clamp(mix(vec3(lum0), base, 1.08), 0.0, 1.0);
-  base = clamp((base - 0.2) * 1.06 + 0.2, 0.0, 1.0);
+  base = clamp(mix(vec3(lum0), base, 1.04), 0.0, 1.0);
+  base = clamp((base - 0.2) * 1.02 + 0.2, 0.0, 1.0);
 
   // ---- Drone-level detail -------------------------------------------------------------
   // The satellite picture gives the colour of the ground at about a metre; everything finer
@@ -181,6 +181,11 @@ void main() {
   float darkStone = smoothstep(0.7, 0.92, vnoise(vPos * 4.5 + 5.1)) * SEEN(0.22) * (1.0 - veg);
   float paleStone = smoothstep(0.72, 0.94, vnoise(vPos * 7.5 + 9.4)) * SEEN(0.13) * (0.35 + gravel) * (1.0 - veg);
   base *= 1.0 + tone;
+  // From a few hundred metres the fine grain is too small to see and the magnified picture
+  // is all soft blots, like a watercolour. Texture one to three metres across, irregular and
+  // weak, fills that range the way real ground does.
+  float middle = 0.16 * (fbm(vPos * 0.55 + 1.0) - 0.5) * SEEN(1.6) + 0.12 * (fbm(vPos * 1.15 + 2.0) - 0.5) * SEEN(0.8);
+  base *= 1.0 + middle;
   base = mix(base, vec3(lum) * vec3(0.98, 0.96, 0.93), 0.35 * gravel);
   base = mix(base, base * vec3(1.1, 1.06, 0.98), 0.5 * sand);
   base *= 1.0 + 0.17 * grain * (1.0 - 0.4 * veg);
@@ -200,14 +205,16 @@ void main() {
   float shrubShadow = smoothstep(0.66 - 0.32 * cover, 0.8 - 0.32 * cover, 0.6 * fbm((bent - vec3(sun.xy, 0.0) * 0.25) * 1.3 + 2.2) + 0.4 * vnoise((bent - vec3(sun.xy, 0.0) * 0.25) * 4.2 + 6.0))
                      * SEEN(0.45) * (1.0 - shrub);
   vec3 leaf = mix(vec3(0.1, 0.115, 0.055), vec3(0.2, 0.2, 0.1), vnoise(vPos * 5.0 + 1.9));
-  base = mix(base, mix(base * vec3(0.62, 0.7, 0.45), leaf * (0.8 + 1.1 * lum), 0.45), 0.55 * shrub);
+  base = mix(base, mix(base * vec3(0.62, 0.7, 0.45), leaf * (0.8 + 1.1 * lum), 0.45), 0.4 * shrub);
   base *= 1.0 - 0.14 * shrubShadow;
   base = mix(base, base * vec3(0.88, 0.93, 0.78), 0.14 * tuft);
 
   // All of it as a height in metres, so the sun models it: the picture's own brightness
   // (weak), a little grain and the plant cover. Small stones and tufts are colour only: lit as
   // relief, each one turns into a dark crescent and the ground looks drawn.
-  float h = lum * bump + 0.025 * grain + 0.04 * shrub;
+  // The picture's own brightness is read as relief only up close: from afar it embosses
+  // every blot of the picture.
+  float h = lum * bump * SEEN(1.2) + 0.025 * grain + 0.04 * shrub + 0.05 * middle;
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
@@ -248,10 +255,12 @@ void main() {
   colour *= clamp(1.0 + 0.85 * (dot(nn, sun) - sun.z), 0.5, 1.35);
   // A slightly firmer picture: more contrast about mid grey and a little more colour.
   float grey = dot(colour, vec3(0.299, 0.587, 0.114));
-  colour = mix(vec3(grey), colour, 1.06);
-  colour = clamp((colour - 0.18) * 1.05 + 0.18, 0.0, 1.0);
+  colour = mix(vec3(grey), colour, 1.03);
+  colour = clamp((colour - 0.18) * 1.03 + 0.18, 0.0, 1.0);
   colour *= cloudShade(vPos.xy);
   colour = mix(colour, haze, 1.0 - exp(-vDist / hazeLength));
+  // Sensor grain, per pixel of the screen: a photograph is never perfectly smooth.
+  colour *= 1.0 + 0.035 * (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);
   gl_FragColor = vec4(colour, opacity);
   #include <colorspace_fragment>
 }

@@ -1082,6 +1082,12 @@ grain 17 % (was 34 %); rills and sand ripples are removed (they drew thin lines 
 and tufts change colour only and are no longer lit as relief (lit, each became a dark crescent). What remains:
 tone drifting over metres, gravel and sand patches, soft grain, faint stones, irregular soft plant cover.
 
+Twelfth pass (task B24), after the owner's review ("from an extended view it just looks painted"): from a few
+hundred metres the fine detail is below a pixel and the magnified picture showed as soft blots with raised
+contrast and embossing. Now: irregular texture 1 to 3 m across (fractal noise, 12 to 16 %) fills that range; a
+per-pixel sensor grain of 3.5 % is laid over the ground; the picture's brightness is read as relief only up
+close; sharpening, contrast and saturation are lower (1.02 to 1.04).
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
