@@ -4,8 +4,9 @@
  * API serves one, the project's topography mesh underneath.
  */
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BufferAttribute, BufferGeometry, DoubleSide, Plane, Vector3, type Texture } from 'three'
+import { fetchManifest, fetchMesh, type MeshData } from '../../api/client'
 import { worldToScene } from '../../scene/origin'
 import { useViewer } from '../../state/store'
 import { uvArray, useSatelliteTexture, type ImageryPlan } from '../imagery'
@@ -14,7 +15,7 @@ import { useBlast } from '../state'
 import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
 import { ShadowCatcher } from './Effects'
-import { cutRock, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
+import { cutRock, FarTerrainMaterial, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
 import { reliefWeight } from './realism'
 import { useTopography } from './topography'
 
@@ -340,5 +341,66 @@ export function TerrainDetail({ bundle, origin }: LayerProps) {
         </group>
       ))}
     </>
+  )
+}
+
+/**
+ * Far terrain (site view): a project surface named "backdrop" (the elevation model over a
+ * much wider area at a coarse spacing) drawn around the detailed topography, so the view
+ * has real hills out to the horizon and not an edge.
+ */
+export function Backdrop({ bundle, origin }: LayerProps) {
+  const invalidate = useThree((s) => s.invalidate)
+  const satellite = useSatellite()
+  const topography = useTopography(bundle, origin)
+  const [mesh, setMesh] = useState<MeshData | null>(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    ;(async () => {
+      try {
+        const manifest = await fetchManifest(controller.signal)
+        const pick = manifest.objects.find((o) => o.kind === 'mesh' && o.category === 'surfaces' && /backdrop/i.test(o.name))
+        if (!pick) return
+        const data = await fetchMesh(pick, controller.signal)
+        if (!controller.signal.aborted) setMesh(data)
+      } catch {
+        // No such surface: the view ends at the detailed topography.
+      }
+    })()
+    return () => controller.abort()
+  }, [bundle])
+  const built = useMemo(() => {
+    if (!mesh || !topography) return null
+    const g = new BufferGeometry()
+    const position = worldToScene(mesh.vertices, origin)
+    g.setAttribute('position', new BufferAttribute(position, 3))
+    g.setIndex(new BufferAttribute(mesh.faces, 1))
+    if (mesh.normals) g.setAttribute('normal', new BufferAttribute(mesh.normals, 3))
+    else g.computeVertexNormals()
+    // The detailed topography's plan box, a little smaller so the two overlap and leave no gap.
+    const v = topography.mesh.vertices
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (let i = 0; i < v.length; i += 3) {
+      x0 = Math.min(x0, v[i])
+      x1 = Math.max(x1, v[i])
+      y0 = Math.min(y0, v[i + 1])
+      y1 = Math.max(y1, v[i + 1])
+    }
+    const inset = 40
+    const inner: [number, number, number, number] = [x0 + inset - origin[0], y0 + inset - origin[1], x1 - inset - origin[0], y1 - inset - origin[1]]
+    return { g, inner }
+  }, [mesh, topography, origin])
+  useEffect(() => {
+    invalidate()
+    return () => built?.g.dispose()
+  }, [built, invalidate])
+  if (!built || !satellite) return null
+  return (
+    <mesh geometry={built.g} renderOrder={0}>
+      <FarTerrainMaterial texture={satellite.texture} inner={built.inner} />
+    </mesh>
   )
 }

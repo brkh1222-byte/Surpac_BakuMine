@@ -1027,6 +1027,15 @@ Fifth pass (task B17): fair-weather clouds (fractal noise on a flat layer, lit o
 glow, rough relief on rock faces (noise read as height, lit), a larger dust cloud (18 puffs per hole, rising
 faster), and a slightly firmer picture (contrast 1.08 about mid grey, saturation 1.12). All choices for looks.
 
+Sixth pass (task B18):
+
+- **Far terrain.** A project surface whose name contains "backdrop" (the elevation model over 12 km at 60 m
+  spacing, with the same vertical shift as the topography) is drawn around the detailed terrain, so the view has
+  the real hills out to the horizon. It has no picture: it takes the mean colour of the satellite mosaic in broad
+  invented patches, the same relief shading, and the haze. It is not drawn inside the detailed terrain.
+- **Cloud shade.** Soft patches a few hundred metres across darken the ground by up to 20 %. They are fixed noise
+  on the ground and are not the shadows of the clouds drawn in the sky.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

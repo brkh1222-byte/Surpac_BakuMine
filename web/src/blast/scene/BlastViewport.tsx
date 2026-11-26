@@ -18,7 +18,7 @@ import { Damage } from './Damage'
 import { Dust } from './Dust'
 import { BlastShadows, BlastSound, Flashes, Shake, StayAboveGround } from './Effects'
 import { Equipment } from './Equipment'
-import { ContextGround, Muckpile, TerrainDetail, Topography } from './Ground'
+import { Backdrop, ContextGround, Muckpile, TerrainDetail, Topography } from './Ground'
 import { Holes } from './Holes'
 import { PpvMap } from './PpvMap'
 import { AirblastRings, FlyrockRings, Monitors } from './Rings'
@@ -162,6 +162,7 @@ function Layers({ bundle, origin }: LayerProps) {
       {realistic && <Sky />}
       {topography && <Topography bundle={bundle} origin={origin} />}
       {topography && realistic && <TerrainDetail bundle={bundle} origin={origin} />}
+      {topography && realistic && <Backdrop bundle={bundle} origin={origin} />}
       {layers.ground && !topography && <ContextGround bundle={bundle} origin={origin} />}
       {layers.damage && <Damage bundle={bundle} origin={origin} />}
       {layers.holes && <Holes bundle={bundle} origin={origin} />}

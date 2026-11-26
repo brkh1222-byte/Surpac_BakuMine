@@ -20,7 +20,7 @@
  */
 import { useThree } from '@react-three/fiber'
 import { useEffect, useMemo } from 'react'
-import { BackSide, Color, DoubleSide, ShaderMaterial, Vector2, Vector3, type Plane, type Texture } from 'three'
+import { BackSide, Color, DoubleSide, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, Vector4, type Plane, type Texture } from 'three'
 
 /** Direction to the sun, scene axes (x east, y north, z up). */
 export const SUN: readonly [number, number, number] = [0.5, -0.5, Math.SQRT1_2]
@@ -80,6 +80,14 @@ float fbm(vec3 p) {
 }
 `
 
+/** Shade under the clouds: soft darker patches a few hundred metres across, fixed on the ground. */
+const CLOUD_SHADE = /* glsl */ `
+float cloudShade(vec2 xy) {
+  float cover = 0.6 * fbm(vec3(xy * 0.0017, 1.7)) + 0.4 * fbm(vec3(xy * 0.0052, 4.2));
+  return 1.0 - 0.2 * smoothstep(0.5, 0.7, cover);
+}
+`
+
 const VERTEX = /* glsl */ `
 attribute vec3 color;
 attribute float rock;
@@ -120,6 +128,7 @@ varying float vRock;
 varying float vDist;
 #include <clipping_planes_pars_fragment>
 ${NOISE}
+${CLOUD_SHADE}
 void main() {
   #include <clipping_planes_fragment>
   vec3 n = normalize(vNormal);
@@ -184,6 +193,7 @@ void main() {
   float grey = dot(colour, vec3(0.299, 0.587, 0.114));
   colour = mix(vec3(grey), colour, 1.12);
   colour = clamp((colour - 0.18) * 1.08 + 0.18, 0.0, 1.0);
+  colour *= cloudShade(vPos.xy);
   colour = mix(colour, haze, 1.0 - exp(-vDist / hazeLength));
   gl_FragColor = vec4(colour, opacity);
   #include <colorspace_fragment>
@@ -306,4 +316,101 @@ export function Sky() {
       <sphereGeometry args={[1, 32, 16]} />
     </mesh>
   )
+}
+
+const FAR_VERTEX = /* glsl */ `
+varying vec3 vPos;
+varying vec3 vNormal;
+varying float vDist;
+void main() {
+  vPos = position;
+  vNormal = normal;
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vDist = length(mvPosition.xyz);
+  gl_Position = projectionMatrix * mvPosition;
+}
+`
+
+const FAR_FRAGMENT = /* glsl */ `
+uniform vec3 ground;
+uniform vec3 sun;
+uniform vec3 haze;
+uniform float hazeLength;
+uniform vec4 inner;   // xmin, ymin, xmax, ymax of the detailed terrain: not drawn there
+varying vec3 vPos;
+varying vec3 vNormal;
+varying float vDist;
+${NOISE}
+${CLOUD_SHADE}
+void main() {
+  if (vPos.x > inner.x && vPos.x < inner.z && vPos.y > inner.y && vPos.y < inner.w) discard;
+  vec3 n = normalize(vNormal);
+  if (n.z < 0.0) n = -n;
+  // The mean colour of the satellite picture, in broad paler and greener patches.
+  float tone = fbm(vec3(vPos.xy * 0.0021, 2.3));
+  float fine = fbm(vec3(vPos.xy * 0.012, 6.1));
+  vec3 colour = ground * mix(vec3(0.9, 0.94, 0.86), vec3(1.12, 1.06, 0.98), smoothstep(0.3, 0.7, tone)) * (0.9 + 0.2 * fine);
+  colour *= clamp(1.0 + 1.1 * (dot(n, sun) - sun.z), 0.5, 1.35);
+  colour *= cloudShade(vPos.xy);
+  colour = mix(colour, haze, 1.0 - exp(-vDist / hazeLength));
+  gl_FragColor = vec4(colour, 1.0);
+  #include <colorspace_fragment>
+}
+`
+
+/** Mean colour of a mosaic canvas (linear), for ground beyond the picture. */
+function meanColour(texture: Texture): Color {
+  const out = new Color('#a39478')
+  try {
+    const small = document.createElement('canvas')
+    small.width = 8
+    small.height = 8
+    const context = small.getContext('2d')
+    if (!context) return out
+    context.drawImage(texture.image as CanvasImageSource, 0, 0, 8, 8)
+    const data = context.getImageData(0, 0, 8, 8).data
+    let r = 0
+    let g = 0
+    let b = 0
+    for (let i = 0; i < data.length; i += 4) {
+      r += data[i]
+      g += data[i + 1]
+      b += data[i + 2]
+    }
+    const n = data.length / 4
+    out.setRGB(r / n / 255, g / n / 255, b / n / 255, SRGBColorSpace)
+  } catch {
+    // The canvas cannot be read back: the default colour stays.
+  }
+  return out
+}
+
+/**
+ * Material of the far terrain around the detailed one: real ground shape (the elevation
+ * model at a coarse spacing) without a picture. It has the mean colour of the satellite
+ * picture in broad patches, the same relief shading, cloud shade and haze, and is not drawn
+ * inside `inner` (xmin, ymin, xmax, ymax in scene coordinates), where the detailed terrain is.
+ */
+export function FarTerrainMaterial({ texture, inner }: { texture: Texture; inner: readonly [number, number, number, number] }) {
+  const material = useMemo(
+    () =>
+      new ShaderMaterial({
+        vertexShader: FAR_VERTEX,
+        fragmentShader: FAR_FRAGMENT,
+        uniforms: {
+          ground: { value: new Color() },
+          sun: { value: new Vector3(...SUN).normalize() },
+          haze: { value: new Color(HORIZON) },
+          hazeLength: { value: HAZE_LENGTH },
+          inner: { value: new Vector4() },
+        },
+        side: DoubleSide,
+      }),
+    [],
+  )
+  useEffect(() => () => material.dispose(), [material])
+  const ground = useMemo(() => meanColour(texture), [texture])
+  material.uniforms.ground.value.copy(ground)
+  material.uniforms.inner.value.set(inner[0], inner[1], inner[2], inner[3])
+  return <primitive object={material} attach="material" />
 }
