@@ -231,10 +231,25 @@ void main() {
   float grit = 0.6 * fbm(vPos * 2.5) + 0.4 * vnoise(vPos * 11.0);
   vec3 stone = vTint * (0.82 + 0.36 * bands) * (0.88 + 0.24 * patches) * (0.84 + 0.32 * grit);
 
+  // The floor of a cut is not a clean slab: loose blocks and smaller stones lie on it, each
+  // with its shadow, on grit and dust that changes tone over a few metres.
+  float level = smoothstep(0.6, 0.88, facet.z);
+  float block = plants(vPos.xy, 1.1, 0.42) * SEEN(0.5) * level;
+  float blockShadow = plants(vPos.xy - sun.xy * 0.3, 1.1, 0.42) * SEEN(0.5) * level * (1.0 - block);
+  float chip = plants(vPos.xy + 3.3, 0.33, 0.55) * SEEN(0.16) * level * (1.0 - block);
+  float dust = fbm(vec3(vPos.xy * 0.16, 3.1));
+  float fineGrit = (vnoise(vPos * 6.5) - 0.5) * SEEN(0.15) + 0.7 * (vnoise(vPos * 18.0) - 0.5) * SEEN(0.055);
+  stone *= 0.84 + 0.34 * smoothstep(0.3, 0.7, dust) * SEEN(6.0);
+  stone *= 1.0 + 0.3 * fineGrit;
+  stone = mix(stone, vTint * mix(vec3(0.72, 0.7, 0.66), vec3(1.2, 1.17, 1.1), cellHash(floor(vPos.xy / 1.1) + 5.0)), 0.85 * block);
+  stone *= 1.0 - 0.38 * blockShadow;
+  stone = mix(stone, vTint * mix(vec3(0.66), vec3(1.22), cellHash(floor((vPos.xy + 3.3) / 0.33))), 0.6 * chip);
+
   vec3 colour = base;
   // The rock itself is rough: blocks a metre or two across with sharper small breaks, read
   // as a height and lit like the fine relief of the picture.
-  float hr = 0.45 * fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)) + 0.12 * vnoise(vPos * 2.6) + 0.04 * vnoise(vPos * 9.0);
+  float hr = 0.45 * (1.0 - 0.6 * level) * fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)) + 0.12 * vnoise(vPos * 2.6) + 0.04 * vnoise(vPos * 9.0)
+           + 0.35 * block + 0.1 * chip + 0.05 * fineGrit;
   vec3 rockGradient = sign(det) * (dFdx(hr) * r1 + dFdy(hr) * r2);
   vec3 rough = normalize(abs(det) * normalize(mix(n, facet, 0.6)) - rockGradient);
   stone *= 0.86 + 0.28 * smoothstep(0.25, 0.75, fbm(vec3(vPos.xy * 0.55, vPos.z * 0.9)));

@@ -1054,6 +1054,10 @@ the metres of ground per pixel), which keeps the ground crisp without shimmer.
 All of it is invented from fixed noise and from the colour of the picture: no plant, stone or patch is where a
 real one is. It is what a drone photograph of such ground looks like, not a drone photograph of this ground.
 
+Eighth pass (task B20): the floor of the cut. Level rock gets loose blocks (cells of 1.1 m, 42 % filled) and chips
+(0.33 m, 55 %) with their shadows, grit at 15 and 5.5 cm and dust changing tone over about 6 m, with the same
+rule for what is drawn at which viewing height. Invented, like the rest of the fine ground detail.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
