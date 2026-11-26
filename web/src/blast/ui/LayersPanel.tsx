@@ -73,7 +73,7 @@ export function LayersPanel() {
               Added by the viewer for looks, not measured: relief shading, sharpening, and all ground detail finer than the picture's
               0.9 m (soil grain, gravel, sand, stones and plant cover following the picture's colours, not where real ones are),
               rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs, the two excavators, shadows (assumed sun), the flash and the sound
-              (its delay is physical, its strength is for effect).
+              (a generic blast sound that starts with the first hole).
               Near the blast and the machines the ground also gets invented low mounds and hollows (up to 0.4 m). Fragment paths, sizes and
               the clearance distance come from the simulation. The stored surface and every result are unchanged.
             </p>

@@ -170,10 +170,6 @@ export function reliefPatches(bundle: Pick<BlastBundle, 'timeline' | 'muckpile' 
   }
 }
 
-// ---- sound ---------------------------------------------------------------
-
-/** Speed of sound in air used for the delay of the rumble, m/s (about 15 degrees C). */
-export const SOUND_SPEED_M_S = 340
 // ---- equipment ---------------------------------------------------------------------
 
 /** Equipment stands this far outside the clearance radius, m. */

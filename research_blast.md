@@ -1094,6 +1094,15 @@ across with a shadow beside them, following the plant cover, drawn when a pixel 
 0.26 m and fading out as the camera comes close; stronger mottling at 0.9, 1.8 and 5 m; plant areas turned from
 the picture's bluish green to olive (38 % towards olive at full cover).
 
+Fourteenth pass (task B26), after the owner's review ("sound needs work"): the sound is rebuilt and starts with the
+first hole. It no longer waits for distance / 340 m/s: the player shows the detonation in slow motion, and a
+sound arriving seconds later read as a fault. It is made of a crack per hole at its own firing time (at most 48,
+bright noise bursts of 90 ms), a boom falling from 70 to 24 Hz with a lower second thump, a rumble that darkens
+over five seconds, an echo (delays of 0.31 and 0.53 s with feedback through a low-pass), and faint irregular
+clatter of falling rock between 0.7 and 4.2 s; 6.5 s in all. It plays at normal speed whatever the player speed.
+It is a generic blast sound chosen for effect, not a prediction of the airblast. The off-line measurement
+(`rumbleCheck`) was not rerun for this version: the browser link was lost.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
