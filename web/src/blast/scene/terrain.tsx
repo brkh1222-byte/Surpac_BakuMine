@@ -168,12 +168,28 @@ void main() {
   vec3 dpdx = dFdx(vPos);
   vec3 dpdy = dFdy(vPos);
 
-  // The picture.
-  vec3 base = texture2D(map, vUv).rgb;
+  // The picture. Seen close, its colours change in soft blurs a metre wide; real ground
+  // cover ends in ragged edges. The place the picture is read at is therefore shifted by up
+  // to a metre with two noises, which breaks every soft edge into a ragged one.
+  float fp0 = max(length(dpdx), length(dpdy));
+  float uvPerMetre = min(length(fwidth(vUv)) / max(length(fwidth(vPos.xy)), 1e-6), 2.0 * texel.x);
+  float ragged = smoothstep(1.5 * fp0, 5.0 * fp0, 1.2);
+  vec2 shift = (vec2(vnoise(vPos * 1.7 + 3.0), vnoise(vPos * 1.7 + 11.0)) - 0.5) * 1.0
+             + (vec2(vnoise(vPos * 0.45 + 5.0), vnoise(vPos * 0.45 + 17.0)) - 0.5) * 1.3;
+  vec2 uv = vUv + shift * uvPerMetre * ragged;
+  vec3 base = texture2D(map, uv).rgb;
   // Unsharp mask: the picture minus its local mean, added back, makes edges crisper.
-  vec3 mean = 0.25 * (texture2D(map, vUv + vec2(texel.x, 0.0)).rgb + texture2D(map, vUv - vec2(texel.x, 0.0)).rgb
-                    + texture2D(map, vUv + vec2(0.0, texel.y)).rgb + texture2D(map, vUv - vec2(0.0, texel.y)).rgb);
+  vec3 mean = 0.25 * (texture2D(map, uv + vec2(texel.x, 0.0)).rgb + texture2D(map, uv - vec2(texel.x, 0.0)).rgb
+                    + texture2D(map, uv + vec2(0.0, texel.y)).rgb + texture2D(map, uv - vec2(0.0, texel.y)).rgb);
   base = clamp(base + sharpen * (base - mean), 0.0, 1.0);
+  // A satellite looks through the whole atmosphere: its picture has a pale bluish veil and
+  // flat colours. A drone at a hundred metres has neither: the veil is taken off, and
+  // contrast and colour are raised.
+  base = max(base - vec3(0.006, 0.009, 0.016), 0.0) * 1.04;
+  float lum0 = dot(base, vec3(0.299, 0.587, 0.114));
+  base = clamp(mix(vec3(lum0), base, 1.08), 0.0, 1.0);
+  base = clamp((base - 0.2) * 1.06 + 0.2, 0.0, 1.0);
+
   // ---- Drone-level detail -------------------------------------------------------------
   // The satellite picture gives the colour of the ground at about a metre; everything finer
   // is made here. A detail of size l (metres) is drawn only while it covers a few pixels
@@ -205,18 +221,31 @@ void main() {
   // and few on bare ground, each with its shadow on the side away from the sun; grass tufts
   // between them.
   vec2 wobble = 0.16 * vec2(vnoise(vPos * 4.0) - 0.5, vnoise(vPos * 4.0 + 9.0) - 0.5); // ragged outlines
-  float chance = mix(0.05, 0.6, veg);
+  // Plants stand in groups: their number changes over tens of metres.
+  float stand = 0.35 + 1.5 * smoothstep(0.3, 0.75, fbm(vPos * 0.045 + 8.8));
+  float chance = clamp(mix(0.03, 0.55, veg) * stand, 0.0, 0.9);
   float shrub = plants(vPos.xy + wobble, 1.7, chance) * SEEN(0.8);
   float shrubShadow = plants(vPos.xy + wobble - sun.xy * 0.55, 1.7, chance) * SEEN(0.8) * (1.0 - shrub);
-  float tuft = plants(vPos.xy + 0.3 * wobble, 0.42, mix(0.06, 0.5, veg)) * SEEN(0.2) * (1.0 - shrub);
+  float bush = plants(vPos.xy + 2.0 * wobble + 40.0, 4.6, clamp(0.5 * veg * stand - 0.08, 0.0, 0.6)) * SEEN(2.0);
+  float bushShadow = plants(vPos.xy + 2.0 * wobble + 40.0 - sun.xy * 1.2, 4.6, clamp(0.5 * veg * stand - 0.08, 0.0, 0.6)) * SEEN(2.0) * (1.0 - bush);
+  shrub = max(shrub, bush);
+  shrubShadow = max(shrubShadow * (1.0 - bush), bushShadow);
+  float tuft = plants(vPos.xy + 0.3 * wobble, 0.42, clamp(mix(0.05, 0.5, veg) * stand, 0.0, 0.9)) * SEEN(0.2) * (1.0 - shrub);
+  // Rills: where the ground slopes, water has cut thin darker lines down the slope.
+  vec2 fall = n.xy / max(length(n.xy), 1e-4);
+  float steep = smoothstep(0.03, 0.14, length(n.xy));
+  vec2 across = vec2(-fall.y, fall.x);
+  float rillNoise = vnoise(vec3(dot(vPos.xy, across) * 0.9, dot(vPos.xy, fall) * 0.07, 3.3));
+  float rill = (1.0 - smoothstep(0.0, 0.07, abs(rillNoise - 0.5))) * steep * SEEN(0.5) * (1.0 - veg);
   vec3 leaf = mix(vec3(0.085, 0.1, 0.045), vec3(0.16, 0.17, 0.075), vnoise(vPos * 5.0 + 1.9));
+  base *= 1.0 - 0.22 * rill;
   base = mix(base, leaf * (0.7 + 1.2 * lum), 0.8 * shrub);
   base *= 1.0 - 0.34 * shrubShadow;
   base = mix(base, base * vec3(0.8, 0.88, 0.62), 0.55 * tuft);
 
   // All of it as a height in metres, so the sun models it: the picture's own brightness
   // (weak), grain, stones, sand ripples, shrubs and tufts.
-  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.5 * shrub + 0.1 * tuft;
+  float h = lum * bump + 0.2 * grain + 0.08 * paleStone + 0.06 * darkStone + 0.012 * ripple + 0.1 * gravel * vnoise(vPos * 7.0) * SEEN(0.14) + 0.5 * shrub + 0.6 * bush + 0.1 * tuft - 0.08 * rill;
   vec3 r1 = cross(dpdy, n);
   vec3 r2 = cross(n, dpdx);
   float det = dot(dpdx, r1);
@@ -258,8 +287,8 @@ void main() {
   colour *= clamp(1.0 + 0.85 * (dot(nn, sun) - sun.z), 0.5, 1.35);
   // A slightly firmer picture: more contrast about mid grey and a little more colour.
   float grey = dot(colour, vec3(0.299, 0.587, 0.114));
-  colour = mix(vec3(grey), colour, 1.12);
-  colour = clamp((colour - 0.18) * 1.08 + 0.18, 0.0, 1.0);
+  colour = mix(vec3(grey), colour, 1.06);
+  colour = clamp((colour - 0.18) * 1.05 + 0.18, 0.0, 1.0);
   colour *= cloudShade(vPos.xy);
   colour = mix(colour, haze, 1.0 - exp(-vDist / hazeLength));
   gl_FragColor = vec4(colour, opacity);
@@ -292,7 +321,7 @@ export function TerrainMaterial({
           opacity: { value: 1 },
           bump: { value: 0.9 },
           texel: { value: new Vector2(1 / 2048, 1 / 2048) },
-          sharpen: { value: 0.9 },
+          sharpen: { value: 1.0 },
         },
         side: DoubleSide,
         clipping: true,

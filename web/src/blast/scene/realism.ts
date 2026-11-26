@@ -170,29 +170,10 @@ export function reliefPatches(bundle: Pick<BlastBundle, 'timeline' | 'muckpile' 
   }
 }
 
-// ---- shake and sound ---------------------------------------------------------------
+// ---- sound ---------------------------------------------------------------
 
 /** Speed of sound in air used for the delay of the rumble, m/s (about 15 degrees C). */
 export const SOUND_SPEED_M_S = 340
-/** The tremble of one hole dies away with this time constant, ms (chosen for effect). */
-export const SHAKE_DECAY_MS = 140
-
-/**
- * Strength (0..1) of the camera tremble at player time `tMs`, `distance` metres from the
- * blast: every hole adds exp(-(t - arrival) / SHAKE_DECAY_MS) from its arrival
- * `t_fire + distance / cp` on; the sum is limited to 1 and weakened with distance beyond
- * 150 m (factor 150 / distance).
- */
-export function shakeEnvelope(firesMs: readonly number[], tMs: number, distance: number, cp: number): number {
-  const travel = cp > 0 ? (distance / cp) * 1000 : 0
-  let sum = 0
-  for (const fire of firesMs) {
-    const dt = tMs - fire - travel
-    if (dt >= 0) sum += Math.exp(-dt / SHAKE_DECAY_MS)
-  }
-  return Math.min(1, sum) * Math.min(1, 150 / Math.max(distance, 1e-9))
-}
-
 // ---- equipment ---------------------------------------------------------------------
 
 /** Equipment stands this far outside the clearance radius, m. */

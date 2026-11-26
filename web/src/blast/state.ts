@@ -28,7 +28,7 @@ export const LAYERS = [
   { id: 'dust', label: 'Dust' },
   { id: 'equipment', label: 'Excavators (safe zone)' },
   { id: 'scatter', label: 'Stones and shrubs' },
-  { id: 'effects', label: 'Tremble and sound' },
+  { id: 'effects', label: 'Sound' },
 ] as const
 
 export type LayerId = (typeof LAYERS)[number]['id']

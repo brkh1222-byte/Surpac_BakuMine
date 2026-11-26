@@ -988,10 +988,7 @@ Second pass (task B14):
   rollers, house with engine cover and counterweight, cab with glass, gooseneck boom, stick, bucket with teeth,
   four hydraulic rams, handrail, exhaust. Still generic, still not moving.
 - **Flash.** A glow of 110 ms at each collar when its hole fires. Strength chosen for effect.
-- **Tremble.** While the ground wave passes the camera it trembles: each hole adds `exp(-(t - t_a) / 140 ms)`
-  from its arrival `t_a = t_fire + d / c_p`, the sum is limited to 1 and falls as 150 m / d beyond 150 m; the
-  largest offset is 0.16 % of the viewing distance. The arrival time is physics; the size is for effect (a real
-  camera there moves by millimetres or less).
+- **Tremble.** Removed again in the ninth pass: the owner did not want the camera to move on its own.
 - **Sound.** A rumble made in the browser (filtered noise over a falling 62 to 28 Hz tone) starts when the player
   time passes `t_first + d / 340 m/s`, so at the machines it comes more than two seconds after the picture. It
   is a generic rumble, not a prediction of the airblast, and plays at normal speed also in slow motion.
@@ -1057,6 +1054,20 @@ real one is. It is what a drone photograph of such ground looks like, not a dron
 Eighth pass (task B20): the floor of the cut. Level rock gets loose blocks (cells of 1.1 m, 42 % filled) and chips
 (0.33 m, 55 %) with their shadows, grit at 15 and 5.5 cm and dust changing tone over about 6 m, with the same
 rule for what is drawn at which viewing height. Invented, like the rest of the fine ground detail.
+
+Ninth pass (task B21):
+
+- **No camera shake.** The camera tremble of the second pass is removed (code, test and switch). The layer switch
+  that held it is now "Sound" only.
+- **Ragged edges.** Up close the picture changes colour in soft blurs a metre wide. The point it is read at is
+  shifted by up to about a metre with two noises (wavelengths 0.6 and 2.2 m), which turns each soft edge into a
+  ragged one, as the edge of ground cover is. The shift fades out when a metre is under a few pixels.
+- **Veil off.** A small bluish offset is subtracted and contrast and saturation are raised a little (6 and 8 %),
+  for the difference between a picture taken through the whole atmosphere and one taken from a hundred metres.
+  The amounts are chosen by eye.
+- **Plants in groups.** The chance of a plant varies over tens of metres; a few large bushes (cells of 4.6 m)
+  stand where plants are dense.
+- **Rills.** On slopes, thin darker lines run down the slope (noise stretched along the fall line).
 
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the

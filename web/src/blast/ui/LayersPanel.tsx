@@ -72,8 +72,8 @@ export function LayersPanel() {
             <p className="blast-note" data-testid="blast-imagery-look">
               Added by the viewer for looks, not measured: relief shading, sharpening, and all ground detail finer than the picture's
               0.9 m (soil grain, gravel, sand, stones, shrubs and grass placed by the picture's colour, not where real ones are),
-              rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs, the two excavators, shadows (assumed sun), the flash, the tremble and
-              the sound (their timing is physical, their strength is for effect).
+              rock on cut and broken ground, sky and haze, dust, the soil layer (1.5 m assumed), stones, shrubs, the two excavators, shadows (assumed sun), the flash and the sound
+              (its delay is physical, its strength is for effect).
               Near the blast and the machines the ground also gets invented low mounds and hollows (up to 0.4 m). Fragment paths, sizes and
               the clearance distance come from the simulation. The stored surface and every result are unchanged.
             </p>

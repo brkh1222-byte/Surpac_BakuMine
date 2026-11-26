@@ -6,12 +6,10 @@
  *   the shadow map; `ShadowCatcher` is a copy of a ground mesh that shows only the shadow
  *   falling on it, so the terrain's own picture and shading stay as they are.
  * - `Flashes`: a short glow at each collar when its hole fires.
- * - `Shake`: the camera trembles while the ground wave of the firing holes passes it.
  * - `useBlastSound`: a low rumble when the sound of the blast reaches the camera.
  *
- * Arrival times follow from distance and wave speed (the P-wave speed of the bundle for
- * the tremble, 340 m/s for the sound). The strength of the glow, the tremble and the
- * rumble is chosen for effect: a real camera at this distance moves by millimetres.
+ * The sound arrives after distance / 340 m/s. The strength of the glow and of the rumble is
+ * chosen for effect. The camera itself never moves on its own.
  */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
@@ -22,7 +20,7 @@ import {
 import { useBlast } from '../state'
 import type { BlastBundle } from '../types'
 import { blastView, type LayerProps } from './common'
-import { blastCentre, shakeEnvelope, SOUND_SPEED_M_S } from './realism'
+import { blastCentre, SOUND_SPEED_M_S } from './realism'
 import { SUN } from './terrain'
 
 /** Half side of the square around the blast that the shadow map covers, m. */
@@ -152,34 +150,6 @@ export function Flashes({ bundle, origin }: LayerProps) {
     ;(mesh.material as ShaderMaterial).uniforms.uTime.value = useBlast.getState().t
   })
   return <primitive object={mesh} />
-}
-
-/** Largest tremble of the camera as a fraction of its distance to what it looks at. */
-const SHAKE_VIEW = 0.0016
-
-export function Shake({ bundle, origin }: LayerProps) {
-  const applied = useRef(new Vector3())
-  const data = useMemo(() => {
-    const [bx, by, bz] = blastCentre(bundle)
-    return { centre: new Vector3(bx - origin[0], by - origin[1], bz - origin[2]), fires: bundle.timeline.holes.map((h) => h.t_fire_ms) }
-  }, [bundle, origin])
-  // Before the frame is drawn: take the last offset off, put the new one on. The controls
-  // only move the camera on input, so the offset never accumulates.
-  useFrame(({ camera }) => {
-    camera.position.sub(applied.current)
-    const { t } = useBlast.getState()
-    const distance = camera.position.distanceTo(data.centre)
-    const strength = shakeEnvelope(data.fires, t, distance, bundle.waves.cp_m_s)
-    if (strength <= 0) {
-      applied.current.set(0, 0, 0)
-      return
-    }
-    const a = SHAKE_VIEW * distance * strength
-    applied.current.set(a * Math.sin(t * 0.61), a * Math.sin(t * 0.83 + 1.7), a * Math.sin(t * 1.07 + 0.4))
-    camera.position.add(applied.current)
-  }, -2)
-  useEffect(() => () => void applied.current.set(0, 0, 0), [])
-  return null
 }
 
 /** The camera stays at least this far above the topography in the site view, m. */
