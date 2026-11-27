@@ -6,8 +6,8 @@
  *   the shadow map; `ShadowCatcher` is a copy of a ground mesh that shows only the shadow
  *   falling on it, so the terrain's own picture and shading stay as they are.
  * - `Flashes`: a short glow at each collar when its hole fires.
- * - `BlastSound`: the sound of the blast (cracks of the holes, boom, rolling rumble, echo,
- *   falling rock), started with the first hole.
+ * - `BlastSound`: every hole booms when the player passes its firing time; a rolling rumble
+ *   and falling rock follow the last hole.
  *
  * The strength of the glow and the make-up of the sound are chosen for effect. The camera
  * itself never moves on its own.
@@ -178,34 +178,28 @@ function noiseBuffer(context: BaseAudioContext, seconds: number): AudioBuffer {
   return buffer
 }
 
-/** At most this many separate cracks are made; more holes share them. */
-const CRACKS = 48
-/** Length of the whole sound, s. */
-export const BLAST_SOUND_S = 6.5
+/** Length of the tail (rolling rumble and falling rock) that follows the last hole, s. */
+export const BLAST_TAIL_S = 6
+/** Two booms are never started closer together than this, s: at full speed holes 17 ms apart merge. */
+const BOOM_GAP_S = 0.03
 
-/**
- * The sound of a bench blast, made in the browser and started with the first hole:
- * - a crack for each hole at its own firing time (a short burst of bright noise), which
- *   together give the tearing ripple of a delayed blast;
- * - a deep boom under it (a tone falling from 70 to 24 Hz) and a second, lower thump;
- * - a rumble that rolls on and darkens over five seconds;
- * - an echo of all of it from the ground around (two delays with feedback);
- * - falling rock: faint irregular clatter while the fragments fly and land.
- * `firesS` are the firing times in seconds after the first hole. Levels are chosen by ear
- * of the kind of sound, not computed from the charge: it is not a prediction of the airblast.
- */
-function rumble(context: BaseAudioContext, loudness: number, firesS: readonly number[] = [0]): void {
-  const now = context.currentTime + 0.02
+interface SoundBus {
+  /** Sends a node to the loudspeakers and to the echo. */
+  out: (node: AudioNode) => void
+  noise: AudioBuffer
+}
+
+/** Master level, a compressor against clipping, and an echo from the ground around (two delays with feedback). */
+function soundBus(context: BaseAudioContext, loudness: number): SoundBus {
   const master = context.createGain()
   master.gain.value = loudness
   const squash = context.createDynamicsCompressor()
   squash.threshold.value = -14
   squash.ratio.value = 5
   master.connect(squash).connect(context.destination)
-  // Echo from the terrain: two taps fed back through a low-pass, so each return is duller.
   const echoIn = context.createGain()
-  echoIn.gain.value = 0.42
-  for (const [delaySeconds, feedback] of [[0.31, 0.38], [0.53, 0.3]] as const) {
+  echoIn.gain.value = 0.38
+  for (const [delaySeconds, feedback] of [[0.31, 0.36], [0.53, 0.28]] as const) {
     const delay = context.createDelay(1)
     delay.delayTime.value = delaySeconds
     const dull = context.createBiquadFilter()
@@ -216,97 +210,104 @@ function rumble(context: BaseAudioContext, loudness: number, firesS: readonly nu
     echoIn.connect(delay).connect(dull).connect(master)
     dull.connect(back).connect(delay)
   }
-  const out = (node: AudioNode) => {
-    node.connect(master)
-    node.connect(echoIn)
+  return {
+    out: (node) => {
+      node.connect(master)
+      node.connect(echoIn)
+    },
+    noise: noiseBuffer(context, BLAST_TAIL_S + 0.5),
   }
+}
 
-  const noise = noiseBuffer(context, BLAST_SOUND_S)
-  // Cracks of the holes.
-  const fires = [...firesS].sort((a, b) => a - b)
-  const step = Math.max(1, Math.ceil(fires.length / CRACKS))
-  for (let i = 0; i < fires.length; i += step) {
-    const at = now + fires[i]
-    const source = context.createBufferSource()
-    source.buffer = noise
-    const band = context.createBiquadFilter()
-    band.type = 'bandpass'
-    band.frequency.value = 900 + 1400 * ((i * 0.618) % 1)
-    band.Q.value = 0.8
-    const gain = context.createGain()
-    gain.gain.setValueAtTime(0.0001, at)
-    gain.gain.exponentialRampToValueAtTime(0.5, at + 0.004)
-    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.09)
-    source.connect(band).connect(gain)
-    out(gain)
-    source.start(at, (i * 0.137) % (BLAST_SOUND_S - 0.2), 0.12)
-  }
-  const span = fires.length > 0 ? fires[fires.length - 1] : 0
-  // Boom and thump.
-  for (const [from, to, level, seconds, start] of [[70, 24, 1.0, 2.4, 0], [46, 20, 0.7, 3.0, span * 0.6]] as const) {
-    const tone = context.createOscillator()
-    tone.frequency.setValueAtTime(from, now + start)
-    tone.frequency.exponentialRampToValueAtTime(to, now + start + seconds * 0.7)
-    const gain = context.createGain()
-    gain.gain.setValueAtTime(0.0001, now + start)
-    gain.gain.exponentialRampToValueAtTime(level, now + start + 0.03)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + start + seconds)
-    tone.connect(gain)
-    out(gain)
-    tone.start(now + start)
-    tone.stop(now + start + seconds + 0.1)
-  }
-  // Rolling rumble.
+/**
+ * One hole going off, `at` (context time): a sharp crack (a short burst of bright noise) on
+ * a deep boom (a tone falling from about 85 to 30 Hz over half a second). `k` only varies
+ * the pitch a little from hole to hole, so a row of holes does not sound like one note.
+ */
+function holeBoom(context: BaseAudioContext, bus: SoundBus, at: number, k: number): void {
+  const vary = (k * 0.618034) % 1
+  const crack = context.createBufferSource()
+  crack.buffer = bus.noise
+  const band = context.createBiquadFilter()
+  band.type = 'bandpass'
+  band.frequency.value = 800 + 1500 * vary
+  band.Q.value = 0.8
+  const crackGain = context.createGain()
+  crackGain.gain.setValueAtTime(0.0001, at)
+  crackGain.gain.exponentialRampToValueAtTime(0.7, at + 0.004)
+  crackGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.11)
+  crack.connect(band).connect(crackGain)
+  bus.out(crackGain)
+  crack.start(at, (k * 0.137) % BLAST_TAIL_S, 0.14)
+  const tone = context.createOscillator()
+  tone.frequency.setValueAtTime(78 + 14 * vary, at)
+  tone.frequency.exponentialRampToValueAtTime(30, at + 0.4)
+  const toneGain = context.createGain()
+  toneGain.gain.setValueAtTime(0.0001, at)
+  toneGain.gain.exponentialRampToValueAtTime(1.0, at + 0.012)
+  toneGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.6)
+  tone.connect(toneGain)
+  bus.out(toneGain)
+  tone.start(at)
+  tone.stop(at + 0.65)
+}
+
+/** After the last hole: a rumble that rolls on and darkens, and faint irregular clatter of falling rock. */
+function blastTail(context: BaseAudioContext, bus: SoundBus, at: number): void {
   const roll = context.createBufferSource()
-  roll.buffer = noise
+  roll.buffer = bus.noise
   const dark = context.createBiquadFilter()
   dark.type = 'lowpass'
-  dark.frequency.setValueAtTime(520, now)
-  dark.frequency.exponentialRampToValueAtTime(60, now + 5)
+  dark.frequency.setValueAtTime(480, at)
+  dark.frequency.exponentialRampToValueAtTime(60, at + 4.5)
   const rollGain = context.createGain()
-  rollGain.gain.setValueAtTime(0.0001, now)
-  rollGain.gain.exponentialRampToValueAtTime(1.6, now + 0.05 + span * 0.5)
-  rollGain.gain.exponentialRampToValueAtTime(0.02, now + 5.2)
-  rollGain.gain.linearRampToValueAtTime(0, now + BLAST_SOUND_S - 0.1)
+  rollGain.gain.setValueAtTime(0.0001, at)
+  rollGain.gain.exponentialRampToValueAtTime(1.3, at + 0.08)
+  rollGain.gain.exponentialRampToValueAtTime(0.02, at + 4.8)
+  rollGain.gain.linearRampToValueAtTime(0, at + BLAST_TAIL_S - 0.1)
   roll.connect(dark).connect(rollGain)
-  out(rollGain)
-  roll.start(now)
-  // Falling rock.
+  bus.out(rollGain)
+  roll.start(at, 0, BLAST_TAIL_S)
   const fall = context.createBufferSource()
-  fall.buffer = noise
+  fall.buffer = bus.noise
   const clatter = context.createBiquadFilter()
   clatter.type = 'bandpass'
   clatter.frequency.value = 700
   clatter.Q.value = 0.6
   const fallGain = context.createGain()
-  fallGain.gain.setValueAtTime(0, now)
-  for (let k = 0; k < 60; k++) {
-    // Irregular little bursts between 0.7 and 4.2 s, densest in the middle.
-    const at = now + 0.7 + 3.5 * ((k * 0.754877) % 1)
-    const level = 0.3 * (0.3 + ((k * 0.3819) % 1)) * Math.sin(Math.PI * ((at - now - 0.7) / 3.5))
-    fallGain.gain.setValueAtTime(0.0001, at)
-    fallGain.gain.linearRampToValueAtTime(Math.max(0.0002, level), at + 0.008)
-    fallGain.gain.linearRampToValueAtTime(0.0001, at + 0.05)
-  }
+  fallGain.gain.setValueAtTime(0, at)
+  const bursts: number[] = []
+  for (let k = 0; k < 60; k++) bursts.push(0.3 + 3.6 * ((k * 0.754877) % 1))
+  bursts.sort((a, b) => a - b)
+  bursts.forEach((offset, k) => {
+    const level = 0.3 * (0.3 + ((k * 0.3819) % 1)) * Math.sin(Math.PI * ((offset - 0.3) / 3.6))
+    fallGain.gain.setValueAtTime(0.0001, at + offset)
+    fallGain.gain.linearRampToValueAtTime(Math.max(0.0002, level), at + offset + 0.008)
+    fallGain.gain.linearRampToValueAtTime(0.0001, at + offset + 0.05)
+  })
   fall.connect(clatter).connect(fallGain)
-  out(fallGain)
-  fall.start(now, 1.3)
+  bus.out(fallGain)
+  fall.start(at, 1.3, BLAST_TAIL_S - 1.4)
 }
 
 /**
- * The sound rendered off-line and measured, to check the signal without loudspeakers: peak
- * and RMS level, how long it stays above a twentieth of its peak, and the share of its
- * energy below 200 Hz (by a one-pole low-pass, cut-off 200 Hz).
+ * A whole blast rendered off-line and measured, to check the signal without loudspeakers:
+ * a boom at each of `firesS` (seconds) and the tail after the last. Returns the peak and
+ * RMS level, how long it stays above a twentieth of its peak, and the share of its energy
+ * below 200 Hz (by a one-pole low-pass, cut-off 200 Hz).
  */
 export async function rumbleCheck(loudness = 0.8, firesS: readonly number[] = [0]): Promise<{ peak: number; rms: number; seconds: number; lowShare: number }> {
   const rate = 44100
-  const context = new OfflineAudioContext(1, Math.floor(rate * (BLAST_SOUND_S + 1)), rate)
-  rumble(context, loudness, firesS)
+  const last = firesS.length > 0 ? Math.max(...firesS) : 0
+  const context = new OfflineAudioContext(1, Math.floor(rate * (last + BLAST_TAIL_S + 1)), rate)
+  const bus = soundBus(context, loudness)
+  firesS.forEach((t, k) => holeBoom(context, bus, 0.02 + t, k))
+  blastTail(context, bus, 0.02 + last)
   const samples = (await context.startRendering()).getChannelData(0)
   let peak = 0
   let energy = 0
   let low = 0
-  let last = 0
+  let end = 0
   let state = 0
   const k = 1 - Math.exp((-2 * Math.PI * 200) / rate)
   for (let i = 0; i < samples.length; i++) {
@@ -316,49 +317,71 @@ export async function rumbleCheck(loudness = 0.8, firesS: readonly number[] = [0
     state += k * (v - state)
     low += state * state
   }
-  for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i]) > 0.05 * peak) last = i
-  return { peak, rms: Math.sqrt(energy / samples.length), seconds: last / rate, lowShare: energy > 0 ? low / energy : 0 }
+  for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i]) > 0.05 * peak) end = i
+  return { peak, rms: Math.sqrt(energy / samples.length), seconds: end / rate, lowShare: energy > 0 ? low / energy : 0 }
 }
 
-/** What the sound did last, for a check from the browser console (development builds). */
-export const soundLog: { played: number; contextState: string; atMs: number } = { played: 0, contextState: 'none', atMs: 0 }
+/** What the sound did in this run, for a check from the browser console (development builds). */
+export const soundLog: { booms: number; merged: number; tails: number; contextState: string; lastBoomMs: number } = {
+  booms: 0, merged: 0, tails: 0, contextState: 'none', lastBoomMs: 0,
+}
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   Object.assign(window, { __blastSound: { check: rumbleCheck, log: soundLog } })
 }
 
 /**
- * Plays the blast sound once per run, when the player time passes the first hole. It starts
- * with the picture: the delay of real sound over the distance to the camera is left out,
- * because the player shows the detonation in slow motion and a late sound reads as a fault.
+ * The sound follows the picture: every hole booms at the moment the player time passes its
+ * firing time, at any player speed (in slow motion the booms are spread out exactly as the
+ * flashes are), and the tail follows the last hole. Scrubbing and jumps make no sound.
+ * The delay of real sound over the distance to the camera is left out on purpose.
  */
 export function BlastSound({ bundle }: LayerProps) {
-  const state = useRef<{ context: AudioContext | null; last: number }>({ context: null, last: -1 })
-  const fires = useMemo(() => {
-    const times = bundle.timeline.holes.map((h) => h.t_fire_ms)
-    const first = times.length > 0 ? Math.min(...times) : 0
-    return { first, seconds: times.map((t) => (t - first) / 1000) }
-  }, [bundle])
+  const state = useRef<{ context: AudioContext | null; bus: SoundBus | null; last: number; next: number; lastBoomAt: number }>({
+    context: null, bus: null, last: 0, next: 0, lastBoomAt: -1,
+  })
+  const fires = useMemo(() => bundle.timeline.holes.map((h) => h.t_fire_ms).sort((a, b) => a - b), [bundle])
   useFrame(() => {
     const { t, playing } = useBlast.getState()
     const s = state.current
-    if (playing && s.last <= fires.first && t > fires.first && t - Math.max(s.last, 0) < 1500) {
+    // Played forward by the clock (not scrubbed or jumped): the holes passed since the last frame go off.
+    const stepped = playing && t >= s.last && t - s.last < 400
+    if (!stepped) {
+      let n = 0
+      while (n < fires.length && fires[n] <= t) n++
+      // At the very beginning nothing has gone off yet: the holes that fire at time zero are still to come.
+      s.next = t <= (fires[0] ?? 0) + 50 ? 0 : n
+      s.last = t
+      if (!playing || s.next >= fires.length || fires[s.next] > t) return
+    }
+    while (s.next < fires.length && fires[s.next] <= t) {
       try {
         s.context ??= new AudioContext()
         void s.context.resume()
-        rumble(s.context, 0.8, fires.seconds)
-        soundLog.played += 1
+        s.bus ??= soundBus(s.context, 0.8)
+        const now = s.context.currentTime
+        if (now - s.lastBoomAt >= BOOM_GAP_S) {
+          holeBoom(s.context, s.bus, now + 0.005, s.next)
+          s.lastBoomAt = now
+          soundLog.booms += 1
+          soundLog.lastBoomMs = fires[s.next]
+        } else soundLog.merged += 1
+        if (s.next === fires.length - 1) {
+          blastTail(s.context, s.bus, now + 0.02)
+          soundLog.tails += 1
+        }
         soundLog.contextState = s.context.state
-        soundLog.atMs = t
       } catch {
         // No audio device or not allowed: the view stays silent.
       }
+      s.next += 1
     }
-    s.last = playing ? t : Math.min(t, fires.first)
+    s.last = t
   })
   useEffect(
     () => () => {
       void state.current.context?.close()
       state.current.context = null
+      state.current.bus = null
     },
     [],
   )

@@ -1103,6 +1103,14 @@ clatter of falling rock between 0.7 and 4.2 s; 6.5 s in all. It plays at normal 
 It is a generic blast sound chosen for effect, not a prediction of the airblast. The off-line measurement
 (`rumbleCheck`) was not rerun for this version: the browser link was lost.
 
+Fifteenth pass (task B27), after the owner's review ("the sound should go boom right when every bomb detonates"):
+the sound follows the picture hole by hole. When the player time passes a hole's firing time, that hole makes
+its own crack (bright noise, 110 ms) and boom (a tone falling from about 85 to 30 Hz, 0.6 s), at any player
+speed, so in slow motion the booms are spread out exactly as the flashes are. Booms closer than 30 ms of real
+time merge (holes that fire in the same frame). The rolling rumble and the falling-rock clatter follow the last
+hole; the echo stays. Scrubbing and jumps make no sound. Seen in the browser on the 100-hole blast: 77 booms,
+23 merged, one tail, no errors. The one-burst sound of the fourteenth pass is gone.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
