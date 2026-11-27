@@ -8,6 +8,7 @@
     solids/                 closed solids (OBJ)
     models/                 block model folders (``blockmodel.storage``)
     constraints/            constraint JSON files
+    geology/                geology model folders (``geology.model.GeologyModel.save``)
 
 ``path`` in the registry is relative to the project folder and always uses ``/``. Adding
 an object copies the file or folder into the project, byte for byte, so data read back are
@@ -48,6 +49,7 @@ KIND_FOLDERS: dict[str, str] = {
     "solid": "solids",
     "model": "models",
     "constraint": "constraints",
+    "geology": "geology",
 }
 KINDS = tuple(KIND_FOLDERS)
 
@@ -222,6 +224,25 @@ class Project:
                 shutil.rmtree(path)
             elif path.exists():
                 path.unlink()
+        return obj
+
+    def restore(self, obj: ProjectObject, source: str | Path) -> ProjectObject:
+        """Move ``source`` back to the path of ``obj`` and register ``obj`` again as it was
+        (same id, name and path). Refused when the id or the path is taken meanwhile."""
+        _check_object(obj)
+        source = Path(source)
+        if not source.exists():
+            raise FileNotFoundError(f"{source} does not exist")
+        with self._locked():
+            if any(o.id == obj.id for o in self._objects):
+                raise ProjectError(f"the project already has an object {obj.id!r}")
+            target = self.folder.joinpath(*obj.path.split("/"))
+            if target.exists() or any(o.path == obj.path for o in self._objects):
+                raise ProjectError(f"the path {obj.path!r} of object {obj.id!r} is taken")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(target))
+            self._objects.append(obj)
+            self._save()
         return obj
 
     def _unique_id(self, base: str) -> str:

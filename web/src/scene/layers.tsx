@@ -34,12 +34,17 @@ export interface LayerObject {
   bounds: Bounds
   /** Starts unticked in the object tree (the user's later choice is kept). */
   hidden?: boolean
+  /** Object this one belongs to, and its group there (meshes of a geology model). */
+  parent?: string
+  group?: string
+  /** Position in the project's object list (the order of a group in the tree). */
+  order?: number
 }
 
 export interface LayerObjectState {
   /** False on the first render, before the object is registered and the origin is known. */
   ready: boolean
-  /** Object toggle AND category toggle. */
+  /** Object toggle AND category toggle (AND the parent's toggle, for a child). */
   visible: boolean
   /** Scene origin to pass to `worldToScene`. */
   origin: Vec3
@@ -47,17 +52,17 @@ export interface LayerObjectState {
 
 /** Registers one drawable object for the lifetime of the calling component. */
 export function useLayerObject(object: LayerObject): LayerObjectState {
-  const { id, name, category, bounds, hidden } = object
+  const { id, name, category, bounds, hidden, parent, group, order } = object
   const [ready, setReady] = useState(false)
   const origin = useSceneOrigin()
   const visible = useViewer((s) => isObjectVisible(s, id))
 
   useLayoutEffect(() => {
     const known = id in useViewer.getState().objects
-    useViewer.getState().registerObject({ id, name, category, bounds, visible: !known && hidden ? false : undefined })
+    useViewer.getState().registerObject({ id, name, category, bounds, parent, group, order, visible: !known && hidden ? false : undefined })
     setReady(true)
     return () => useViewer.getState().removeObject(id)
-  }, [id, name, category, bounds, hidden])
+  }, [id, name, category, bounds, hidden, parent, group, order])
 
   return { ready, visible, origin }
 }

@@ -84,19 +84,57 @@ export function rampGradient(name: RampName, theme: Theme, direction = 'to right
 }
 
 /**
- * Categorical colours, assigned to categories in list order and never cycled:
- * categories beyond the eighth all get `OTHER_COLOR`.
+ * Categorical colours, 20 per theme, assigned to categories in list order.
+ *
+ * Entries 1-8 are the original palette (checked for colour-blind separation with the
+ * dataviz validator) and are unchanged, so an attribute with up to eight categories
+ * looks as it always did. Entries 9-20 were added for rock units by greedy
+ * farthest-point selection in CIELAB (D65): from the sRGB colours on a 5/255 grid with
+ * chroma 22..72, lightness 30..82 (light theme) or 42..88 (dark theme), contrast of at
+ * least 2.2 against the theme's canvas and CIE76 distance of at least 20 from the
+ * "other", "no value" and neutral block greys, take the one farthest from everything
+ * already chosen, twelve times. The dark entry keeps the hue (within 18 degrees) of the
+ * light entry with the same index, so a unit reads as the same colour in both themes.
+ *
+ * Measured (colour.test.ts): CIE76 distance >= 30 between list neighbours and between
+ * any pair that involves an added entry; >= 20 between any pair at all (the limit is
+ * set by two pairs of the original eight). Twenty colours cannot all be told apart
+ * with a colour-vision deficiency: only the first eight were validated for that.
+ *
+ * More than 20 categories: the palette cycles (category i gets entry i mod 20), so
+ * colours repeat from the 21st category on; give the data a colour map to avoid it.
  */
 export const CATEGORICAL: Record<Theme, readonly string[]> = {
-  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
-  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767'],
+  light: [
+    '#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948',
+    '#55461e', '#2db4d2', '#5f4164', '#a5aa55', '#9b0082', '#005555', '#d79678', '#aaa0cd',
+    '#e182f0', '#910541', '#7d2d00', '#05551e',
+  ],
+  dark: [
+    '#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767',
+    '#ebd7af', '#3cdcff', '#ffcdfa', '#d7e655', '#7d5a78', '#196e78', '#875f37', '#9141b4',
+    '#ff8ceb', '#d29696', '#ffaa73', '#41faa0',
+  ],
 }
 
+/** A category index that is not one (negative, NaN): a neutral grey outside the palette. */
 export const OTHER_COLOR: Record<Theme, string> = { light: '#6f6e69', dark: '#a3a29b' }
 
 /** Intervals without a value: a neutral grey, clearly not on any ramp. */
 export const MISSING_COLOR: Record<Theme, string> = { light: '#9a9c9a', dark: '#6b7178' }
 
+/** Palette colour of category `index`; cycles past the end (see `CATEGORICAL`). */
 export function categoryColor(theme: Theme, index: number): string {
-  return index >= 0 && index < CATEGORICAL[theme].length ? CATEGORICAL[theme][index] : OTHER_COLOR[theme]
+  const palette = CATEGORICAL[theme]
+  return Number.isFinite(index) && index >= 0 ? palette[Math.floor(index) % palette.length] : OTHER_COLOR[theme]
+}
+
+/**
+ * A colour supplied by the data, as lower-case `#rrggbb`; null when it is absent or not
+ * in that form (the palette is used instead).
+ */
+export function explicitColor(colours: Readonly<Record<string, string>> | undefined, category: string): string | null {
+  if (!colours || !Object.prototype.hasOwnProperty.call(colours, category)) return null
+  const value = colours[category]
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null
 }

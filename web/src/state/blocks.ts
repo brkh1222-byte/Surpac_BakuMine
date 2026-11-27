@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import type { BlockAttributeInfo, BlockDetail, BlockManifestObject, NamedGeometry } from '../api/blocks'
 import { defaultFilter, filterToWhere, type BlockFilter } from '../blocks/filter'
 import type { MissingDisplay } from '../blocks/colour'
+import { compositionLayers, parseComposition, switchComposition, type CompositionLayerId, type CompositionRecord } from '../blocks/composition'
 import type { BlockDefinition } from '../blocks/structure'
 import { DEFAULT_STEPS, roundNice, sanitiseRange, type NumericSettings } from '../colour/legend'
 
@@ -19,6 +20,10 @@ export interface BlockDisplay {
   surfaces: NamedGeometry[]
   /** Attribute the blocks are coloured by; null = one neutral colour. */
   colorBy: string | null
+  /** The model's geology coding (which attribute holds which composition layer), if recorded. */
+  composition: CompositionRecord | null
+  /** What "Composition: Off" goes back to (blocks/composition.ts); undefined while it is off. */
+  compositionReturn?: string | null
   /** Legend settings per numeric attribute. */
   settings: Record<string, NumericSettings>
   /** Blocks without a value of the colour attribute: left out, or drawn grey. */
@@ -78,6 +83,8 @@ export interface BlocksState {
   register: (object: BlockManifestObject, definition: BlockDefinition) => void
   unregister: (id: string) => void
   setColorBy: (id: string, name: string | null) => void
+  /** Colours the blocks by a composition layer; null switches that colouring off again. */
+  setComposition: (id: string, layer: CompositionLayerId | null) => void
   setNumericSettings: (id: string, name: string, patch: Partial<NumericSettings>) => void
   resetNumericSettings: (id: string, name: string) => void
   setDisplay: (id: string, patch: Partial<Pick<BlockDisplay, 'missing' | 'edges' | 'opacity' | 'shrink'>>) => void
@@ -117,8 +124,9 @@ export const useBlocks = create<BlocksState>()((set) => ({
     set((s) => {
       const previous = s.models[object.id]
       const attributes = object.attributes
+      const composition = parseComposition((object as { composition?: unknown }).composition)
       if (previous && previous.attributes.length === attributes.length && previous.attributes.every((a, i) => a.name === attributes[i].name && a.type === attributes[i].type)) {
-        return { models: { ...s.models, [object.id]: { ...previous, attributes, definition, name: object.name } } }
+        return { models: { ...s.models, [object.id]: { ...previous, attributes, definition, name: object.name, composition } } }
       }
       const settings: Record<string, NumericSettings> = {}
       for (const a of attributes) if (a.type === 'numeric') settings[a.name] = defaultBlockSettings(a)
@@ -133,6 +141,7 @@ export const useBlocks = create<BlocksState>()((set) => ({
         solids: object.constraint_geometry?.solids ?? [],
         surfaces: object.constraint_geometry?.surfaces ?? [],
         colorBy,
+        composition,
         settings,
         missing: 'hidden',
         edges: true,
@@ -157,6 +166,14 @@ export const useBlocks = create<BlocksState>()((set) => ({
       const m = s.models[id]
       if (!m || (name !== null && !m.attributes.some((a) => a.name === name))) return s
       return { models: { ...s.models, [id]: { ...m, colorBy: name } } }
+    }),
+  setComposition: (id, layer) =>
+    set((s) => {
+      const m = s.models[id]
+      if (!m) return s
+      const layers = compositionLayers(m.attributes, m.composition)
+      const next = switchComposition({ colorBy: m.colorBy, compositionReturn: m.compositionReturn }, m.attributes, layers, layer)
+      return { models: { ...s.models, [id]: { ...m, colorBy: next.colorBy, compositionReturn: next.compositionReturn } } }
     }),
   setNumericSettings: (id, name, patch) =>
     set((s) => {

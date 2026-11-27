@@ -32,7 +32,7 @@ import { outlineSegments, type Outline } from '../section/outline'
 import { outlineClient } from '../section/outlineClient'
 import { boxInPlane, frameOf, fromPlane, type SectionPlane } from '../section/plane'
 import { sectionExtent, useSection, type SectionState } from '../state/section'
-import { allBounds, useViewer, type Bounds, type Theme } from '../state/store'
+import { allBounds, isShown, useViewer, type Bounds, type Theme } from '../state/store'
 import { applySectionClipping, updateSectionPlanes } from './clipping'
 import { useSceneOrigin, worldToRender, type Vec3 } from './origin'
 import { SCENE_COLORS } from './theme'
@@ -48,7 +48,7 @@ export function sectionViewSpec(section: Pick<SectionState, 'plane' | 'front' | 
   const { plane } = section
   const frame = frameOf(plane)
   const state = useViewer.getState()
-  const visible = Object.values(state.objects).filter((o) => o.visible && state.categoryVisible[o.category])
+  const visible = Object.values(state.objects).filter((o) => isShown(state, o))
   const s: [number, number] = [Infinity, -Infinity]
   const t: [number, number] = [Infinity, -Infinity]
   const add = (bounds: Bounds, onlyInSlab: boolean) => {

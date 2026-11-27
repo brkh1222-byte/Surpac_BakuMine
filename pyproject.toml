@@ -35,6 +35,7 @@ dev = [
     "gstools>=1.7.0",
     "pykrige>=1.7.3",
     "reportlab>=5.1.0",
+    "loopstructural>=1.12.0",
 ]
 
 [build-system]
@@ -46,6 +47,7 @@ packages = ["bakumine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: needs the full synthetic layered deposit"]
 
 [tool.ruff]
 line-length = 100

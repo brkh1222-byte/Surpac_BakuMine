@@ -22,8 +22,17 @@ const BLOCKS_OFF = typeof window !== 'undefined' && new URLSearchParams(window.l
 const NO_BOUNDS: Bounds = { min: [0, 0, 0], max: [0, 0, 0] }
 
 /** Registers the object so that it is listed (and framed) before its data arrive. */
-function Placeholder({ object, hidden }: { object: ManifestObject; hidden?: boolean }) {
-  useLayerObject({ id: object.id, name: object.name, category: object.category, bounds: object.bounds ?? NO_BOUNDS, hidden })
+function Placeholder({ object, hidden, order }: { object: ManifestObject; hidden?: boolean; order?: number }) {
+  useLayerObject({
+    id: object.id,
+    name: object.name,
+    category: object.category,
+    bounds: object.bounds ?? NO_BOUNDS,
+    hidden,
+    parent: object.parent,
+    group: object.group,
+    order,
+  })
   return null
 }
 
@@ -94,20 +103,24 @@ export function blastOnly(object: Pick<ManifestObject, 'id' | 'name'>): boolean 
   return object.id === 'blast-terrain' || /^(blast|backdrop) terrain$/i.test(object.name)
 }
 
-function MeshObject({ object, seeThrough }: { object: ManifestObject; seeThrough: boolean }) {
+function MeshObject({ object, seeThrough, order }: { object: ManifestObject; seeThrough: boolean; order: number }) {
   const closed = object.stats.closed === true
   const bounds = object.bounds ?? NO_BOUNDS
+  // A mesh of a geology model is drawn as its group says, in the colour of the dictionary.
+  const group = object.category === 'geology' ? object.group : undefined
+  const colour = object.style?.colour
   useLayoutEffect(() => {
-    useDisplay.getState().registerMesh(object.id, closed, [bounds.min[2], bounds.max[2]], seeThrough)
+    const geology = group ? { group, colour } : undefined
+    useDisplay.getState().registerMesh(object.id, closed, [bounds.min[2], bounds.max[2]], seeThrough, geology)
     return () => useDisplay.getState().unregisterMesh(object.id)
-  }, [object.id, closed, bounds, seeThrough])
+  }, [object.id, closed, bounds, seeThrough, group, colour])
   const mesh = useMesh(object)
   // The blocks inside stand for the solid: it is listed, unticked, and see-through when shown.
   const layer = useMemo(
-    () => ({ id: object.id, name: object.name, category: object.category, bounds, hidden: seeThrough || blastOnly(object) }),
-    [object, bounds, seeThrough],
+    () => ({ id: object.id, name: object.name, category: object.category, bounds, hidden: seeThrough || blastOnly(object), parent: object.parent, group: object.group, order }),
+    [object.id, object.name, object.category, bounds, seeThrough, object.parent, object.group, order],
   )
-  if (mesh.status !== 'ready') return <Placeholder object={object} hidden={seeThrough || blastOnly(object)} />
+  if (mesh.status !== 'ready') return <Placeholder object={object} hidden={seeThrough || blastOnly(object)} order={order} />
   return <MeshLayer object={layer} mesh={mesh.data} />
 }
 
@@ -128,11 +141,14 @@ export function ProjectScene() {
   const cutting = new Set(blockModels.flatMap((b) => b.constraint_geometry?.solids.map((s) => s.id) ?? []))
   return (
     <>
-      {manifest.data.objects.map((object) =>
+      {manifest.data.objects.map((object, order) =>
         object.kind === 'drillholes' ? (
           <DrillholesObject key={object.id} object={object} ranges={shared} />
         ) : object.kind === 'mesh' ? (
-          <MeshObject key={object.id} object={object} seeThrough={cutting.has(object.id)} />
+          <MeshObject key={object.id} object={object} seeThrough={cutting.has(object.id)} order={order} />
+        ) : object.kind === 'geology' ? (
+          // The model itself has no geometry: it is listed, and its meshes follow it.
+          <Placeholder key={object.id} object={object} order={order} />
         ) : null,
       )}
       {blockModels.map((object) => (

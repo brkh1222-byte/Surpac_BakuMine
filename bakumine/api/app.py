@@ -9,6 +9,7 @@ from bakumine.api.ops_classify import router as classify_router
 from bakumine.api.ops_intercepts import router as intercepts_router
 from bakumine.api.routes_blast import router as blast_router
 from bakumine.api.routes_digitise import router as digitise_router
+from bakumine.api.routes_geology import router as geology_router
 from bakumine.api.routes_geometry import router as geometry_router
 from bakumine.api.routes_ops import router as ops_router
 from bakumine.api.routes_report import router as report_router
@@ -24,6 +25,7 @@ app.include_router(scene_router)
 app.include_router(report_router)
 app.include_router(digitise_router)
 app.include_router(geometry_router)
+app.include_router(geology_router)
 app.include_router(ops_router)
 app.include_router(intercepts_router)
 app.include_router(classify_router)

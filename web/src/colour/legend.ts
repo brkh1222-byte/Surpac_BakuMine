@@ -5,7 +5,7 @@
  * its legend cannot disagree. Used by drillholes and meshes; blocks will reuse it.
  */
 import type { Theme } from '../state/store'
-import { categoryColor, hexToRgb, MISSING_COLOR, rampColor, rgbToHex, type RampName, type Rgb } from './ramps'
+import { categoryColor, explicitColor, hexToRgb, MISSING_COLOR, rampColor, rgbToHex, type RampName, type Rgb } from './ramps'
 
 export type NumericMode = 'continuous' | 'stepped'
 
@@ -31,6 +31,17 @@ export interface CategoricalLegendSpec {
   kind: 'categorical'
   title: string
   categories: string[]
+  /**
+   * Colours supplied by the data, category -> `#rrggbb` (e.g. the unit dictionary of a
+   * geology model). A category listed here has that colour in both themes, whatever
+   * else is in `categories`; the others take the palette by their position in the list.
+   */
+  colours?: Readonly<Record<string, string>>
+  /**
+   * Names supplied by the data, category -> name ("SST" -> "Sandstone"). A legend row of
+   * a category listed here reads "Sandstone (SST)"; the others show the category itself.
+   */
+  labels?: Readonly<Record<string, string>>
   hasMissing: boolean
 }
 
@@ -65,9 +76,39 @@ export function numericColor(spec: NumericLegendSpec, value: number, theme: Them
   return t === null ? hexToRgb(MISSING_COLOR[theme]) : rampColor(spec.ramp, theme, t)
 }
 
-/** sRGB colour of a category code; the "no value" colour for -1. */
-export function codeColor(code: number, theme: Theme): Rgb {
-  return hexToRgb(code < 0 ? MISSING_COLOR[theme] : categoryColor(theme, code))
+type CategoryColouring = Pick<CategoricalLegendSpec, 'categories' | 'colours'>
+
+const resolved = new WeakMap<object, Partial<Record<Theme, { hex: string[]; rgb: Rgb[] }>>>()
+
+function resolve(spec: CategoryColouring, theme: Theme): { hex: string[]; rgb: Rgb[] } {
+  let perTheme = resolved.get(spec)
+  if (!perTheme) resolved.set(spec, (perTheme = {}))
+  let entry = perTheme[theme]
+  // Specs are built once and not mutated; the length test catches the one cheap case.
+  if (!entry || entry.hex.length !== spec.categories.length) {
+    const hex = spec.categories.map((name, i) => explicitColor(spec.colours, name) ?? categoryColor(theme, i))
+    entry = perTheme[theme] = { hex, rgb: hex.map(hexToRgb) }
+  }
+  return entry
+}
+
+/**
+ * `#rrggbb` per category, in list order: the colour the data supplies for that category
+ * when there is one, else the palette entry of its position (cycling past 20).
+ */
+export function categoryColors(spec: CategoryColouring, theme: Theme): readonly string[] {
+  return resolve(spec, theme).hex
+}
+
+/**
+ * sRGB colour of a category code; the "no value" colour for -1. Pass the legend's spec
+ * so that colours supplied by the data apply; without it the palette is used.
+ */
+export function codeColor(code: number, theme: Theme, spec?: CategoryColouring): Rgb {
+  if (!(code >= 0)) return hexToRgb(MISSING_COLOR[theme])
+  const index = Math.floor(code)
+  if (spec && index < spec.categories.length) return resolve(spec, theme).rgb[index]
+  return hexToRgb(categoryColor(theme, index))
 }
 
 /** Class boundaries of a stepped legend: steps + 1 values from min to max. */
@@ -91,11 +132,18 @@ export interface LegendRow {
   label: string
 }
 
+/** "Sandstone (SST)" for a category the data names, the category itself otherwise. */
+export function categoryLabel(category: string, labels: Readonly<Record<string, string>> | undefined): string {
+  const name = labels && Object.prototype.hasOwnProperty.call(labels, category) ? labels[category] : ''
+  return name && name !== category ? `${name} (${category})` : category
+}
+
 /** Rows of a stepped or categorical legend, top to bottom (high values first). */
 export function legendRows(spec: LegendSpec, theme: Theme): LegendRow[] {
   const rows: LegendRow[] = []
   if (spec.kind === 'categorical') {
-    spec.categories.forEach((name, i) => rows.push({ color: categoryColor(theme, i), label: name }))
+    const colors = categoryColors(spec, theme)
+    spec.categories.forEach((name, i) => rows.push({ color: colors[i], label: categoryLabel(name, spec.labels) }))
   } else if (spec.mode === 'stepped') {
     const breaks = steppedBreaks(spec)
     const decimals = decimalsFor((spec.max - spec.min) / Math.max(1, breaks.length - 1))

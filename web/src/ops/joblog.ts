@@ -58,6 +58,10 @@ const OPERATION_LABELS: Record<string, string> = {
   estimate: 'Estimate',
   classify: 'Classify',
   report: 'Report',
+  geology_build: 'Build geology',
+  geology_code: 'Code geology',
+  geology_uncode: 'Remove geology coding',
+  geology_remove: 'Remove geology model',
   undo: 'Undo',
 }
 

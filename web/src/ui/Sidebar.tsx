@@ -10,6 +10,8 @@ import { SurfacePanel } from './ops/SurfacePanel'
 import { JobLogPanel } from './ops/JobLogPanel'
 import { ModelPanel } from './ops/ModelPanel'
 import { DigitisePanel } from './DigitisePanel'
+import { GeologyPanel } from './ops/GeologyPanel'
+import { GeologyTree, countGeologyModels } from './GeologyTree'
 import { ObjectControls } from './ObjectControls'
 import { ReportPanel } from './ReportPanel'
 import { SectionPanel } from './SectionPanel'
@@ -35,7 +37,7 @@ function LoadTag({ id }: { id: string }) {
   )
 }
 
-function CategoryNode({ id, label }: { id: Category; label: string }) {
+function CategoryNode({ id, label, api }: { id: Category; label: string; api: boolean }) {
   const visible = useViewer((s) => s.categoryVisible[id])
   const setCategoryVisible = useViewer((s) => s.setCategoryVisible)
   const setObjectVisible = useViewer((s) => s.setObjectVisible)
@@ -52,9 +54,12 @@ function CategoryNode({ id, label }: { id: Category; label: string }) {
           aria-label={`Show ${label.toLowerCase()}`}
         />
         <span className="tree-name">{label}</span>
-        <span className="tree-count">{members.length}</span>
+        <span className="tree-count">{id === 'geology' ? countGeologyModels(objects) : members.length}</span>
       </label>
-      {members.length > 0 && (
+      {id === 'geology' ? (
+        // Models with their groups of meshes, not a flat list.
+        <GeologyTree off={!visible} tag={(objectId) => <LoadTag id={objectId} />} removable={api} />
+      ) : members.length > 0 && (
         <ul>
           {members.map((o) => (
             <li key={o.id}>
@@ -112,7 +117,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
       <h2>{project ?? 'Objects'}</h2>
       <ul className="tree">
         {CATEGORIES.map((c) => (
-          <CategoryNode key={c.id} id={c.id} label={c.label} />
+          <CategoryNode key={c.id} id={c.id} label={c.label} api={mode === 'api'} />
         ))}
       </ul>
       <SceneNote mode={mode} />
@@ -126,6 +131,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
           <ModelPanel />
           <EstimatePanel />
           <ClassifyPanel />
+          <GeologyPanel />
           <JobLogPanel />
         </>
       )}

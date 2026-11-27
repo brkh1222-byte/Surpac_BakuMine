@@ -11,6 +11,8 @@ import {
   clampOpacity,
   defaultElevationSettings,
   defaultMeshDisplay,
+  geologyMeshDisplay,
+  type GeologyMeshStyle,
   type MeshDisplay,
 } from '../meshes/display'
 import { DEFAULT_STEPS, roundNice, sanitiseRange, type LegendSpec, type NumericSettings } from '../colour/legend'
@@ -83,7 +85,7 @@ export interface LegendEntry {
 }
 
 /** A change to a mesh's display; `elevation: undefined` resets its elevation range. */
-export type MeshPatch = Partial<Omit<MeshDisplay, 'closed' | 'zRange'>>
+export type MeshPatch = Partial<Omit<MeshDisplay, 'closed' | 'zRange' | 'group'>>
 
 export interface DisplayState {
   drillholes: Record<string, DrillholeDisplay>
@@ -100,7 +102,7 @@ export interface DisplayState {
   resetNumericSettings: (id: string, key: string) => void
   setShowLabels: (id: string, show: boolean) => void
   /** Declares a mesh; keeps the user's choices when it is registered again. */
-  registerMesh: (id: string, closed: boolean, zRange: readonly [number, number], seeThrough?: boolean) => void
+  registerMesh: (id: string, closed: boolean, zRange: readonly [number, number], seeThrough?: boolean, geology?: GeologyMeshStyle) => void
   unregisterMesh: (id: string) => void
   setMesh: (id: string, patch: MeshPatch) => void
   setHover: (hover: HoverInfo | null) => void
@@ -199,13 +201,14 @@ export const useDisplay = create<DisplayState>()((set) => ({
       const d = s.drillholes[id]
       return d ? { drillholes: { ...s.drillholes, [id]: { ...d, showLabels } } } : s
     }),
-  registerMesh: (id, closed, zRange, seeThrough = false) =>
+  registerMesh: (id, closed, zRange, seeThrough = false, geology) =>
     set((s) => {
       const previous = s.meshes[id]
       if (previous) {
         return { meshes: { ...s.meshes, [id]: { ...previous, closed, zRange: [zRange[0], zRange[1]] } } }
       }
-      const sameKind = Object.values(s.meshes).filter((m) => m.closed === closed).length
+      if (geology) return { meshes: { ...s.meshes, [id]: geologyMeshDisplay(geology, closed, zRange) } }
+      const sameKind = Object.values(s.meshes).filter((m) => m.closed === closed && !m.group).length
       const display = defaultMeshDisplay(closed, zRange, sameKind)
       // Something is drawn inside this mesh (blocks inside a solid): start see-through.
       if (seeThrough) display.mode = 'transparent'

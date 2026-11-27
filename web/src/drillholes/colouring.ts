@@ -34,12 +34,15 @@ export function drillholeLegend(
 ): LegendSpec | null {
   if (!attribute) return null
   if (attribute.type === 'categorical') {
-    return {
+    const spec: LegendSpec = {
       kind: 'categorical',
       title: attribute.name,
       categories: attribute.categories,
       hasMissing: attribute.codes.includes(-1),
     }
+    // Colours the data supplies (manifest entry), keyed by category name.
+    if (info?.type === 'categorical' && info.colours) spec.colours = info.colours
+    return spec
   }
   if (!settings) return null
   const numeric = info?.type === 'numeric' ? info : undefined
@@ -65,7 +68,7 @@ export function segmentColor(attribute: SegmentAttribute | null, spec: LegendSpe
   if (attribute.type === 'numeric') {
     return spec.kind === 'numeric' ? numericColor(spec, attribute.values[segment], theme) : codeColor(-1, theme)
   }
-  return codeColor(attribute.codes[segment], theme)
+  return codeColor(attribute.codes[segment], theme, spec.kind === 'categorical' ? spec : undefined)
 }
 
 /** Linear-RGB instance colours (start + end, 6 per piece) for the line buffer. */

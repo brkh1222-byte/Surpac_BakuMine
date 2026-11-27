@@ -541,6 +541,23 @@ input {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 20 rows fit; a longer list (rock units) scrolls instead of leaving the viewport. */
+  max-height: min(340px, 45vh);
+  overflow-y: auto;
+  /* Room for the swatch outline, which the scroll box would clip. */
+  padding: 1px;
+  margin: -1px;
+}
+
+.legend-row {
+  flex: none;
+}
+
+.legend-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .legend-row {
@@ -1284,7 +1301,8 @@ input {
 .report-set legend { font-size: 11px; opacity: 0.7; }
 .report-table-wrap { overflow-x: auto; max-height: 260px; }
 /* "Wide view": the table over the viewport, next to the sidebar, every column in sight */
-.report-table-wrap.is-wide {
+.report-table-wrap.is-wide,
+.geo-report.is-wide {
   position: fixed;
   z-index: 30;
   left: 236px;
@@ -2109,3 +2127,119 @@ input {
 
 .blast-views { display: flex; gap: 6px; margin: 0 0 8px; }
 .blast-views button { flex: 1; }
+
+/* ---- Geology: object tree ----------------------------------------------------------- */
+
+.tree-group { padding-left: 46px; }
+.tree-leaf-deep { padding-left: 62px; cursor: default; }
+.tree-row-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: pointer;
+}
+.tree-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.tree-more {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tree-more:hover { color: var(--text); }
+
+/* ---- Geology panel ------------------------------------------------------------------ */
+
+/* Composition control of a block model: the label above, the layers as one row of buttons. */
+.composition { flex-direction: column; align-items: stretch; gap: 3px; }
+.composition > span { width: auto; }
+.composition-layers { flex-wrap: wrap; }
+.composition-layers button {
+  flex: 1 1 auto;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.composition-layers button:not([aria-pressed='true']):hover { background: var(--panel-hover); }
+
+/* In-page confirmation of a removal (no browser dialog). */
+.confirm-box { margin: 4px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-raised); }
+.confirm-box p { margin: 0 0 6px; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.confirm-box .confirm-actions { display: flex; gap: 6px; }
+.tree-remove { flex: none; border: 0; background: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 13px; line-height: 1; }
+.tree-remove:hover { color: var(--text); }
+.tree-confirm { margin-left: 18px; }
+
+.geo-heading { margin: 10px 0 2px; font-size: 12px; font-weight: 600; }
+.geo-subheading { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
+.geo-note { margin: 2px 0; color: var(--text-muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.geo-muted { color: var(--text-muted); }
+.geo-summary { margin: 0; font-size: 11px; }
+.geo-summary > div { display: flex; gap: 6px; padding: 1px 0; }
+.geo-summary dt { flex: none; width: 84px; color: var(--text-muted); }
+.geo-summary dd { margin: 0; overflow-wrap: anywhere; }
+.geo-legend { margin: 0; padding: 0; list-style: none; font-size: 11px; }
+.geo-legend li { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.geo-legend i { flex: none; width: 12px; height: 12px; border: 1px solid var(--line); border-radius: 2px; }
+.geo-code { flex: none; min-width: 34px; font-weight: 600; }
+.geo-table th:first-child, .geo-table td:first-child { text-align: left; }
+.geo-table td.geo-text { text-align: left; white-space: normal; min-width: 160px; }
+.geo-badge { padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; font-size: 10px; }
+.geo-badge.is-measured { border-color: var(--ok); color: var(--ok); }
+.geo-badge.is-assumed { border-color: var(--accent); color: var(--accent); }
+.geo-report { --ok: #58a777; }
+:root[data-theme='light'] .geo-report { --ok: #2c7a4b; }
+.geo-report.is-wide { max-height: 70vh; }
+.geo-report.is-wide .report-table-wrap { max-height: none; }
+.geo-report.is-wide .geo-heading { font-size: 13px; }
+.geo-report.is-wide .geo-summary, .geo-report.is-wide .geo-legend, .geo-report.is-wide .geo-note { font-size: 12px; }
+
+/* Provenance: one section per kind. In the sidebar an entry is a stacked card; in the
+   wide view the same markup is a table with one column per field. */
+.prov-section { margin: 6px 0; }
+.prov-section > summary { padding: 3px 0; font-weight: 600; cursor: pointer; }
+.prov-measured { --prov: var(--ok); }
+.prov-assumed { --prov: var(--accent); }
+.prov-missing { --prov: var(--danger); }
+.prov-section > summary::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--prov);
+}
+.prov-table { width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.35; }
+.prov-table thead { display: none; }
+.prov-table tr { display: block; margin: 4px 0; padding: 2px 0 2px 7px; border-left: 3px solid var(--prov); }
+.prov-table td { display: block; padding: 0; overflow-wrap: anywhere; }
+.prov-table td[data-label]::before { content: attr(data-label) ': '; color: var(--text-muted); }
+.prov-table td:empty { display: none; }
+.prov-detail { display: block; color: var(--text-muted); }
+.geo-report.is-wide .prov-table { font-size: 12px; }
+.geo-report.is-wide .prov-table thead { display: table-header-group; }
+.geo-report.is-wide .prov-table th { padding: 3px 8px; text-align: left; color: var(--text-muted); font-weight: 600; }
+.geo-report.is-wide .prov-table tr { display: table-row; margin: 0; padding: 0; border-left: 0; }
+.geo-report.is-wide .prov-table td { display: table-cell; padding: 4px 8px; vertical-align: top; border-top: 1px solid var(--line); }
+.geo-report.is-wide .prov-table td:empty { display: table-cell; }
+.geo-report.is-wide .prov-table td[data-label]::before { content: none; }
+.geo-report.is-wide .prov-table td.prov-item { width: 30%; border-left: 3px solid var(--prov); }
+.geo-report.is-wide .prov-table td.prov-count { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.geo-report.is-wide .control { max-width: 340px; }

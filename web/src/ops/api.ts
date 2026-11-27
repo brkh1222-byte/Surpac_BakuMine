@@ -17,13 +17,15 @@ export interface IntervalTableInfo {
 
 export interface ProjectObjectInfo {
   id: string
-  kind: 'database' | 'composite' | 'string' | 'dtm' | 'solid' | 'model' | 'constraint'
+  kind: 'database' | 'composite' | 'string' | 'dtm' | 'solid' | 'model' | 'constraint' | 'geology'
   name: string
   tables?: Record<string, IntervalTableInfo>
   columns?: string[]
   rows?: number
   attributes?: { name: string; kind: string }[]
   n_blocks?: number
+  /** Models only: the attributes a geology coding wrote (the model's coding record). */
+  geology_coding?: { geology: string | null; layers: Record<string, string>; attributes: { name: string; role: string; created: boolean }[] } | null
   error?: string
 }
 
@@ -278,6 +280,8 @@ interface OpsState {
   undos: number
   /** An undo changed the project under the panels: count it, then as `changed`. */
   undone: () => Promise<void>
+  /** One line about the last removal of an object (its panel is gone with it); null = none. */
+  notice: string | null
 }
 
 export const useOps = create<OpsState>()((set, get) => ({
@@ -295,8 +299,9 @@ export const useOps = create<OpsState>()((set, get) => ({
     clearResources()
   },
   undos: 0,
+  notice: null,
   undone: async () => {
-    set((s) => ({ undos: s.undos + 1 }))
+    set((s) => ({ undos: s.undos + 1, notice: null }))
     await get().changed()
   },
 }))

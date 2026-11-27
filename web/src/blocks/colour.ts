@@ -9,7 +9,7 @@
  * 1 kB of texture, never a per-block buffer.
  */
 import type { BlockAttributeInfo, BlockColumn } from '../api/blocks'
-import { codeColor, numericColor, type LegendSpec, type NumericSettings } from '../colour/legend'
+import { categoryColors, codeColor, numericColor, type LegendSpec, type NumericSettings } from '../colour/legend'
 import { categoryColor, hexToRgb, MISSING_COLOR, rampColor, type Rgb } from '../colour/ramps'
 import type { Theme } from '../state/store'
 
@@ -42,12 +42,19 @@ export function countMissing(values: Float32Array): number {
 
 /** The legend of the colour attribute, or null when blocks are drawn in one colour. */
 export function blockLegend(
-  info: BlockAttributeInfo | undefined,
+  // `colours` (category -> #rrggbb) and `labels` (category -> name) travel on the
+  // manifest's categorical entries.
+  info: (BlockAttributeInfo & { colours?: Readonly<Record<string, string>>; labels?: Readonly<Record<string, string>> }) | undefined,
   settings: NumericSettings | undefined,
   hasMissing: boolean,
 ): LegendSpec | null {
   if (!info) return null
-  if (info.type === 'categorical') return { kind: 'categorical', title: info.name, categories: info.categories, hasMissing }
+  if (info.type === 'categorical') {
+    const spec: LegendSpec = { kind: 'categorical', title: info.name, categories: info.categories, hasMissing }
+    if (info.colours) spec.colours = info.colours
+    if (info.labels) spec.labels = info.labels
+    return spec
+  }
   if (!settings) return null
   return {
     kind: 'numeric',
@@ -67,15 +74,16 @@ export function blockLegend(
 
 /**
  * The colour table: RGBA bytes, sRGB. Numeric: the ramp sampled at i / 255. Categorical:
- * texel i is the colour of category code i.
+ * texel i is the colour of category code i (the data's own colour when it supplies one).
  */
 export function rampTexture(spec: LegendSpec | null, theme: Theme, out: Uint8Array = new Uint8Array(TABLE_SIZE * 4)): Uint8Array {
+  const categories = spec?.kind === 'categorical' ? categoryColors(spec, theme) : []
   for (let i = 0; i < TABLE_SIZE; i++) {
     const c: Rgb = !spec
       ? hexToRgb(NEUTRAL_COLOR[theme])
       : spec.kind === 'numeric'
         ? rampColor(spec.ramp, theme, i / (TABLE_SIZE - 1))
-        : hexToRgb(categoryColor(theme, i))
+        : hexToRgb(categories[i] ?? categoryColor(theme, i))
     out[i * 4] = Math.round(c[0] * 255)
     out[i * 4 + 1] = Math.round(c[1] * 255)
     out[i * 4 + 2] = Math.round(c[2] * 255)
@@ -129,5 +137,5 @@ export function tableColor(table: Uint8Array, value: number, c: ShaderColouring,
 export function legendColor(spec: LegendSpec | null, value: number, theme: Theme): Rgb {
   if (!spec) return hexToRgb(NEUTRAL_COLOR[theme])
   if (value < MISSING_BELOW || Number.isNaN(value)) return hexToRgb(MISSING_COLOR[theme])
-  return spec.kind === 'numeric' ? numericColor(spec, value, theme) : codeColor(value, theme)
+  return spec.kind === 'numeric' ? numericColor(spec, value, theme) : codeColor(value, theme, spec)
 }

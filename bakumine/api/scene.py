@@ -33,8 +33,8 @@ from bakumine.core.geometry.mesh import Mesh
 if TYPE_CHECKING:
     from bakumine.api.blocks import BlockData
 
-Category = Literal["drillholes", "surfaces", "solids", "blockModels"]
-Kind = Literal["drillholes", "mesh", "blocks"]
+Category = Literal["drillholes", "surfaces", "solids", "blockModels", "geology"]
+Kind = Literal["drillholes", "mesh", "blocks", "geology"]
 
 #: Default demo folder: ``data/synthetic/default`` next to the package (source checkout).
 DEMO_FOLDER = Path(__file__).resolve().parents[2] / "data" / "synthetic" / "default"
@@ -52,6 +52,12 @@ class ObjectInfo:
     name: str
     category: Category
     kind: Kind
+    #: display colour ``#rrggbb`` (the manifest's ``style.colour``); None = the viewer's own
+    colour: str | None = None
+    #: sub-group in the object tree ("Units", "Faults", "Surfaces" of a geology model)
+    group: str | None = None
+    #: id of the object this one belongs to (a geology model's meshes name the model)
+    parent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,9 @@ class DrillholeData:
     traces: HoleTraces
     #: attribute column -> unit label ("g/t", "%"), where known
     units: dict[str, str] = field(default_factory=dict)
+    #: folded log code or unit code -> colour ``#rrggbb``, from the project's unit
+    #: dictionaries (``category_colours``); empty when there is none
+    colours: dict[str, str] = field(default_factory=dict)
 
 
 class SceneSource(Protocol):
@@ -88,6 +97,26 @@ class SceneSource(Protocol):
     def blocks(self, object_id: str) -> BlockData:
         """Raises ``KeyError`` when ``object_id`` is not a block model."""
         ...
+
+    # A source that has geology models also provides ``geology(object_id) -> dict`` (the
+    # manifest part of the entry: ``bounds`` and ``stats``; ``KeyError`` when there is
+    # none). It is looked up with ``getattr``, so sources without geology stay valid.
+
+
+def category_colours(categories, colours: dict[str, str]) -> dict[str, str]:
+    """The colours of the ``categories`` that the unit dictionaries know.
+
+    ``colours`` maps unit codes, weathering zones and folded log spellings (upper case,
+    stripped) to ``#rrggbb``. A category is looked up as written and then folded. Empty
+    when no category is known.
+    """
+    out: dict[str, str] = {}
+    for category in categories:
+        text = str(category)
+        colour = colours.get(text) or colours.get(text.strip().upper())
+        if colour:
+            out[text] = colour
+    return out
 
 
 class EmptySceneSource:

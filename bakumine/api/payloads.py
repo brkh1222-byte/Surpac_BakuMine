@@ -48,7 +48,7 @@ import numpy as np
 import pandas as pd
 
 from bakumine.api.binary import pack_arrays
-from bakumine.api.scene import DrillholeData, ObjectInfo, SceneSource
+from bakumine.api.scene import DrillholeData, ObjectInfo, SceneSource, category_colours
 from bakumine.core.drillholes.desurvey import HoleTraces
 from bakumine.core.geometry.mesh import Mesh
 
@@ -144,6 +144,9 @@ def attribute_summaries(data: DrillholeData) -> list[dict[str, Any]]:
             else:
                 entry["type"] = "categorical"
                 entry["categories"] = _categories(series)
+                colours = category_colours(entry["categories"], data.colours)
+                if colours:
+                    entry["colours"] = colours
             out.append(entry)
     return out
 
@@ -266,7 +269,16 @@ def _object_entry(source: SceneSource, info: ObjectInfo) -> dict[str, Any]:
         "kind": info.kind,
         "attributes": [],
     }
-    if info.kind == "drillholes":
+    if info.colour:
+        entry["style"] = {"colour": info.colour}
+    if info.group:
+        entry["group"] = info.group
+    if info.parent:
+        entry["parent"] = info.parent
+    if info.kind == "geology":
+        entry["href"] = f"/api/v1/geology/{info.id}"
+        entry.update(source.geology(info.id))  # type: ignore[attr-defined]
+    elif info.kind == "drillholes":
         data = source.drillholes(info.id)
         entry["href"] = f"{base}/drillholes"
         entry["bounds"] = _drillhole_bounds(data)
