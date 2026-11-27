@@ -2,7 +2,7 @@
 
 Research notes for the BakuMine block modeller. Scope: only the chain that turns drilling data into a 3D model of the deposit. Statistics, plotting, pit design and scheduling are out of scope.
 
-**How to read this document.** The geostatistics and geometry here are standard, published theory and are stated with confidence. Statements about Surpac's *own* conventions (sign of dip, rotation order, file layouts) are marked **[verify]**: they come from memory of public training material and third-party importers, not from GEOVIA's reference manual, and each one has a matching test task in `plan.md`.
+**How to read this document.** The geostatistics and geometry here are standard, published theory and are stated with confidence. Statements about Surpac's _own_ conventions (sign of dip, rotation order, file layouts) are marked **[verify]**: they come from memory of public training material and third-party importers, not from GEOVIA's reference manual, and each one has a matching test task in `plan.md`.
 
 **Clean-room rule.** We reimplement the published methods and interoperate through Surpac's documented text exports. We do not decompile Surpac binaries, copy its code, or parse its proprietary binary `.mdl` format.
 
@@ -10,18 +10,18 @@ Research notes for the BakuMine block modeller. Scope: only the chain that turns
 
 ## 1. The idea in one page
 
-A mine cannot see the orebody. It only has a few thousand thin cylinders of rock (drill core) sampled along lines through the ground. Block modelling answers: *given those lines, what is the grade and rock type of every cubic metre in between?*
+A mine cannot see the orebody. It only has a few thousand thin cylinders of rock (drill core) sampled along lines through the ground. Block modelling answers: _given those lines, what is the grade and rock type of every cubic metre in between?_
 
 The pipeline is always the same six steps:
 
-| # | Step | Input | Output |
-|---|------|-------|--------|
-| 1 | Measure | Drill rig, surveyors, lab | Collar, survey, assay, geology tables |
-| 2 | Desurvey | Collar + survey | 3D path of every hole |
-| 3 | Composite | 3D paths + assays | Equal-length samples with XYZ and grade |
-| 4 | Interpret | Composites + geology | Wireframe solids (ore domains) and surfaces (topography) |
-| 5 | Build blocks | Wireframes + block definition | Grid of blocks, each coded with its domain |
-| 6 | Estimate | Composites + coded blocks | Grade (and density) in every block |
+| #   | Step         | Input                         | Output                                                   |
+| --- | ------------ | ----------------------------- | -------------------------------------------------------- |
+| 1   | Measure      | Drill rig, surveyors, lab     | Collar, survey, assay, geology tables                    |
+| 2   | Desurvey     | Collar + survey               | 3D path of every hole                                    |
+| 3   | Composite    | 3D paths + assays             | Equal-length samples with XYZ and grade                  |
+| 4   | Interpret    | Composites + geology          | Wireframe solids (ore domains) and surfaces (topography) |
+| 5   | Build blocks | Wireframes + block definition | Grid of blocks, each coded with its domain               |
+| 6   | Estimate     | Composites + coded blocks     | Grade (and density) in every block                       |
 
 After step 6, volume × density × grade gives tonnes and metal. That reporting step is trivial arithmetic, but it is the best check that steps 1–6 are right.
 
@@ -30,9 +30,11 @@ After step 6, volume × density × grade gives tonnes and metal. That reporting 
 ## 2. What is measured on the ground
 
 ### 2.1 Collar survey
+
 The collar is the point where the hole enters the ground. A surveyor fixes it with RTK GPS or a total station in the mine grid: **Northing (Y), Easting (X), Elevation (Z)**. Accuracy is centimetres. Surpac stores coordinates in **Y, X, Z order** (northing first) **[verify]**, which is the reverse of most software and a classic import bug.
 
 ### 2.2 Downhole survey
+
 Holes bend. A probe (magnetic single-shot, multi-shot, or gyroscope) is lowered and records, at stations every 10–50 m:
 
 - **depth** along the hole (metres from collar),
@@ -42,20 +44,23 @@ Holes bend. A probe (magnetic single-shot, multi-shot, or gyroscope) is lowered 
 Surpac's convention: **dip is negative downward**, so a vertical hole is −90° **[verify]**. Magnetic azimuths must be corrected to grid north (declination + grid convergence) before use.
 
 ### 2.3 Logging and sampling
+
 The core is laid in trays. A geologist logs intervals (`from`, `to`) of rock type, alteration and structure. The core is cut and sampled in intervals (typically 1–2 m), and a lab assays each sample for grade (g/t Au, % Cu, …). Density (specific gravity) is measured on selected pieces by water immersion.
 
 ### 2.4 Topography
+
 The ground surface is surveyed (drone photogrammetry, LiDAR or ground survey) as a cloud of XYZ points or contour strings. It caps the model: there are no blocks in the air.
 
 ### 2.5 The resulting database
+
 Four tables, linked by `hole_id`:
 
-| Table | Fields | Kind |
-|-------|--------|------|
-| `collar` | hole_id, y, x, z, max_depth, hole_path | one row per hole |
-| `survey` | hole_id, depth, dip, azimuth | point data |
-| `assay` | hole_id, depth_from, depth_to, grade fields | interval data |
-| `geology` | hole_id, depth_from, depth_to, rock code | interval data |
+| Table     | Fields                                      | Kind             |
+| --------- | ------------------------------------------- | ---------------- |
+| `collar`  | hole_id, y, x, z, max_depth, hole_path      | one row per hole |
+| `survey`  | hole_id, depth, dip, azimuth                | point data       |
+| `assay`   | hole_id, depth_from, depth_to, grade fields | interval data    |
+| `geology` | hole_id, depth_from, depth_to, rock code    | interval data    |
 
 Surpac requires `collar` and `survey`; the rest are optional user tables. `hole_path` says whether the trace is straight or curved.
 
@@ -70,9 +75,11 @@ The survey gives direction at a few depths. Desurveying integrates those directi
 Let inclination from vertical be `I` and azimuth `A`. With Surpac dip `δ` (negative down): `I = 90° + δ` (so δ = −90° gives I = 0, straight down).
 
 ### 3.1 Tangent method (crude)
+
 Use the upper station's direction for the whole interval. Fast, and biased whenever the hole curves.
 
 ### 3.2 Balanced tangential
+
 Average the two stations' direction vectors:
 
 ```
@@ -82,6 +89,7 @@ Average the two stations' direction vectors:
 ```
 
 ### 3.3 Minimum curvature (the industry standard)
+
 Assume the hole follows a circular arc between stations. Compute the dogleg angle β between the two direction vectors and apply a ratio factor to the balanced-tangential result:
 
 ```
@@ -129,12 +137,15 @@ Output: a point cloud `(x, y, z, grade…, domain, hole_id, length)`. This is th
 Estimation must not smear ore grade into waste. So the geologist first draws where each rock unit is, and the model is built inside those shapes.
 
 ### 5.1 Strings
+
 Surpac's primitive is the **string**: an ordered list of 3D points with a string number, open or closed. On each vertical cross-section through the drilling, the geologist digitises a closed string around the ore intercepts.
 
 ### 5.2 Surfaces (DTM)
+
 A DTM is a triangulated surface that has one Z for each XY: topography, a weathering boundary, a fault. It is built by **2D Delaunay triangulation** of the points in plan view, with strings honoured as **breaklines** (constrained Delaunay), so ridges and crests are not cut across.
 
 #### 5.2.1 Topography from an elevation raster
+
 Sources, most precise first: a ground survey (RTK GNSS / total station, centimetres), drone photogrammetry or LiDAR (centimetres to decimetres, exported as points or a grid), the contour drawings of a topographic map (half the contour interval), commercial stereo-satellite surfaces (1-3 m), free global DEMs (Copernicus GLO-30, ALOS AW3D30, SRTM/NASADEM: 1 arc second, about 30 m; Copernicus states an absolute vertical error below 4 m at 90 % confidence), and the collar elevations alone (exact at the holes only). A global DEM is a surface model (it includes dumps and buildings) of the date of its images (Copernicus: 2011-2015), so later pits and dumps are missing.
 
 A raster is a grid of heights `z[row, col]` at cell centres. GeoTIFF georeferencing (OGC GeoTIFF 1.1): `ModelPixelScale (sx, sy)` and a tie point `(i, j) -> (X, Y)` give `X = X_tie + (col - i) * sx`, `Y = Y_tie - (row - j) * sy`; with `RasterPixelIsArea` the tie point is the corner of the cell, so its centre is half a cell further, with `RasterPixelIsPoint` it is the centre. ESRI ASCII grids give the lower-left corner (`xllcorner`) or centre (`xllcenter`) and list the rows from north to south.
@@ -148,11 +159,13 @@ A precise survey of the deposit area and a DEM around it are joined by triangula
 Copernicus GLO-30 is published as 1° x 1° Cloud Optimised GeoTIFF tiles named after their south-west corner (`Copernicus_DSM_COG_10_N50_00_E015_00_DEM`) in a public bucket; there is no tile over open sea. The tiles for a model come from the longitude / latitude box of its plan rectangle, with the edges sampled, because a straight UTM edge is curved in longitude / latitude (a line of constant northing reaches its highest latitude on the central meridian).
 
 ### 5.3 Solids
+
 A solid is a closed triangulated mesh. Classic Surpac workflow: triangulate between the closed strings on successive sections ("between segments"), then cap the two ends. The between-section step is a ring-stitching problem: walk both polygons and at each step add the triangle with the shorter diagonal. Bifurcations (one polygon on a section becoming two on the next) are handled by splitting the parent ring.
 
 A modern alternative is **implicit modelling**: fit a radial-basis-function to signed distance from the contacts in the drillholes and extract the zero isosurface with marching cubes. Surpac itself is explicit (section-based); implicit is listed as a stretch goal because it makes solids from drilling without hand-digitising.
 
 ### 5.4 Solid validation
+
 A solid is usable only if it is: closed (every edge shared by exactly two triangles), free of self-intersection, free of duplicate or degenerate triangles, and consistently oriented. Surpac refuses to use an unvalidated solid for volume or constraints.
 
 ### 5.5 Formulas on meshes
@@ -168,6 +181,7 @@ Point inside solid: cast a ray from the point (use +Z); count triangle crossings
 Above/below DTM: locate the triangle under the point in plan, interpolate Z by barycentric coordinates, compare.
 
 ### 5.6 File formats (text interchange) **[verify against real exports]**
+
 - `.str` — text. Header line (location, date, purpose, memo); an axis record; then one point per line as `string_no, Y, X, Z, d1, d2…`; a line of zeros ends each segment; `0, 0, 0, 0, END` ends the file.
 - `.dtm` — text. Holds only topology: triangles as index triples into the paired `.str` file, grouped into `OBJECT` / `TRISOLATION` blocks, with neighbour indices. A `.dtm` is meaningless without its `.str`.
 - `.mdl` — the block model. Proprietary binary. **We do not read it.** Interchange is by Surpac's block-model CSV export (centroid Y, X, Z, block sizes, attributes).
@@ -356,6 +370,7 @@ The model is validated by hole-out cross-validation: refit without a fold of hol
 ## 6. The block model itself
 
 ### 6.1 Definition
+
 A block model is a regular 3D grid plus a table of attributes. It is fully defined by:
 
 - **origin** — the minimum corner (Y, X, Z),
@@ -374,33 +389,38 @@ world = origin + R · local
 `R` is the model rotation matrix; identity for an unrotated model.
 
 ### 6.2 Sub-blocking
+
 Parent blocks are too coarse at a contact: a 10 m block straddling the ore boundary is neither ore nor waste. Surpac subdivides such blocks as an **octree**: each split halves the block in every direction, so sub-block sizes are `user size / 2ⁿ`. Blocks away from any boundary stay whole. Blocks inside homogeneous regions may also be merged into super-blocks for storage. The result follows the wireframe closely while storing far fewer blocks than a uniformly fine grid.
 
 Consequences for our data structure: blocks are not a dense 3D array. Store a flat table of `(centroid, size, attributes)` with an octree or Morton-code index. Dense arrays remain the fast path for models without sub-blocks.
 
 ### 6.3 Attributes
+
 Named columns on the block table: grade (float), density (float), rock code (integer or string), plus calculated attributes defined by an expression of others. Every attribute has a **background value** used where nothing was assigned (e.g. grade −99 or 0, density of waste).
 
 ### 6.4 Constraints
+
 A constraint is a logical test that selects blocks. This is the core mechanism of Surpac block modelling; every operation (fill, estimate, report, display) takes a constraint. Primitive types:
 
-| Type | Test (on the block centroid) |
-|------|------|
-| DTM | above / below a surface |
-| 3DM (solid) | inside / outside a closed mesh |
-| Block attribute | `grade > 0.5`, `rock = "OX"` |
-| Plane | above / below / in front of a plane |
-| Closed string | inside / outside a polygon projected along an axis |
-| Block index / coordinate range | Z between two levels |
+| Type                           | Test (on the block centroid)                       |
+| ------------------------------ | -------------------------------------------------- |
+| DTM                            | above / below a surface                            |
+| 3DM (solid)                    | inside / outside a closed mesh                     |
+| Block attribute                | `grade > 0.5`, `rock = "OX"`                       |
+| Plane                          | above / below / in front of a plane                |
+| Closed string                  | inside / outside a polygon projected along an axis |
+| Block index / coordinate range | Z between two levels                               |
 
 Primitives are combined with AND / OR / NOT into an expression, e.g. `(inside ore_solid) AND (below topo) AND NOT (inside dyke)`. Constraints can be saved and reused.
 
 When a geometric constraint is applied with sub-blocking enabled, blocks cut by the boundary are split until the minimum size, and the test is then made on each sub-block's centroid.
 
 ### 6.5 Partial percentages
+
 Alternative or supplement to sub-blocking: store in each block the fraction of its volume inside a solid. Computed by testing an `n × n × n` lattice of points in the block, or exactly by clipping the mesh against the block. Used for precise volume reporting.
 
 ### 6.6 Typical build sequence
+
 1. Create the empty model from extents that cover the wireframes plus margin.
 2. Add attributes with background values.
 3. Code blocks: `rock = "AIR"` above topography; `rock = "ORE1"` inside solid 1, etc., with sub-blocking.
@@ -421,15 +441,19 @@ z*(block) = Σ λᵢ · z(xᵢ)
 Methods differ only in how the weights `λᵢ` are chosen.
 
 ### 7.1 Assign value
+
 Constant per constraint. Used for rock codes and default density.
 
 ### 7.2 Nearest neighbour (NN)
+
 `λ = 1` for the closest sample, 0 otherwise. Equivalent to Voronoi polyhedra. No smoothing; unusable for local grade but its global mean is the declustered mean of the data, which makes it the standard check on other estimates.
 
 ### 7.3 Inverse distance weighting (IDW)
+
 ```
 λᵢ = (1/dᵢᵖ) / Σⱼ (1/dⱼᵖ)
 ```
+
 `p` = 2 is usual; higher `p` approaches NN, lower approaches a plain average. `d` is the **anisotropic** distance (§7.5). A sample at `d = 0` takes all the weight. Simple and robust, but ignores clustering (ten samples side by side count ten times) and uses an arbitrary `p`.
 
 ### 7.4 Kriging
@@ -450,7 +474,7 @@ Exponential   γ(h) = c₀ + c·[1 − exp(−3h/a)]
 Gaussian      γ(h) = c₀ + c·[1 − exp(−3h²/a²)]
 ```
 
-Nugget = variation at zero distance (sampling error + micro-scale variability). Range = distance beyond which samples are uncorrelated. The user said no statistics module, so variogram *modelling tools* are out of scope; but the estimator must accept variogram parameters as input, and we provide a basic experimental-variogram calculator so those parameters can be obtained without Surpac.
+Nugget = variation at zero distance (sampling error + micro-scale variability). Range = distance beyond which samples are uncorrelated. The user said no statistics module, so variogram _modelling tools_ are out of scope; but the estimator must accept variogram parameters as input, and we provide a basic experimental-variogram calculator so those parameters can be obtained without Surpac.
 
 **Ordinary kriging (OK).** Unknown local mean, weights forced to sum to 1. For `n` samples, solve the `(n+1)` linear system:
 
@@ -501,6 +525,7 @@ The rotation order and handedness differ between packages. Surpac's own conventi
 **Dynamic anisotropy** (newer Surpac): bearing/dip/plunge stored per block as attributes, so the ellipsoid follows a folded orebody. Stretch goal.
 
 ### 7.6 Search parameters
+
 Each controls which samples enter a block's estimate:
 
 - minimum and maximum number of samples (block left unestimated below the minimum),
@@ -512,6 +537,7 @@ Each controls which samples enter a block's estimate:
 Also stored per block as diagnostics: number of samples, average distance, distance to nearest sample, kriging variance. These later drive resource classification.
 
 ### 7.7 Grade capping
+
 Extreme assays (a single 300 g/t sample) are cut to a top value before estimation, or their influence radius is restricted. A simple pre-estimation parameter.
 
 ---
@@ -553,11 +579,12 @@ Open risk: without a Surpac licence and real exported files, the **[verify]** it
 ## 11. References
 
 Theory (standard texts):
-- Isaaks & Srivastava, *An Introduction to Applied Geostatistics* (1989) — variograms, kriging, search strategy.
-- Deutsch & Journel, *GSLIB: Geostatistical Software Library and User's Guide* (1998) — reference algorithms (`kt3d`, `gamv`) and rotation conventions.
-- Journel & Huijbregts, *Mining Geostatistics* (1978) — block kriging, support.
-- Rossi & Deutsch, *Mineral Resource Estimation* (2014) — the full practical workflow, compositing, validation.
-- Sinclair & Blackwell, *Applied Mineral Inventory Estimation* (2002).
+
+- Isaaks & Srivastava, _An Introduction to Applied Geostatistics_ (1989) — variograms, kriging, search strategy.
+- Deutsch & Journel, _GSLIB: Geostatistical Software Library and User's Guide_ (1998) — reference algorithms (`kt3d`, `gamv`) and rotation conventions.
+- Journel & Huijbregts, _Mining Geostatistics_ (1978) — block kriging, support.
+- Rossi & Deutsch, _Mineral Resource Estimation_ (2014) — the full practical workflow, compositing, validation.
+- Sinclair & Blackwell, _Applied Mineral Inventory Estimation_ (2002).
 - Sawaryn & Thorogood, "A Compendium of Directional Calculations Based on the Minimum Curvature Method", SPE 84246 (2005) — desurvey formulas.
 
 Geology model (5.7). Bibliographic details written from memory; titles, volumes and pages are **[unverified]** until checked:
@@ -577,6 +604,7 @@ Geology model (5.7). Bibliographic details written from memory; titles, volumes 
 - Fossen, *Structural Geology*, 2nd ed., Cambridge (2016) — throw, heave, separation.
 
 Surpac-specific and format sources consulted:
+
 - [GEOVIA: Top 5 Tips in Surpac (dynamic anisotropy)](https://www.3ds.com/fileadmin/PRODUCTS-SERVICES/GEOVIA/PDF/3DS-GEOVIA-SurpacTop5Tips.pdf)
 - [GEOVIA community: Variable sub-celling in Surpac](https://3dswym.3dexperience.3ds.com/post/geovia-user-community/surpac-tip-improve-your-estimations-with-variable-sub-celling_v6b_6VKOSxmgWQH5IHl0QA)
 - [GEOVIA community: SDM, a format for the future](https://3dswym.3dexperience.3ds.com/post/geovia-user-community/sdm-a-format-for-the-future_a8NsLaURRgyFiv26JDkhbA)

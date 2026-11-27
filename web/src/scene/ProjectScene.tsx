@@ -94,6 +94,15 @@ function DrillholesObject({ object, ranges }: { object: ManifestObject; ranges: 
   return <DrillholesLayer object={stable.current} set={current.set} colorBy={current.colorBy} />
 }
 
+/**
+ * Surfaces made for the Blast BakuMine view (the wide terrain and the far backdrop) are
+ * kilometres across. In the modeller they are listed but unticked, so they neither fill the
+ * view nor stretch "zoom to extents".
+ */
+export function blastOnly(object: Pick<ManifestObject, 'id' | 'name'>): boolean {
+  return object.id === 'blast-terrain' || /^(blast|backdrop) terrain$/i.test(object.name)
+}
+
 function MeshObject({ object, seeThrough, order }: { object: ManifestObject; seeThrough: boolean; order: number }) {
   const closed = object.stats.closed === true
   const bounds = object.bounds ?? NO_BOUNDS
@@ -108,10 +117,10 @@ function MeshObject({ object, seeThrough, order }: { object: ManifestObject; see
   const mesh = useMesh(object)
   // The blocks inside stand for the solid: it is listed, unticked, and see-through when shown.
   const layer = useMemo(
-    () => ({ id: object.id, name: object.name, category: object.category, bounds, hidden: seeThrough, parent: object.parent, group: object.group, order }),
+    () => ({ id: object.id, name: object.name, category: object.category, bounds, hidden: seeThrough || blastOnly(object), parent: object.parent, group: object.group, order }),
     [object.id, object.name, object.category, bounds, seeThrough, object.parent, object.group, order],
   )
-  if (mesh.status !== 'ready') return <Placeholder object={object} hidden={seeThrough} order={order} />
+  if (mesh.status !== 'ready') return <Placeholder object={object} hidden={seeThrough || blastOnly(object)} order={order} />
   return <MeshLayer object={layer} mesh={mesh.data} />
 }
 
