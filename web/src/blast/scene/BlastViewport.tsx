@@ -77,10 +77,17 @@ function Camera({ bundle, origin }: LayerProps) {
       invalidate()
     }
     // From behind the excavators, at eye height above them, looking at the blast.
-    const safeView = () => {
+    let waiting = 0
+    const safeView = (attempt = 0) => {
       const sites = equipmentSites(bundle)
       const ground = blastView.groundAt
-      if (sites.length === 0 || !ground) return
+      if (sites.length === 0) return
+      if (!ground) {
+        // Pressed before the terrain has arrived: try again for up to five seconds.
+        window.clearTimeout(waiting)
+        if (attempt < 25) waiting = window.setTimeout(() => safeView(attempt + 1), 200)
+        return
+      }
       const [bx, by, bz] = blastCentre(bundle)
       const mx = sites.reduce((a, s) => a + s.x, 0) / sites.length
       const my = sites.reduce((a, s) => a + s.y, 0) / sites.length
@@ -98,12 +105,14 @@ function Camera({ bundle, origin }: LayerProps) {
       invalidate()
     }
     blastView.fit = fit
-    blastView.safeView = safeView
+    const startSafeView = () => safeView(0)
+    blastView.safeView = startSafeView
     fit()
     return () => {
       controls.dispose()
       if (blastView.fit === fit) blastView.fit = null
-      if (blastView.safeView === safeView) blastView.safeView = null
+      window.clearTimeout(waiting)
+      if (blastView.safeView === startSafeView) blastView.safeView = null
     }
   }, [camera, gl, invalidate, bundle, origin])
   return null
