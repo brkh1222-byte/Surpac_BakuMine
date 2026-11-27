@@ -132,6 +132,7 @@ that are not finite are written as `null`.
 | B26 | Site view, fourteenth pass (owner's review): blast sound rebuilt (hole cracks, boom, rolling rumble, echo, falling rock), started with the first hole | orchestrator | B25 | typecheck and existing tests; signal check in the browser pending |
 | B27 | Site view, fifteenth pass (owner's review): every hole booms when the player passes its firing time, at any speed; tail after the last hole | orchestrator | B26 | counted in the browser on a 100-hole blast (77 booms, 23 merged, 1 tail, no errors); existing tests |
 | B28 | Site view, sixteenth pass (owner's review): continuous roar from the first hole to the last under the per-hole booms | orchestrator | B27 | counted in the browser (1 roar, 73 booms, 27 merged, 1 tail, no errors); existing tests |
+| B29 | Site view, seventeenth pass (owner's review): detonation visible the instant a hole fires (dust without fade-in delay, larger flash), so sound and picture match | orchestrator | B28 | paused at 59.5 ms in the browser: 6 holes fired, 6 booms, 6 flashes, no errors; existing tests |
 
 Parallel waves: W1 = B2, B3, B4, B6 (fixture-driven), B7 research. W2 = B5. W3 = B6 wiring to the API, B8.
 Agents do not commit and do not run the full `make check`; they run their own tests and ruff on their files.

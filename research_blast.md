@@ -1116,6 +1116,13 @@ blast"): one unbroken roar (looped noise through a 300 Hz low-pass and a 41 Hz d
 to the last while the blast plays, with the per-hole booms on top; it fades when playback stops or leaves that
 interval, and the tail follows the last hole. Seen in the browser: one roar, 73 booms, 27 merged, one tail.
 
+Seventeenth pass (task B29), after the owner's review ("when it starts sound, the blast has not detonated on the
+animation yet"): the booms were on time (parcels launch within about 1 ms of their hole), but nothing showed at
+that instant: the dust faded in over 4 % of its life (0.3 to 0.5 s of blast time, 6 to 10 s in slow motion), its
+columns started up to 0.26 s after the hole, and the flash was small. Now the dust is there within 0.01 s of its
+birth, the first four puffs of a hole are born with it and the rest within 45 ms, and the flash is 3.5 growing to
+12.5 m for 150 ms and brighter. Seen in the browser paused at 59.5 ms: six holes fired, six booms, six flashes.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.

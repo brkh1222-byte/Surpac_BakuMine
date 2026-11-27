@@ -38,9 +38,11 @@ uniform vec3 uDrift;
 uniform vec3 uSun;
 varying vec2 vCorner;
 varying float vAge;
+varying float vBorn;
 varying float vOpacity;
 void main() {
   float dt = (uTime - aLife.x) / 1000.0;
+  vBorn = dt;
   vCorner = position.xy * 2.0;
   vAge = dt / aLife.y;
   vOpacity = aTint.a;
@@ -60,11 +62,12 @@ void main() {
 const SHADOW_FRAGMENT = /* glsl */ `
 varying vec2 vCorner;
 varying float vAge;
+varying float vBorn;
 varying float vOpacity;
 void main() {
   float r = length(vCorner);
   if (r >= 1.0) discard;
-  float life = smoothstep(0.0, 0.04, vAge) * (1.0 - smoothstep(0.35, 1.0, vAge));
+  float life = smoothstep(0.0, 0.01, vBorn) * (1.0 - smoothstep(0.35, 1.0, vAge));
   float alpha = 0.3 * vOpacity * life * smoothstep(1.0, 0.2, r);
   if (alpha < 0.002) discard;
   gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
@@ -83,9 +86,11 @@ uniform vec3 uDrift;    // wind east, wind north, rise (m/s)
 varying vec2 vCorner;
 varying vec4 vTint;
 varying float vAge;     // 0 at birth .. 1 at the end of its life
+varying float vBorn;    // seconds since birth
 varying float vSeed;
 void main() {
   float dt = (uTime - aLife.x) / 1000.0;
+  vBorn = dt;
   vCorner = position.xy * 2.0;
   vTint = aTint;
   vSeed = aSeed;
@@ -108,6 +113,7 @@ uniform vec3 uHaze;
 varying vec2 vCorner;
 varying vec4 vTint;
 varying float vAge;
+varying float vBorn;
 varying float vSeed;
 float hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -128,15 +134,16 @@ void main() {
   vec2 q = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * vCorner * 2.4 + vSeed * 37.0;
   float billow = 0.55 * noise(q) + 0.3 * noise(q * 2.3 + 11.0) + 0.15 * noise(q * 5.1);
   float body = smoothstep(1.0, 0.1, r + 0.6 * (billow - 0.5)) * (0.45 + 1.1 * billow);
-  // Quick to appear, slow to thin out.
-  float life = smoothstep(0.0, 0.04, vAge) * (1.0 - smoothstep(0.35, 1.0, vAge));
+  // There within a hundredth of a second of its birth (in slow motion the eye must see the
+  // dust the moment the hole fires), slow to thin out.
+  float life = smoothstep(0.0, 0.01, vBorn) * (1.0 - smoothstep(0.35, 1.0, vAge));
   // The lower edge thins out, so a puff does not end in a hard line where it meets the ground.
   float alpha = vTint.a * body * life * smoothstep(-1.0, -0.25, vCorner.y);
   if (alpha < 0.004) discard;
   // Lit from above and the sun side; the first instant is bright (the hot gases).
   float light = 0.74 + 0.3 * vCorner.y + 0.1 * vCorner.x + 0.3 * (billow - 0.5);
   vec3 colour = vTint.rgb * light;
-  colour = mix(colour, vec3(1.0, 0.86, 0.62), 0.55 * (1.0 - smoothstep(0.0, 0.012, vAge)));
+  colour = mix(colour, vec3(1.0, 0.86, 0.62), 0.55 * (1.0 - smoothstep(0.0, 0.06, vBorn)));
   colour = mix(colour, uHaze, 0.25 * smoothstep(0.3, 1.0, vAge));
   gl_FragColor = vec4(colour, alpha);
   #include <colorspace_fragment>
@@ -177,7 +184,8 @@ export function dustPuffs(bundle: LayerProps['bundle']): Puff[] {
       puffs.push({
         start: [h.collar[0] + (hash01(seed, 32) - 0.5) * 3, h.collar[1] + (hash01(seed, 33) - 0.5) * 3, h.collar[2] + 0.3],
         velocity: [Math.cos(a) * out, Math.sin(a) * out, up],
-        birth: h.t_fire_ms + (column ? 260 : 120) * hash01(seed, 36),
+        // The first puffs are born with the hole; the rest follow within a few hundredths of a second.
+        birth: h.t_fire_ms + (c < 4 ? 0 : (column ? 45 : 20) * hash01(seed, 36)),
         life: (column ? 7 : 5) + 5 * hash01(seed, 37),
         radius: column ? 0.7 + 0.9 * hash01(seed, 38) : 1.2 + 0.8 * hash01(seed, 38),
         growth: (column ? 2.3 : 2.9) + 1.5 * hash01(seed, 39),
@@ -197,7 +205,7 @@ export function dustPuffs(bundle: LayerProps['bundle']): Puff[] {
         puffs.push({
           start: p.p0[i],
           velocity: [v[0] * share, v[1] * share, v[2] * share + (isSoil ? 2.5 : 1)],
-          birth: p.t0_ms[i] + 40 * hash01(seed, 42),
+          birth: p.t0_ms[i] + 8 * hash01(seed, 42),
           life: 6 + 5 * hash01(seed, 43),
           radius: 0.7 + 0.7 * hash01(seed, 44),
           growth: isSoil ? 1.9 : 1.4,

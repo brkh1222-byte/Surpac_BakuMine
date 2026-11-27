@@ -5,7 +5,8 @@
  *   pile, the bench walls, stones and shrubs). A weak light from the sun's direction owns
  *   the shadow map; `ShadowCatcher` is a copy of a ground mesh that shows only the shadow
  *   falling on it, so the terrain's own picture and shading stay as they are.
- * - `Flashes`: a short glow at each collar when its hole fires.
+ * - `Flashes`: a glow at each collar from the instant its hole fires (150 ms of blast time,
+ *   3.5 growing to 12.5 m), the first thing the eye gets of a detonation.
  * - `BlastSound`: one unbroken roar from the first hole to the last, every hole booming on
  *   top of it when the player passes its firing time; a rolling rumble and falling rock
  *   follow the last hole.
@@ -88,13 +89,13 @@ varying float vAge;
 void main() {
   float dt = uTime - aBirth;
   vCorner = position.xy * 2.0;
-  vAge = dt / 110.0;
-  if (dt <= 0.0 || dt >= 110.0) {
+  vAge = dt / 150.0;
+  if (dt <= 0.0 || dt >= 150.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
   vec4 mv = modelViewMatrix * vec4(aCentre, 1.0);
-  mv.xy += position.xy * 2.0 * (1.6 + 5.0 * vAge);
+  mv.xy += position.xy * 2.0 * (3.5 + 9.0 * vAge);
   gl_Position = projectionMatrix * mv;
 }
 `
@@ -105,7 +106,7 @@ void main() {
   float r = length(vCorner);
   if (r >= 1.0) discard;
   float glow = pow(1.0 - r, 2.2) * (1.0 - vAge) * (1.0 - vAge);
-  gl_FragColor = vec4(vec3(1.0, 0.82, 0.55) * glow * 1.6, glow);
+  gl_FragColor = vec4(vec3(1.0, 0.84, 0.58) * glow * 2.4, glow);
   #include <colorspace_fragment>
 }
 `
