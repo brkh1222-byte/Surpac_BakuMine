@@ -305,15 +305,20 @@ def default_polygon(
 # ------------------------------------------------------------------------------ project
 
 
+#: Id of a project surface made for the blast view; :func:`project_site` prefers it.
+BLAST_TERRAIN_ID = "blast-terrain"
+
+
 def project_site(
     folder: str | Path, topo: str | None = None, model: str | None = None
 ) -> tuple[Any, tuple[np.ndarray, np.ndarray] | None, dict[str, str | None]]:
     """Topography and blocks of a project folder.
 
-    Returns ``(dtm, blocks, ids)``: the DTM object ``topo`` (default: the first ``dtm`` of
-    the project), ``blocks = (centres, sizes)`` of the block model ``model`` (``None`` when
-    no model is asked for) and the ids used. Block sizes are along the model axes; a
-    rotated model's blocks are passed on with their centres only rotated.
+    Returns ``(dtm, blocks, ids)``: the DTM object ``topo`` (default: the ``dtm`` with the id
+    :data:`BLAST_TERRAIN_ID` when the project has one, else the first ``dtm`` of the project),
+    ``blocks = (centres, sizes)`` of the block model ``model`` (``None`` when no model is
+    asked for) and the ids used. Block sizes are along the model axes; a rotated model's
+    blocks are passed on with their centres only rotated.
 
     Raises ``ValueError`` when the project has no DTM or an id is unknown.
     """
@@ -332,7 +337,14 @@ def project_site(
                 return obj
         raise ValueError(f"the project has no {kind} object {object_id!r}")
 
-    topo_obj = pick(topo, "dtm")
+    # A surface made for the blast view (wider and finer than the modeller's topography) is
+    # preferred when no id is asked for: its id is "blast-terrain".
+    preferred = (
+        None
+        if topo is not None
+        else next((obj for obj in project.list("dtm") if obj.id == BLAST_TERRAIN_ID), None)
+    )
+    topo_obj = preferred if preferred is not None else pick(topo, "dtm")
     if topo_obj is None:
         raise ValueError("the project has no topography (dtm object) to put the blast on")
     dtm = DTM(read_obj(project.path_of(topo_obj)))

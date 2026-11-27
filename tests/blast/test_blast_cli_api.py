@@ -203,3 +203,34 @@ def test_report_prints_the_key_numbers(served, tmp_path, capsys):
         assert want in text, want
     assert run("blast", "report", result, "--out", tmp_path / "report.txt") == 0
     assert (tmp_path / "report.txt").read_text() == text
+
+
+def test_project_site_prefers_the_surface_made_for_the_blast(tmp_path):
+    """Without an id, the dtm with the id ``blast-terrain`` is the ground, wherever it is listed."""
+    from bakumine.blast import bench
+
+    def surface(name: str, z: float, side: int) -> str:
+        path = tmp_path / f"{name}.obj"
+        write_obj(
+            path,
+            dtm_from_grid(np.full((side, side), z), (0.0, 0.0), (10.0, 10.0)).mesh,
+            decimals=None,
+        )
+        return str(path)
+
+    folder = tmp_path / "project"
+    project = Project.create(folder, "site")
+    project.add("dtm", surface("small", 100.0, 5), "Topography", "topo")
+    dtm, _, ids = bench.project_site(folder)
+    assert ids["topo"] == "topo" and float(dtm.z_at(20.0, 20.0)) == pytest.approx(100.0)
+
+    project.add("dtm", surface("wide", 130.0, 21), "Blast terrain", bench.BLAST_TERRAIN_ID)
+    dtm, _, ids = bench.project_site(folder)
+    assert ids["topo"] == bench.BLAST_TERRAIN_ID and float(dtm.z_at(20.0, 20.0)) == pytest.approx(
+        130.0
+    )
+    # An id that is asked for still wins.
+    dtm, _, ids = bench.project_site(folder, "topo")
+    assert ids["topo"] == "topo" and float(dtm.z_at(20.0, 20.0)) == pytest.approx(100.0)
+    with pytest.raises(ValueError, match="nope"):
+        bench.project_site(folder, "nope")

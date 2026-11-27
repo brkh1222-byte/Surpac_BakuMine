@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   blastCentre, depthBelowCollars, DUST_DRAG_S, DUST_RISE, DUST_WIND, dustCentre, dustRadius, EQUIPMENT_MARGIN_M, equipmentSites, fragmentOffset,
-  fragmentSize, groundRelief, hash01, machineIdle, RELIEF_MAX_M, reliefWeight,
+  fragmentSize, groundRelief, hash01, machineIdle, RELIEF_MAX_M, reliefWeight, roughSite,
 } from './realism'
 import { heightSampler } from './topography'
 
@@ -163,6 +163,72 @@ describe('fine relief of the ground', () => {
     expect(reliefWeight(100, 200, patches, hole)).toBe(0) // inside the hole
     expect(reliefWeight(100, 216, patches, hole)).toBeCloseTo(0.5, 12) // 6 m outside it: half
     expect(reliefWeight(100, 222, patches, hole)).toBeCloseTo(1, 12) // 12 m outside it: full
+  })
+})
+
+describe('the site after blasting', () => {
+  // A 121 x 121 m grid at 1 m: ground at 100, a square cut to 90 in the middle, and the blast
+  // lowers a smaller square inside it by a further 4 m.
+  const n = 121
+  const before: number[] = []
+  const after: number[] = []
+  const cut: number[] = []
+  for (let ix = 0; ix < n; ix++) {
+    for (let iy = 0; iy < n; iy++) {
+      const inCut = ix >= 40 && ix <= 80 && iy >= 40 && iy <= 80
+      const inBlast = ix >= 50 && ix <= 70 && iy >= 50 && iy <= 70
+      before.push(inCut ? 90 : 100)
+      cut.push(inCut ? 10 : 0)
+      after.push((inCut ? 90 : 100) - (inBlast ? 4 : 0))
+    }
+  }
+  const grid = { origin: [1000, 2000] as [number, number], spacing: 1, shape: [n, n] as [number, number], z_before: before, z_after: after, cut_m: cut }
+  const rough = roughSite(grid)
+  const at = (values: (number | null)[], ix: number, iy: number) => values[ix * n + iy] as number
+
+  it('leaves the edge of the grid alone, so it still meets the terrain', () => {
+    for (let k = 0; k < n; k++) {
+      for (const [ix, iy] of [[0, k], [n - 1, k], [k, 0], [k, n - 1]]) {
+        expect(at(rough.before, ix, iy)).toBe(100)
+        expect(at(rough.after, ix, iy)).toBe(100)
+      }
+    }
+  })
+
+  it('bends the outline of the cut: its edge is no longer on a straight line', () => {
+    // Where the wall is met going in from the west, row by row.
+    const edges: number[] = []
+    for (let iy = 45; iy <= 75; iy++) {
+      let ix = 20
+      while (ix < 100 && at(rough.before, ix, iy) > 95) ix++
+      edges.push(ix)
+    }
+    expect(Math.max(...edges) - Math.min(...edges)).toBeGreaterThanOrEqual(3) // the straight wall was at ix = 40 in every row
+    for (const e of edges) expect(Math.abs(e - 40)).toBeLessThanOrEqual(14) // bent, not moved away
+    // Heights are still the ground or the floor (or the one-cell ramp between them): nothing is invented.
+    for (const z of rough.before) expect(z as number).toBeGreaterThanOrEqual(90 - 1e-9)
+    for (const z of rough.before) expect(z as number).toBeLessThanOrEqual(100 + 1e-9)
+    // The cut depth follows the bent surface.
+    for (let i = 0; i < n * n; i++) expect((rough.cut as number[])[i]).toBeCloseTo(100 - (rough.before[i] as number), 9)
+  })
+
+  it('changes the ground only where the blast did, and leaves that ground lumpy', () => {
+    let untouched = 0
+    const blasted: number[] = []
+    for (let i = 0; i < n * n; i++) {
+      const d = (rough.after[i] as number) - (rough.before[i] as number)
+      if (d === 0) untouched++
+      else blasted.push(d)
+    }
+    expect(untouched).toBeGreaterThan(0.8 * n * n)
+    expect(blasted.length).toBeGreaterThan(200)
+    const mean = blasted.reduce((a, b) => a + b, 0) / blasted.length
+    expect(mean).toBeLessThan(-2) // about the 4 m the blast lowered (less on the bent edge)
+    const spread = Math.sqrt(blasted.reduce((a, b) => a + (b - mean) ** 2, 0) / blasted.length)
+    expect(spread).toBeGreaterThan(0.1) // not one flat step
+    for (const d of blasted) expect(d).toBeGreaterThan(-4 - 0.65) // lumps are within +/- 0.6 m
+    expect(roughSite({ ...grid, cut_m: undefined }).cut).toBeNull()
+    expect(roughSite(grid).after).toEqual(rough.after) // the same site every time
   })
 })
 

@@ -138,7 +138,9 @@ async function load(x: number, y: number, bundle: BlastBundle): Promise<Topograp
     const inside = surfaces.filter(
       (o) => o.bounds !== null && o.bounds !== undefined && x >= o.bounds.min[0] && x <= o.bounds.max[0] && y >= o.bounds.min[1] && y <= o.bounds.max[1],
     )
-    const pick = inside.find((o) => /topo|dtm|dem|surface/i.test(o.name)) ?? inside[0]
+    // A surface made for the blast view comes first; the far backdrop is never the ground itself.
+    const ground = inside.filter((o) => !/backdrop/i.test(o.name))
+    const pick = ground.find((o) => o.id === 'blast-terrain') ?? ground.find((o) => /topo|dtm|dem|surface/i.test(o.name)) ?? ground[0]
     if (!pick) return null
     const mesh = await fetchMesh(pick)
     const surveyed = heightSampler(mesh.vertices)

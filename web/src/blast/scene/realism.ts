@@ -170,6 +170,85 @@ export function reliefPatches(bundle: Pick<BlastBundle, 'timeline' | 'muckpile' 
   }
 }
 
+// ---- the site after blasting is not a drawing ---------------------------------------
+
+export interface RoughSite {
+  before: (number | null)[]
+  after: (number | null)[]
+  /** Depth of the cut below natural ground; null when the bundle has none. */
+  cut: (number | null)[] | null
+}
+
+/** A value on a node grid at a world plan point: bilinear, clamped to the edge, NaN without data. */
+function gridValue(grid: { origin: readonly number[]; spacing: number; shape: readonly number[] }, values: readonly (number | null)[], x: number, y: number): number {
+  const nx = grid.shape[0]
+  const ny = grid.shape[1]
+  const fx = Math.min(nx - 1, Math.max(0, (x - grid.origin[0]) / grid.spacing))
+  const fy = Math.min(ny - 1, Math.max(0, (y - grid.origin[1]) / grid.spacing))
+  const ix = Math.min(Math.max(nx - 2, 0), Math.floor(fx))
+  const iy = Math.min(Math.max(ny - 2, 0), Math.floor(fy))
+  const ix1 = Math.min(nx - 1, ix + 1)
+  const iy1 = Math.min(ny - 1, iy + 1)
+  const u = fx - ix
+  const v = fy - iy
+  const at = (a: number, b: number) => values[a * ny + b] ?? Number.NaN
+  return (1 - u) * ((1 - v) * at(ix, iy) + v * at(ix, iy1)) + u * ((1 - v) * at(ix1, iy) + v * at(ix1, iy1))
+}
+
+/**
+ * The cut bench and the blasted ground as a real site leaves them, for the site view.
+ *
+ * The simulation gives a cut with straight walls and square corners and a pile with a
+ * smooth top (bench.cut_bench, throw.py): the design, not the ground. Here the plan of both
+ * is bent: every node reads its height from a place shifted by up to about 12 m (three
+ * noises, 38, 14 and 4 m across), so walls wander and corners round off; what the blast
+ * changed (after minus before) is bent a second time and further, so the edge of the
+ * blasted ground is not the edge of the pattern; and where the ground moved it is lumpy
+ * (up to +/- 0.6 m). The shift fades to nothing within 12 m of the edge of the grid, where
+ * the grid meets the untouched terrain. Volumes are not kept exactly and no result uses
+ * this surface: it is a picture of raggedness, not a prediction of over-break.
+ */
+export function roughSite(grid: Pick<BlastBundle['muckpile'], 'origin' | 'spacing' | 'shape' | 'z_before' | 'z_after' | 'cut_m'>): RoughSite {
+  const [nx, ny] = grid.shape
+  const n = nx * ny
+  const before: (number | null)[] = new Array(n)
+  const after: (number | null)[] = new Array(n)
+  const cut: (number | null)[] | null = grid.cut_m ? new Array(n) : null
+  const width = (nx - 1) * grid.spacing
+  const height = (ny - 1) * grid.spacing
+  for (let ix = 0; ix < nx; ix++) {
+    for (let iy = 0; iy < ny; iy++) {
+      const i = ix * ny + iy
+      const x = grid.origin[0] + ix * grid.spacing
+      const y = grid.origin[1] + iy * grid.spacing
+      const edge = Math.min(x - grid.origin[0], y - grid.origin[1], grid.origin[0] + width - x, grid.origin[1] + height - y)
+      const t = Math.min(1, Math.max(0, edge / 12))
+      const fade = t * t * (3 - 2 * t)
+      const dx = fade * (16 * (valueNoise(x / 38, y / 38, 89) - 0.5) + 6.5 * (valueNoise(x / 14, y / 14, 81) - 0.5) + 2.0 * (valueNoise(x / 4, y / 4, 82) - 0.5))
+      const dy = fade * (16 * (valueNoise(x / 38, y / 38, 90) - 0.5) + 6.5 * (valueNoise(x / 14, y / 14, 83) - 0.5) + 2.0 * (valueNoise(x / 4, y / 4, 84) - 0.5))
+      const b = gridValue(grid, grid.z_before, x + dx, y + dy)
+      before[i] = Number.isFinite(b) ? b : grid.z_before[i]
+      if (cut && grid.cut_m) {
+        const c = gridValue(grid, grid.cut_m, x + dx, y + dy)
+        cut[i] = Number.isFinite(c) ? c : grid.cut_m[i]
+      }
+      // What the blast changed, read from a place shifted further.
+      const ex = dx * 1.5 + fade * 2.6 * (valueNoise(x / 7, y / 7, 85) - 0.5)
+      const ey = dy * 1.5 + fade * 2.6 * (valueNoise(x / 7, y / 7, 86) - 0.5)
+      const change = gridValue(grid, grid.z_after, x + ex, y + ey) - gridValue(grid, grid.z_before, x + ex, y + ey)
+      const base = before[i]
+      if (base === null || base === undefined || !Number.isFinite(change)) {
+        after[i] = grid.z_after[i]
+        continue
+      }
+      const moved = Math.abs(change)
+      const lumps = 0.9 * (valueNoise(x / 3.2, y / 3.2, 87) - 0.5) * Math.min(1, moved / 1.5) + 0.35 * (valueNoise(x / 1.1, y / 1.1, 88) - 0.5) * Math.min(1, moved / 0.5)
+      after[i] = base + change + fade * lumps
+    }
+  }
+  return { before, after, cut }
+}
+
 // ---- equipment ---------------------------------------------------------------------
 
 /** Equipment stands this far outside the clearance radius, m. */

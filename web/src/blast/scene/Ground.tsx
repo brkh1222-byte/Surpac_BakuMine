@@ -16,7 +16,7 @@ import type { GridSpec } from '../types'
 import { BLAST_COLORS, hexLinear, type LayerProps } from './common'
 import { ShadowCatcher } from './Effects'
 import { cutRock, FarTerrainMaterial, MUCK_COLOR, ROCK_COLOR, TerrainMaterial } from './terrain'
-import { reliefWeight } from './realism'
+import { reliefWeight, roughSite } from './realism'
 import { useTopography } from './topography'
 
 /** Triangles of a node grid; cells with a missing node (or rejected by `skip`) are left out. */
@@ -79,8 +79,16 @@ export function Muckpile({ bundle, origin }: LayerProps) {
   const grid = bundle.muckpile
   const satellite = useSatellite()
 
+  // In the site view the cut and the blasted ground are ragged, as a real site is; the
+  // engineering view keeps the design geometry of the bundle.
+  const site = satellite !== null
+  const shape = useMemo(
+    () => (site ? roughSite(grid) : { before: grid.z_before, after: grid.z_after, cut: grid.cut_m ?? null }),
+    [grid, site],
+  )
+
   const built = useMemo(() => {
-    const { z_before: zb, z_after: za } = grid
+    const { before: zb, after: za } = shape
     const n = grid.shape[0] * grid.shape[1]
     const g = new BufferGeometry()
     g.setAttribute('position', new BufferAttribute(gridPositions(grid, zb, origin), 3))
@@ -90,7 +98,7 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     // A cell with a missing node is not drawn (never at z = 0); a node missing only in one state keeps the other.
     g.setIndex(new BufferAttribute(gridIndex(grid, (i) => finite(zb[i]) || finite(za[i])), 1))
     return { g, landed: sortedFinite(bundle.throw.particles.t_land_ms), state: { f: -1, theme: '' } }
-  }, [grid, origin, bundle])
+  }, [grid, origin, bundle, shape])
   useEffect(() => () => built.g.dispose(), [built])
   useEffect(() => {
     if (satellite) built.g.setAttribute('uv', new BufferAttribute(uvArray(satellite.plan, built.g.getAttribute('position').array, origin), 2))
@@ -108,8 +116,8 @@ export function Muckpile({ bundle, origin }: LayerProps) {
     const rock = built.g.getAttribute('rock') as BufferAttribute
     const ground = satellite ? hexLinear(ROCK_COLOR) : hexLinear(BLAST_COLORS[theme].ground)
     const muck = hexLinear(satellite ? MUCK_COLOR : BLAST_COLORS[theme].muck)
-    const cut = grid.cut_m
-    const { z_before: zb, z_after: za } = grid
+    const cut = shape.cut
+    const { before: zb, after: za } = shape
     for (let i = 0; i < position.count; i++) {
       const before = zb[i]
       const after = za[i]

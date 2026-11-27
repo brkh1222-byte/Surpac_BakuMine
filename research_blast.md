@@ -1123,6 +1123,21 @@ columns started up to 0.26 s after the hole, and the flash was small. Now the du
 birth, the first four puffs of a hole are born with it and the rest within 45 ms, and the flash is 3.5 growing to
 12.5 m for 150 ms and brighter. Seen in the browser paused at 59.5 ms: six holes fired, six booms, six flashes.
 
+Eighteenth pass (task B30), after the owner's review ("it is unrealistic the site will stay in this perfect
+rectangular shape ... make it messy like in real life"; "the topology covers the whole page" in the modeller):
+
+- **Ragged site.** In the site view the cut bench and the blasted ground are bent in plan (`realism.roughSite`):
+  every node of the ground grid reads its height from a place shifted by up to about 12 m (three noises, 38, 14
+  and 4 m across), so walls wander and corners round off; what the blast changed (after minus before) is shifted
+  a second time and further, so the edge of the blasted ground is not the edge of the pattern; moved ground is
+  lumpy (up to +/- 0.6 m). The shift fades out within 12 m of the edge of the grid. The engineering view keeps
+  the design geometry. Volumes are not kept exactly and no result uses the ragged surface: it is a picture of
+  raggedness, not a prediction of over-break or back-break.
+- **Blast-only surfaces.** The wide terrain is now its own project surface with the id `blast-terrain`;
+  `bench.project_site` and the blast view prefer it, and the far backdrop is never taken as the ground. In the
+  block modeller, surfaces with that id or named "Blast terrain" / "Backdrop terrain" are listed unticked, so
+  they do not fill the view or stretch "zoom to extents". The modeller's own topography is unchanged.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
