@@ -6,8 +6,9 @@
  *   the shadow map; `ShadowCatcher` is a copy of a ground mesh that shows only the shadow
  *   falling on it, so the terrain's own picture and shading stay as they are.
  * - `Flashes`: a short glow at each collar when its hole fires.
- * - `BlastSound`: every hole booms when the player passes its firing time; a rolling rumble
- *   and falling rock follow the last hole.
+ * - `BlastSound`: one unbroken roar from the first hole to the last, every hole booming on
+ *   top of it when the player passes its firing time; a rolling rumble and falling rock
+ *   follow the last hole.
  *
  * The strength of the glow and the make-up of the sound are chosen for effect. The camera
  * itself never moves on its own.
@@ -252,6 +253,38 @@ function holeBoom(context: BaseAudioContext, bus: SoundBus, at: number, k: numbe
   tone.stop(at + 0.65)
 }
 
+/**
+ * The ground roar that runs under the booms for as long as holes are firing: looped noise
+ * through a low-pass and a low drone, faded in. Returns the gain to fade it out with.
+ */
+function blastBed(context: BaseAudioContext, bus: SoundBus, at: number): { gain: GainNode; stop: (when: number) => void } {
+  const roar = context.createBufferSource()
+  roar.buffer = bus.noise
+  roar.loop = true
+  const low = context.createBiquadFilter()
+  low.type = 'lowpass'
+  low.frequency.value = 300
+  const drone = context.createOscillator()
+  drone.frequency.value = 41
+  const droneGain = context.createGain()
+  droneGain.gain.value = 0.35
+  const gain = context.createGain()
+  gain.gain.setValueAtTime(0.0001, at)
+  gain.gain.exponentialRampToValueAtTime(1.1, at + 0.12)
+  roar.connect(low).connect(gain)
+  drone.connect(droneGain).connect(gain)
+  bus.out(gain)
+  roar.start(at)
+  drone.start(at)
+  return {
+    gain,
+    stop: (when) => {
+      roar.stop(when)
+      drone.stop(when)
+    },
+  }
+}
+
 /** After the last hole: a rumble that rolls on and darkens, and faint irregular clatter of falling rock. */
 function blastTail(context: BaseAudioContext, bus: SoundBus, at: number): void {
   const roll = context.createBufferSource()
@@ -322,8 +355,8 @@ export async function rumbleCheck(loudness = 0.8, firesS: readonly number[] = [0
 }
 
 /** What the sound did in this run, for a check from the browser console (development builds). */
-export const soundLog: { booms: number; merged: number; tails: number; contextState: string; lastBoomMs: number } = {
-  booms: 0, merged: 0, tails: 0, contextState: 'none', lastBoomMs: 0,
+export const soundLog: { booms: number; merged: number; tails: number; beds: number; contextState: string; lastBoomMs: number } = {
+  booms: 0, merged: 0, tails: 0, beds: 0, contextState: 'none', lastBoomMs: 0,
 }
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   Object.assign(window, { __blastSound: { check: rumbleCheck, log: soundLog } })
@@ -336,13 +369,34 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
  * The delay of real sound over the distance to the camera is left out on purpose.
  */
 export function BlastSound({ bundle }: LayerProps) {
-  const state = useRef<{ context: AudioContext | null; bus: SoundBus | null; last: number; next: number; lastBoomAt: number }>({
-    context: null, bus: null, last: 0, next: 0, lastBoomAt: -1,
-  })
+  const state = useRef<{
+    context: AudioContext | null; bus: SoundBus | null; last: number; next: number; lastBoomAt: number
+    bed: ReturnType<typeof blastBed> | null
+  }>({ context: null, bus: null, last: 0, next: 0, lastBoomAt: -1, bed: null })
   const fires = useMemo(() => bundle.timeline.holes.map((h) => h.t_fire_ms).sort((a, b) => a - b), [bundle])
   useFrame(() => {
     const { t, playing } = useBlast.getState()
     const s = state.current
+    // One unbroken roar from the first hole to the last, while the blast is playing; it fades
+    // when playback stops or leaves that interval (the tail takes over after the last hole).
+    const firing = playing && fires.length > 0 && t >= fires[0] && t <= fires[fires.length - 1]
+    try {
+      if (firing && !s.bed) {
+        s.context ??= new AudioContext()
+        void s.context.resume()
+        s.bus ??= soundBus(s.context, 0.8)
+        s.bed = blastBed(s.context, s.bus, s.context.currentTime + 0.005)
+        soundLog.beds += 1
+      } else if (!firing && s.bed && s.context) {
+        const now = s.context.currentTime
+        s.bed.gain.gain.cancelScheduledValues(now)
+        s.bed.gain.gain.setTargetAtTime(0, now, 0.12)
+        s.bed.stop(now + 0.8)
+        s.bed = null
+      }
+    } catch {
+      s.bed = null
+    }
     // Played forward by the clock (not scrubbed or jumped): the holes passed since the last frame go off.
     const stepped = playing && t >= s.last && t - s.last < 400
     if (!stepped) {
@@ -382,6 +436,7 @@ export function BlastSound({ bundle }: LayerProps) {
       void state.current.context?.close()
       state.current.context = null
       state.current.bus = null
+      state.current.bed = null
     },
     [],
   )

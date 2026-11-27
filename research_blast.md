@@ -1111,6 +1111,11 @@ time merge (holes that fire in the same frame). The rolling rumble and the falli
 hole; the echo stays. Scrubbing and jumps make no sound. Seen in the browser on the 100-hole blast: 77 booms,
 23 merged, one tail, no errors. The one-burst sound of the fourteenth pass is gone.
 
+Sixteenth pass (task B28), after the owner's review ("I want an interval of sound from the first blast to the last
+blast"): one unbroken roar (looped noise through a 300 Hz low-pass and a 41 Hz drone) runs from the first hole
+to the last while the blast plays, with the per-hole booms on top; it fades when playback stops or leaves that
+interval, and the tail follows the last hole. Seen in the browser: one roar, 73 booms, 27 merged, one tail.
+
 Not done: the flash does not light the dust or the ground; boom and stick of the machines do not move; the terrain is still
 the 30 m elevation model resampled to 10 m, so close-up ground detail is the picture's 0.9 m pixels plus the
 added grain and scatter.
