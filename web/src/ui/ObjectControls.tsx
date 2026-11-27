@@ -1,6 +1,7 @@
 /** Per-object display controls shown under an object's row in the sidebar tree. */
 import { MESH_MODES, type MeshMode, type MeshShading } from '../meshes/display'
 import type { MissingDisplay } from '../blocks/colour'
+import { activeComposition, compositionLayers, type CompositionLayer, type CompositionLayerId } from '../blocks/composition'
 import { MIN_OPACITY, MIN_SHRINK, useBlocks } from '../state/blocks'
 import { attributeKey, useDisplay } from '../state/display'
 import { FilterPanel } from './FilterPanel'
@@ -110,6 +111,39 @@ function MeshControls({ id }: { id: string }) {
   )
 }
 
+/**
+ * Composition: colours the blocks by one of the layers a geology coding wrote, and "Off"
+ * puts the colouring back to what it was. Shown only for a model that has such layers.
+ * The legend (names and dictionary colours) is the block legend of the chosen attribute.
+ */
+export function CompositionControl({ id }: { id: string }) {
+  const model = useBlocks((s) => s.models[id])
+  const setComposition = useBlocks((s) => s.setComposition)
+  if (!model) return null
+  const layers = compositionLayers(model.attributes, model.composition)
+  return <CompositionButtons id={id} layers={layers} active={activeComposition(model.colorBy, layers)} onChoose={(layer) => setComposition(id, layer)} />
+}
+
+/** The buttons themselves. Pure: it draws what it is given. */
+export function CompositionButtons({ id, layers, active, onChoose }: { id: string; layers: readonly CompositionLayer[]; active: CompositionLayerId | null; onChoose: (layer: CompositionLayerId | null) => void }) {
+  if (layers.length === 0) return null
+  return (
+    <div className="control composition" data-testid={`composition-${id}`} data-active={active ?? 'off'}>
+      <span>Composition</span>
+      <div className="group composition-layers" role="group" aria-label="Colour the blocks by a composition layer">
+        <button type="button" data-testid={`composition-off-${id}`} aria-pressed={active === null} onClick={() => onChoose(null)} title="Back to what the blocks were coloured by">
+          Off
+        </button>
+        {layers.map((l) => (
+          <button key={l.layer} type="button" data-testid={`composition-${l.layer}-${id}`} aria-pressed={active === l.layer} onClick={() => onChoose(l.layer)} title={`Colour the blocks by ${l.label.toLowerCase()} (attribute ${l.attribute})`}>
+            {l.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function BlockControls({ id }: { id: string }) {
   const model = useBlocks((s) => s.models[id])
   const setColorBy = useBlocks((s) => s.setColorBy)
@@ -117,6 +151,7 @@ function BlockControls({ id }: { id: string }) {
   if (!model) return null
   return (
     <div className="object-controls" data-testid={`controls-${id}`}>
+      <CompositionControl id={id} />
       <label className="control">
         <span>Colour by</span>
         <select data-testid={`colour-by-${id}`} value={model.colorBy ?? ''} onChange={(e) => setColorBy(id, e.target.value || null)}>

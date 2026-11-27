@@ -37,6 +37,11 @@ export interface CategoricalLegendSpec {
    * else is in `categories`; the others take the palette by their position in the list.
    */
   colours?: Readonly<Record<string, string>>
+  /**
+   * Names supplied by the data, category -> name ("SST" -> "Sandstone"). A legend row of
+   * a category listed here reads "Sandstone (SST)"; the others show the category itself.
+   */
+  labels?: Readonly<Record<string, string>>
   hasMissing: boolean
 }
 
@@ -127,12 +132,18 @@ export interface LegendRow {
   label: string
 }
 
+/** "Sandstone (SST)" for a category the data names, the category itself otherwise. */
+export function categoryLabel(category: string, labels: Readonly<Record<string, string>> | undefined): string {
+  const name = labels && Object.prototype.hasOwnProperty.call(labels, category) ? labels[category] : ''
+  return name && name !== category ? `${name} (${category})` : category
+}
+
 /** Rows of a stepped or categorical legend, top to bottom (high values first). */
 export function legendRows(spec: LegendSpec, theme: Theme): LegendRow[] {
   const rows: LegendRow[] = []
   if (spec.kind === 'categorical') {
     const colors = categoryColors(spec, theme)
-    spec.categories.forEach((name, i) => rows.push({ color: colors[i], label: name }))
+    spec.categories.forEach((name, i) => rows.push({ color: colors[i], label: categoryLabel(name, spec.labels) }))
   } else if (spec.mode === 'stepped') {
     const breaks = steppedBreaks(spec)
     const decimals = decimalsFor((spec.max - spec.min) / Math.max(1, breaks.length - 1))

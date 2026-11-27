@@ -158,6 +158,41 @@ class ProjectSceneSource:
 
         return self._cached("colours", "", build)  # type: ignore[no-any-return]
 
+    def category_labels(self) -> dict[str, str]:
+        """Name of unit codes and weathering zones ("SST" -> "Sandstone"), from the unit
+        dictionaries of the project's geology objects; the first object wins."""
+
+        def build() -> dict[str, str]:
+            from bakumine.core.geology.units import UnitDictionary
+
+            out: dict[str, str] = {}
+            project = self._project()
+            for o in project.list("geology"):
+                try:
+                    units = UnitDictionary.load(project.path_of(o) / "units.json")
+                except (OSError, ValueError):
+                    continue
+                for entry in (*units.units, *units.weathering_zones):
+                    if entry.name:
+                        out.setdefault(entry.code, entry.name)
+            return out
+
+        return self._cached("labels", "", build)  # type: ignore[no-any-return]
+
+    def _composition(self, path: Path, model) -> dict | None:
+        """The model's geology coding, with only the layers whose attribute it still has."""
+        from bakumine.api.operations_geology import model_coding
+
+        coding = model_coding(self.folder, path)
+        if coding is None:
+            return None
+        layers = {
+            layer: name
+            for layer, name in coding["layers"].items()
+            if name in model.attributes and model.attribute(name).kind == "category"
+        }
+        return {"geology": coding["geology"], "layers": layers} if layers else None
+
     # ------------------------------------------------------------------ data
 
     def _cached(self, kind: str, object_id: str, build):
@@ -225,6 +260,8 @@ class ProjectSceneSource:
                 surfaces={k: n for k, (n, _) in dtms.items()},
                 display=default_display(model),
                 colours=self.category_colours(),
+                labels=self.category_labels(),
+                composition=self._composition(path, model),
             )
 
         return self._cached("blocks", object_id, build)  # type: ignore[no-any-return]

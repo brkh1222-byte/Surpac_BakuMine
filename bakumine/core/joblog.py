@@ -21,6 +21,14 @@ Undo snapshots live in ``<project>/.snapshots/<job id>/``. An operation that onl
 attribute values (estimation) saves the affected columns; one that may change the block
 structure (coding with sub-blocks or merging) copies the whole model folder. Only the
 newest :data:`KEEP_SNAPSHOTS` snapshots are kept (``BAKUMINE_UNDO_SNAPSHOTS`` overrides).
+
+Two additions for the geology operations. A snapshot may carry single files of the
+project that the job writes or deletes beside the model (:func:`snapshot_files`: the
+record of a geology coding); undo puts them back as they were. And a job that removes an
+object from the project keeps the object itself as its snapshot
+(:func:`take_object_snapshot`, mode ``"object"``): undo moves it back and registers it
+again under the same id, name and path. When that snapshot is pruned the object is gone
+for good.
 """
 
 from __future__ import annotations
@@ -293,6 +301,70 @@ def take_snapshot(
     return target
 
 
+def snapshot_files(folder: Path, job_id: str, paths: Iterable[Path]) -> None:
+    """Add files of the project to the snapshot of job ``job_id`` (taken before).
+
+    A file that exists is copied; one that does not is noted as absent. Undo
+    (:func:`restore_snapshot`) writes the copies back and deletes the files noted absent.
+    """
+    folder = Path(folder)
+    target = snapshot_dir(folder, job_id)
+    meta_file = target / "meta.json"
+    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    files: list[dict[str, Any]] = meta.setdefault("files", [])
+    (target / "files").mkdir(exist_ok=True)
+    for path in paths:
+        path = Path(path)
+        existed = path.is_file()
+        if existed:
+            shutil.copy2(path, target / "files" / str(len(files)))
+        files.append({"path": path.relative_to(folder).as_posix(), "existed": existed})
+    meta_file.write_text(json.dumps(_plain(meta), indent=1), encoding="utf-8")
+
+
+def _restore_files(folder: Path, source: Path, meta: dict[str, Any]) -> None:
+    for i, item in enumerate(meta.get("files", [])):
+        path = Path(folder).joinpath(*item["path"].split("/"))
+        if not item["existed"]:
+            path.unlink(missing_ok=True)
+        elif path.parent.parent.is_dir():  # not into the folder of an object that is gone
+            path.parent.mkdir(exist_ok=True)
+            shutil.copy2(source / "files" / str(i), path)
+
+
+def take_object_snapshot(folder: Path, job_id: str, obj: dict[str, str], path: Path) -> Path:
+    """Move the file or folder of a project object into the snapshot of job ``job_id``.
+
+    ``obj`` is the registry entry (``id``, ``kind``, ``name``, ``path``). The caller takes
+    the object out of the registry; :func:`restore_snapshot` moves it back and registers
+    it again.
+    """
+    target = snapshot_dir(folder, job_id)
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True)
+    meta = {
+        "job": job_id,
+        "mode": "object",
+        "model": obj["id"],
+        "object": dict(obj),
+        "created_ns": time.time_ns(),
+    }
+    (target / "meta.json").write_text(json.dumps(_plain(meta), indent=1), encoding="utf-8")
+    shutil.move(str(path), str(target / "object"))
+    prune(folder)
+    return target
+
+
+def _restore_object(folder: Path, job_id: str, source: Path, meta: dict[str, Any]) -> None:
+    from bakumine.core.project import Project, ProjectError, ProjectObject
+
+    obj = ProjectObject(**meta["object"])
+    try:
+        Project.open(folder).restore(obj, source / "object")
+    except ProjectError as exc:
+        raise ValueError(f"undo of {job_id}: {exc}") from None
+
+
 def prune(folder: Path, keep: int | None = None) -> None:
     keep = keep_snapshots() if keep is None else keep
     root = Path(folder) / SNAPSHOTS
@@ -323,6 +395,10 @@ def restore_snapshot(folder: Path, job_id: str) -> dict[str, Any]:
 
     source = snapshot_dir(folder, job_id)
     meta = json.loads((source / "meta.json").read_text(encoding="utf-8"))
+    if meta["mode"] == "object":
+        _restore_object(folder, job_id, source, meta)
+        drop_snapshot(folder, job_id)
+        return meta
     path = Path(folder).joinpath(*meta["model_path"].split("/"))
     if meta["mode"] == "folder":
         tmp = path.parent / f".{path.name}.undo-{job_id}"
@@ -350,5 +426,6 @@ def restore_snapshot(folder: Path, job_id: str) -> dict[str, Any]:
         save_model(model, path)
     if read_header(path).checksum != meta["checksum"]:
         raise ValueError(f"undo of {job_id}: the restored model differs from the snapshot")
+    _restore_files(folder, source, meta)
     drop_snapshot(folder, job_id)
     return meta

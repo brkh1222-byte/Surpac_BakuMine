@@ -547,3 +547,92 @@ export function codeBlockModel(body: CodeRequest, fetchFn: FetchFn = fetch): Pro
     fetchFn,
   )
 }
+
+// ---- taking the composition off again -------------------------------------------------
+
+export interface UncodeResult {
+  model: string
+  /** Attributes dropped from the block model. */
+  removed: string[]
+  /** Attribute the coding wrote that is still in the model -> why. */
+  kept: Record<string, string>
+  n_merged: number
+  n_blocks: number
+  /** Geology models whose record of the coding was deleted with it. */
+  geology: string[]
+}
+
+export interface RemoveGeologyResult {
+  removed: string
+  name: string
+  path: string
+  /** False when the project keeps no undo copies: the model is gone for good. */
+  undoable: boolean
+  /** Block models coded from it; they keep their attributes. */
+  coded_models: string[]
+}
+
+function post<T>(path: string, body: unknown, fetchFn: FetchFn): Promise<T> {
+  return json(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fetchFn)
+}
+
+/** Drops the attributes the geology coding wrote to the block model (undo is in the job log). */
+export function uncodeBlockModel(model: string, fetchFn: FetchFn = fetch): Promise<UncodeResult> {
+  return post('/ops/geology/uncode', { model }, fetchFn)
+}
+
+/** Takes the geology model and its files out of the project (undo is in the job log). */
+export function removeGeology(geology: string, fetchFn: FetchFn = fetch): Promise<RemoveGeologyResult> {
+  return post('/ops/geology/remove', { geology }, fetchFn)
+}
+
+/** What the confirmation says before a geology model is removed. */
+export function removeGeologyWarning(name: string, codedModels: readonly string[]): string[] {
+  const lines = [`Remove "${name}" from the project? Its units, faults and surfaces leave the scene and its files are deleted.`]
+  if (codedModels.length > 0) {
+    lines.push(
+      `Block models coded from it (${codedModels.join(', ')}) keep their attributes, without the dictionary colours and names. Use "Remove coding" to take those off too.`,
+    )
+  }
+  lines.push('Undo in the job log brings the model back while its undo copy is kept.')
+  return lines
+}
+
+/** One line about a finished removal of a geology model. */
+export function removeGeologyNote(result: RemoveGeologyResult): string {
+  return result.undoable
+    ? `Removed "${result.name}". Undo is in the job log.`
+    : `Removed "${result.name}". The project keeps no undo copies: it cannot be brought back.`
+}
+
+/** What a finished "Remove coding" says: the attributes dropped, the blocks, the ones kept. */
+export function uncodeNotes(result: UncodeResult): string[] {
+  const lines = [
+    `Removed ${result.removed.join(', ') || 'nothing'}. ${formatNumber(result.n_blocks)} blocks (${formatNumber(result.n_merged)} sets of sub-blocks merged back). Undo is in the job log.`,
+  ]
+  for (const [name, reason] of Object.entries(result.kept)) lines.push(`Kept ${name}: ${reason}.`)
+  return lines
+}
+
+/** A block model of the project summary with the attributes its geology coding wrote. */
+export interface CodedModelInfo {
+  geology_coding?: { geology: string | null; attributes: { name: string; role: string; created: boolean }[] } | null
+}
+
+/** Why "Remove coding" cannot run on a model, or null when it can. */
+export function uncodeBlocked(model: CodedModelInfo | null | undefined): string | null {
+  if (!model) return 'Choose a block model.'
+  const coding = model.geology_coding
+  if (!coding) return 'This block model has no geology coding on record.'
+  if (!coding.attributes.some((a) => a.created)) return 'The coding made no attribute of its own in this model: nothing to remove.'
+  return null
+}
+
+/** What "Remove coding" would do to a model: the attributes it drops and the ones it keeps. */
+export function uncodePreview(model: CodedModelInfo | null | undefined): string | null {
+  const coding = model?.geology_coding
+  if (!coding || uncodeBlocked(model)) return null
+  const dropped = coding.attributes.filter((a) => a.created).map((a) => a.name)
+  const kept = coding.attributes.filter((a) => !a.created).map((a) => a.name)
+  return `Remove coding drops ${dropped.join(', ')}${kept.length ? ` and keeps ${kept.join(', ')} (the model had ${kept.length > 1 ? 'them' : 'it'} before)` : ''}.`
+}

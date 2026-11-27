@@ -107,6 +107,9 @@ class GeologyCodingResult:
     attributes : coded layer -> attribute name; a layer that was skipped is absent.
     skipped : layer -> why it was not coded.
     n_merged : sibling sets merged afterwards (``merge=True``).
+    written : every attribute the coding wrote, ``{"name", "role", "created"}``: ``role``
+        is the layer, ``density``, ``display`` or ``distance``; ``created`` is False for
+        an attribute the model already had (see :func:`write_coding_record`).
     """
 
     results: list[AssignResult]
@@ -116,6 +119,7 @@ class GeologyCodingResult:
     attributes: dict[str, str] = field(default_factory=dict)
     skipped: dict[str, str] = field(default_factory=dict)
     n_merged: int = 0
+    written: list[dict] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -422,6 +426,16 @@ def code_geology(
         if any(item["name"] == distance for item in spec["attributes"]):
             raise ValueError(f"the distance attribute {distance!r} is also a geology attribute")
 
+    existed = set(model.attribute_names)
+    roles = [(coded[layer], layer) for layer in active]
+    if density is not None and "lith" in coded:
+        roles.append((density, "density"))
+    if display is not None:
+        roles.append((display, "display"))
+    if distance is not None:
+        roles.append((distance, "distance"))
+    written = [{"name": n, "role": r, "created": n not in existed} for n, r in roles]
+
     for item in spec["attributes"]:
         item = dict(item)
         if item["name"] not in model.attributes:
@@ -473,6 +487,7 @@ def code_geology(
         attributes=coded,
         skipped=skipped,
         n_merged=n_merged,
+        written=written,
     )
 
 
@@ -673,3 +688,181 @@ def write_coding_provenance(
     record.extend(entries)
     record.save(path)
     return path
+
+
+# --------------------------------------------------------------------------
+# the record of what a coding wrote, and taking the coding off again
+# --------------------------------------------------------------------------
+
+CODING_RECORD_FORMAT = "bakumine.geology-coding"
+CODING_RECORD_SUFFIX = ".geology-coding.json"
+CODING_ROLES = (*LAYERS, "density", "display", "distance")
+
+
+def coding_record_path(model_path: str | Path) -> Path:
+    """``<model folder>.geology-coding.json``, beside the block model folder.
+
+    Not inside it: ``storage.save_model`` replaces that folder on every save. Not in the
+    geology folder either: the record has to outlive the geology model, so that the coding
+    can still be taken off a block model after its geology model was removed.
+    """
+    path = Path(model_path)
+    if not path.name:
+        path = path.resolve()
+    return path.parent / f"{path.name}{CODING_RECORD_SUFFIX}"
+
+
+def read_coding_record(model_path: str | Path) -> dict | None:
+    """The coding record of the block model at ``model_path``; None when there is none."""
+    path = coding_record_path(model_path)
+    if not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record["format"] != CODING_RECORD_FORMAT or not isinstance(record["attributes"], list):
+            raise KeyError("format")
+        for item in record["attributes"]:
+            if not isinstance(item["name"], str) or not isinstance(item["created"], bool):
+                raise KeyError("attributes")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"{path} is not a geology coding record ({exc})") from None
+    return record
+
+
+def write_coding_record(
+    model_path: str | Path,
+    model: BlockModel,
+    result: GeologyCodingResult,
+    *,
+    geology: str,
+    coded_before: bool = False,
+) -> Path:
+    """Write which attributes of the model at ``model_path`` the geology coding wrote.
+
+    ``{"format", "version", "model", "geology", "attributes": [{"name", "role",
+    "created"}]}``. ``created`` says that the coding made the attribute; an attribute the
+    model had before (a density of the user's) has ``created: false`` and is kept by
+    :func:`remove_coding`. Coding again keeps what the earlier record says: an attribute an
+    earlier coding created stays ``created`` although the later run found it there, and an
+    attribute only the earlier run wrote stays listed while the model still has it.
+
+    ``coded_before``: the model was coded from this geology model before records were
+    kept (no record, but the geology folder has the provenance of a coding). The layer
+    attributes found in the model then count as created by that coding; a density, display
+    or distance attribute found there does not (it cannot be told from the user's own).
+    """
+    previous = read_coding_record(model_path)
+    earlier = {a["name"]: a for a in (previous or {}).get("attributes", [])}
+    entries = []
+    for item in result.written:
+        old = earlier.pop(item["name"], None)
+        created = bool(item["created"]) or bool(old and old["created"])
+        if coded_before and old is None and item["role"] in LAYERS:
+            created = True
+        entries.append({"name": item["name"], "role": item["role"], "created": created})
+    entries += [a for a in earlier.values() if a["name"] in model.attribute_names]
+    path = coding_record_path(model_path)
+    record = {
+        "format": CODING_RECORD_FORMAT,
+        "version": 1,
+        "model": path.name[: -len(CODING_RECORD_SUFFIX)],
+        "geology": geology,
+        "attributes": entries,
+    }
+    path.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+    return path
+
+
+@dataclass
+class CodingRemoval:
+    """What :func:`remove_coding` did.
+
+    Attributes
+    ----------
+    removed : names of the attributes dropped, in the order of the record.
+    kept : name -> why an attribute the coding wrote is still in the model.
+    n_merged : sibling sets merged afterwards.
+    record : the record that is left (attributes the coding wrote that are still in the
+        model), or None when nothing of the coding is left.
+    """
+
+    removed: list[str]
+    kept: dict[str, str]
+    n_merged: int
+    record: dict | None
+
+
+KEPT_EXISTING = (
+    "the model had this attribute before the geology coding; its values are the coded ones"
+)
+
+
+def remove_coding(
+    model: BlockModel,
+    record: Mapping[str, Any] | None,
+    *,
+    attributes: Sequence[str] | None = None,
+    merge: bool | None = None,
+) -> CodingRemoval:
+    """Take the geology coding off a block model (in place).
+
+    Drops every attribute the record lists as created by the coding. An attribute the
+    model had before the coding (``created: false``) is kept, with the coded values in
+    it: only an undo of the coding brings the earlier values back. ``attributes`` names
+    the attributes to drop instead (for a model without a record); each must exist.
+
+    ``merge``: afterwards merge sibling sub-blocks that are identical in all remaining
+    attributes, which undoes the sub-blocking at the geology boundaries (and any other
+    split whose sub-blocks hold the same values: nothing is lost, every point keeps
+    every value). Default: merge. The record cannot say which blocks the coding split:
+    a model coded twice was split by the first run only.
+
+    Raises ``ValueError`` when there is nothing to remove; the model is then unchanged.
+    """
+    present = set(model.attribute_names)
+    removed: list[str] = []
+    kept: dict[str, str] = {}
+    if attributes is not None:
+        names = [str(n) for n in attributes]
+        absent = [n for n in names if n not in present]
+        if absent or not names:
+            raise ValueError(
+                "attributes: the block model has no attribute "
+                + (", ".join(repr(n) for n in absent) if absent else "named")
+            )
+        removed = list(dict.fromkeys(names))
+    else:
+        if record is None:
+            raise ValueError("there is no record of a geology coding for this block model")
+        for item in record["attributes"]:
+            if item["name"] not in present:
+                continue
+            if item["created"]:
+                removed.append(item["name"])
+            else:
+                kept[item["name"]] = KEPT_EXISTING
+        if not removed:
+            listed = ", ".join(a["name"] for a in record["attributes"]) or "none"
+            raise ValueError(
+                "nothing to remove: the model has no attribute that the geology coding "
+                f"created (coded attributes: {listed})"
+            )
+    for name in removed:
+        model.delete_attribute(name)
+    n_merged = merge_uniform(model) if merge or merge is None else 0
+    left = None
+    if record is not None:
+        still = [a for a in record["attributes"] if a["name"] not in removed and a["created"]
+                 and a["name"] in present]  # fmt: skip
+        if still:
+            left = {**record, "attributes": still}
+    return CodingRemoval(removed=removed, kept=kept, n_merged=int(n_merged), record=left)
+
+
+def save_coding_record(model_path: str | Path, record: Mapping[str, Any] | None) -> None:
+    """Write the record left by :func:`remove_coding`, or delete the file for None."""
+    path = coding_record_path(model_path)
+    if record is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(json.dumps(dict(record), indent=1) + "\n", encoding="utf-8")

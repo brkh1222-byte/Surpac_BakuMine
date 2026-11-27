@@ -2,12 +2,16 @@
 
     POST /api/v1/ops/geology/build          {"spec": {...}, "name": "..."} -> a geology object
     POST /api/v1/ops/geology/code           {"model": id, "geology": id, ...} -> coded model
+    POST /api/v1/ops/geology/uncode         {"model": id, "merge"?, "attributes"?} -> the
+                                            attributes dropped and those kept
+    POST /api/v1/ops/geology/remove         {"geology": id} -> the object taken out
     GET  /api/v1/geology/{id}               name, layers, blocks, units, faults, surfaces,
                                             diagnostics
     GET  /api/v1/geology/{id}/provenance    {"build": provenance.json, "coding": {model: record}}
 
-They wrap :mod:`bakumine.api.operations_geology`. Both operations run to the end in the
-request and write a job-log entry (``geology_build``, ``geology_code``); the meshes of a
+They wrap :mod:`bakumine.api.operations_geology`. The operations run to the end in the
+request and write a job-log entry (``geology_build``, ``geology_code``, ``geology_uncode``,
+``geology_remove``; the last three can be undone from the job log); the meshes of a
 geology object are listed in the scene manifest and served by the mesh endpoint.
 """
 
@@ -34,6 +38,18 @@ def post_geology_build(body: Json, source: Source) -> dict[str, Any]:
 def post_geology_code(body: Json, source: Source) -> dict[str, Any]:
     project = _project(source)
     return _guard(lambda: geo.geology_code(project, body))
+
+
+@router.post("/ops/geology/uncode")
+def post_geology_uncode(body: Json, source: Source) -> dict[str, Any]:
+    project = _project(source)
+    return _guard(lambda: geo.geology_uncode(project, body))
+
+
+@router.post("/ops/geology/remove")
+def post_geology_remove(body: Json, source: Source) -> dict[str, Any]:
+    project = _project(source)
+    return _guard(lambda: geo.geology_remove(project, body))
 
 
 def _or_404(call):

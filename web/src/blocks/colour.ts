@@ -42,8 +42,9 @@ export function countMissing(values: Float32Array): number {
 
 /** The legend of the colour attribute, or null when blocks are drawn in one colour. */
 export function blockLegend(
-  // `colours` (category -> #rrggbb) travels on the manifest's categorical entries.
-  info: (BlockAttributeInfo & { colours?: Readonly<Record<string, string>> }) | undefined,
+  // `colours` (category -> #rrggbb) and `labels` (category -> name) travel on the
+  // manifest's categorical entries.
+  info: (BlockAttributeInfo & { colours?: Readonly<Record<string, string>>; labels?: Readonly<Record<string, string>> }) | undefined,
   settings: NumericSettings | undefined,
   hasMissing: boolean,
 ): LegendSpec | null {
@@ -51,6 +52,7 @@ export function blockLegend(
   if (info.type === 'categorical') {
     const spec: LegendSpec = { kind: 'categorical', title: info.name, categories: info.categories, hasMissing }
     if (info.colours) spec.colours = info.colours
+    if (info.labels) spec.labels = info.labels
     return spec
   }
   if (!settings) return null

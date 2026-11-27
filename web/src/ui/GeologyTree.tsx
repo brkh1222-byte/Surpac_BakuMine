@@ -9,6 +9,7 @@ import { geologyTree, groupState, parseChildId } from '../geology/geology'
 import { useDisplay } from '../state/display'
 import { useViewer, type SceneObject } from '../state/store'
 import { ObjectControls } from './ObjectControls'
+import { useRemoveGeology } from './ops/GeologyPanel'
 
 function Swatch({ id }: { id: string }) {
   const colour = useDisplay((s) => s.meshes[id]?.color)
@@ -81,25 +82,41 @@ function GroupNode({ name, members, off, tag }: { name: string; members: SceneOb
   )
 }
 
-/** `off`: the Geology category is unticked. `tag`: the load state of an object, for its row. */
-export function GeologyTree({ off, tag }: { off: boolean; tag: (id: string) => ReactNode }) {
-  const objects = useViewer((s) => s.objects)
+/** The row of a geology model: its tick box hides it, the cross removes it from the project. */
+function ModelRow({ model, off, removable }: { model: SceneObject; off: boolean; removable: boolean }) {
   const setObjectVisible = useViewer((s) => s.setObjectVisible)
+  const { asking, ask, confirm } = useRemoveGeology(model.id, model.name)
+  return (
+    <>
+      <div className={'tree-row tree-leaf' + (off ? ' is-off' : '')}>
+        <label className="tree-row-label">
+          <input type="checkbox" checked={model.visible} onChange={(e) => setObjectVisible(model.id, e.target.checked)} aria-label={`Show ${model.name}`} />
+          <span className="tree-name">{model.name}</span>
+        </label>
+        {removable && !asking && (
+          <button type="button" className="tree-remove" data-testid={`tree-remove-${model.id}`} aria-label={`Remove ${model.name} from the project`} title="Remove from the project…" onClick={ask}>
+            ×
+          </button>
+        )}
+      </div>
+      {confirm(true)}
+    </>
+  )
+}
+
+/**
+ * `off`: the Geology category is unticked. `tag`: the load state of an object, for its row.
+ * `removable`: the project can be changed (API mode), so a model has its Remove control.
+ */
+export function GeologyTree({ off, tag, removable = false }: { off: boolean; tag: (id: string) => ReactNode; removable?: boolean }) {
+  const objects = useViewer((s) => s.objects)
   const tree = geologyTree(Object.values(objects))
   if (tree.models.length === 0 && tree.orphans.length === 0) return null
   return (
     <ul>
       {tree.models.map(({ model, groups }) => (
         <li key={model.id} data-testid={`geology-${model.id}`}>
-          <label className={'tree-row tree-leaf' + (off ? ' is-off' : '')}>
-            <input
-              type="checkbox"
-              checked={model.visible}
-              onChange={(e) => setObjectVisible(model.id, e.target.checked)}
-              aria-label={`Show ${model.name}`}
-            />
-            <span className="tree-name">{model.name}</span>
-          </label>
+          <ModelRow model={model} off={off} removable={removable} />
           {groups.length > 0 && (
             <ul>
               {groups.map((g) => (

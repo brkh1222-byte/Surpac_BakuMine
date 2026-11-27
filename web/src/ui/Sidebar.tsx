@@ -37,7 +37,7 @@ function LoadTag({ id }: { id: string }) {
   )
 }
 
-function CategoryNode({ id, label }: { id: Category; label: string }) {
+function CategoryNode({ id, label, api }: { id: Category; label: string; api: boolean }) {
   const visible = useViewer((s) => s.categoryVisible[id])
   const setCategoryVisible = useViewer((s) => s.setCategoryVisible)
   const setObjectVisible = useViewer((s) => s.setObjectVisible)
@@ -58,7 +58,7 @@ function CategoryNode({ id, label }: { id: Category; label: string }) {
       </label>
       {id === 'geology' ? (
         // Models with their groups of meshes, not a flat list.
-        <GeologyTree off={!visible} tag={(objectId) => <LoadTag id={objectId} />} />
+        <GeologyTree off={!visible} tag={(objectId) => <LoadTag id={objectId} />} removable={api} />
       ) : members.length > 0 && (
         <ul>
           {members.map((o) => (
@@ -117,7 +117,7 @@ export function Sidebar({ mode }: { mode: SceneMode }) {
       <h2>{project ?? 'Objects'}</h2>
       <ul className="tree">
         {CATEGORIES.map((c) => (
-          <CategoryNode key={c.id} id={c.id} label={c.label} />
+          <CategoryNode key={c.id} id={c.id} label={c.label} api={mode === 'api'} />
         ))}
       </ul>
       <SceneNote mode={mode} />

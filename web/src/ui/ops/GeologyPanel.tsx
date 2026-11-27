@@ -20,17 +20,25 @@ import {
   formatShare,
   provenanceStages,
   provenanceView,
+  removeGeology,
+  removeGeologyNote,
+  removeGeologyWarning,
   residualRows,
   sectionHeading,
   stageLabel,
   summaryRows,
   throwRows,
+  uncodeBlockModel,
+  uncodeBlocked,
+  uncodeNotes,
+  uncodePreview,
   volumeCells,
   volumeRows,
   type CodeResult,
   type GeologyDetail,
   type GeologyProvenance,
   type ProvenanceRecord,
+  type UncodeResult,
 } from '../../geology/geology'
 import { ofKind, useOps } from '../../ops/api'
 import { Error, Panel, Select, message, useClearOnUndo } from './common'
@@ -344,27 +352,162 @@ export function CodeResultView({ result }: { result: CodeResult }) {
   )
 }
 
+/**
+ * "Remove" of a geology model with its confirmation in the page: the first press shows what
+ * will happen and the names of the block models coded from it, the second one removes.
+ * Returns the state and the two pieces, so the tree can put the button in the model's row
+ * and the confirmation under it.
+ */
+export function useRemoveGeology(id: string, name: string, codedModels?: readonly string[]) {
+  const [asking, setAsking] = useState(false)
+  const [coded, setCoded] = useState<readonly string[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const ask = () => {
+    setError(null)
+    setAsking(true)
+    // The tree does not hold the model's record: ask which block models were coded from it.
+    if (codedModels === undefined) fetchGeology(id).then((d) => setCoded(d.coded_models ?? []), () => setCoded([]))
+  }
+  const remove = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await removeGeology(id)
+      useOps.setState({ notice: removeGeologyNote(result) })
+      await useOps.getState().changed()
+    } catch (e) {
+      setError(message(e))
+      setBusy(false)
+    }
+  }
+  const lines = removeGeologyWarning(name, codedModels ?? coded ?? [])
+  const confirm = (compact: boolean) =>
+    asking ? <RemoveGeologyConfirm id={id} lines={lines} busy={busy} error={error} onRemove={() => void remove()} onCancel={() => setAsking(false)} compact={compact} /> : null
+  return { asking, ask, confirm }
+}
+
+/** The panel's Remove control: a button, then the confirmation in its place. */
+export function RemoveGeology({ id, name, codedModels }: { id: string; name: string; codedModels?: readonly string[] }) {
+  const { asking, ask, confirm } = useRemoveGeology(id, name, codedModels)
+  return (
+    <>
+      {!asking && (
+        <div className="control">
+          <button type="button" data-testid={`geology-remove-${id}`} onClick={ask}>Remove from project…</button>
+        </div>
+      )}
+      {confirm(false)}
+    </>
+  )
+}
+
+/** The confirmation itself. Pure: it draws what it is given. */
+export function RemoveGeologyConfirm({ id, lines, busy, error, onRemove, onCancel, compact = false }: { id: string; lines: readonly string[]; busy: boolean; error: string | null; onRemove: () => void; onCancel: () => void; compact?: boolean }) {
+  return (
+    <div className={compact ? 'confirm-box tree-confirm' : 'confirm-box'} role="group" aria-label="Confirm the removal" data-testid={`geology-remove-confirm-${id}`}>
+      {lines.map((line, i) => (
+        <p key={i}>{line}</p>
+      ))}
+      <Error message={error} id={`geology-remove-error-${id}`} />
+      <div className="confirm-actions">
+        <button type="button" data-testid={`geology-remove-yes-${id}`} disabled={busy} onClick={onRemove}>
+          {busy ? 'Removing…' : 'Remove'}
+        </button>
+        <button type="button" data-testid={`geology-remove-no-${id}`} disabled={busy} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+/** What "Remove coding" returned. */
+export function UncodeResultView({ result }: { result: UncodeResult }) {
+  return (
+    <div data-testid="geology-uncode-result">
+      {uncodeNotes(result).map((line, i) => (
+        <p key={i} className="geo-note">{line}</p>
+      ))}
+    </div>
+  )
+}
+
+/** The block-model part of the panel: code a model, or take the coding off it again. */
+function CodingControls({ geologyId }: { geologyId: string | undefined }) {
+  const summary = useOps((s) => s.summary)
+  const models = ofKind(summary, 'model')
+  const [target, setTarget] = useState('')
+  const [codeError, setCodeError] = useState<string | null>(null)
+  const [result, setResult] = useState<CodeResult | null>(null)
+  const [removed, setRemoved] = useState<UncodeResult | null>(null)
+  const [busy, setBusy] = useState<'code' | 'uncode' | null>(null)
+  useClearOnUndo(() => {
+    setResult(null)
+    setRemoved(null)
+    setCodeError(null)
+  })
+  const model = models.find((m) => m.id === target) ?? models[0]
+  const blocked = uncodeBlocked(model)
+  const preview = uncodePreview(model)
+
+  const run = async (what: 'code' | 'uncode') => {
+    if (!model) return
+    setBusy(what)
+    setCodeError(null)
+    setResult(null)
+    setRemoved(null)
+    try {
+      if (what === 'code' && geologyId) setResult(await codeBlockModel({ model: model.id, geology: geologyId }))
+      if (what === 'uncode') setRemoved(await uncodeBlockModel(model.id))
+      await useOps.getState().changed()
+    } catch (e) {
+      setCodeError(message(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <h3 className="geo-heading">Code a block model</h3>
+      {models.length === 0 ? (
+        <p className="sidebar-note">Create a block model first.</p>
+      ) : (
+        <>
+          <Select label="Block model" id="geology-code-model" value={model?.id ?? ''} onChange={(v) => { setTarget(v); setResult(null); setRemoved(null) }} options={models.map((m) => ({ value: m.id, label: m.name }))} />
+          {geologyId && <p className="geo-note">Writes the fault block, rock unit, weathering zone and density of this geology model to the blocks, sub-blocking at the boundaries.</p>}
+          <div className="control">
+            {geologyId && (
+              <button type="button" data-testid="geology-code-run" disabled={busy !== null || !model} onClick={() => void run('code')}>
+                {busy === 'code' ? 'Coding…' : 'Code block model'}
+              </button>
+            )}
+            <button type="button" data-testid="geology-uncode-run" disabled={busy !== null || blocked !== null} title={blocked ?? 'Drops the attributes the coding wrote and merges the sub-blocks back'} onClick={() => void run('uncode')}>
+              {busy === 'uncode' ? 'Removing…' : 'Remove coding'}
+            </button>
+          </div>
+          <p className="geo-note" data-testid="geology-uncode-note">{preview ?? blocked}</p>
+        </>
+      )}
+      <Error message={codeError} id="geology-code-error" />
+      {result && <CodeResultView result={result} />}
+      {removed && <UncodeResultView result={removed} />}
+    </>
+  )
+}
+
 /** Mounted while the panel is open: loads the chosen model and its provenance record. */
 function GeologyBody() {
   const summary = useOps((s) => s.summary)
+  const notice = useOps((s) => s.notice)
   const geologies = ofKind(summary, 'geology')
-  const models = ofKind(summary, 'model')
   const [chosen, setChosen] = useState('')
-  const [target, setTarget] = useState('')
   const [loaded, setLoaded] = useState<{ id: string; detail: GeologyDetail; provenance: GeologyProvenance | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [codeError, setCodeError] = useState<string | null>(null)
-  const [result, setResult] = useState<CodeResult | null>(null)
-  const [busy, setBusy] = useState(false)
   const [wide, setWide] = useState(false)
-  useClearOnUndo(() => {
-    setResult(null)
-    setCodeError(null)
-  })
 
   const geology = geologies.find((g) => g.id === chosen) ?? geologies[0]
   const id = geology?.id
-  const model = models.find((m) => m.id === target) ?? models[0]
 
   // `summary` is replaced after every operation and undo: the record is read again then.
   useEffect(() => {
@@ -386,30 +529,23 @@ function GeologyBody() {
     }
   }, [id, summary])
 
-  const code = async () => {
-    if (!id || !model) return
-    setBusy(true)
-    setCodeError(null)
-    setResult(null)
-    try {
-      setResult(await codeBlockModel({ model: model.id, geology: id }))
-      await useOps.getState().changed()
-    } catch (e) {
-      setCodeError(message(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   if (!summary) return null
   if (!geology) {
-    return <p className="sidebar-note">This project has no geology model. Build one with `bakumine geology build`; it cannot be started from the viewer yet.</p>
+    return (
+      <>
+        {notice && <p className="geo-note" data-testid="geology-notice">{notice}</p>}
+        <p className="sidebar-note">This project has no geology model. Build one with `bakumine geology build`; it cannot be started from the viewer yet.</p>
+        {/* a block model can still carry the coding of a geology model that was removed */}
+        <CodingControls geologyId={undefined} />
+      </>
+    )
   }
   const shown = loaded && loaded.id === id ? loaded : null
   return (
     <>
+      {notice && <p className="geo-note" data-testid="geology-notice">{notice}</p>}
       {geologies.length > 1 && (
-        <Select label="Model" id="geology-model" value={geology.id} onChange={(v) => { setChosen(v); setResult(null) }} options={geologies.map((g) => ({ value: g.id, label: g.name }))} />
+        <Select label="Model" id="geology-model" value={geology.id} onChange={setChosen} options={geologies.map((g) => ({ value: g.id, label: g.name }))} />
       )}
       <Error message={error} id="geology-error" />
       {!shown && !error && <p className="sidebar-note">Loading…</p>}
@@ -431,22 +567,10 @@ function GeologyBody() {
         </>
       )}
 
-      <h3 className="geo-heading">Code a block model</h3>
-      {models.length === 0 ? (
-        <p className="sidebar-note">Create a block model first.</p>
-      ) : (
-        <>
-          <Select label="Block model" id="geology-code-model" value={model?.id ?? ''} onChange={setTarget} options={models.map((m) => ({ value: m.id, label: m.name }))} />
-          <p className="geo-note">Writes the fault block, rock unit, weathering zone and density of this geology model to the blocks, sub-blocking at the boundaries.</p>
-          <div className="control">
-            <button type="button" data-testid="geology-code-run" disabled={busy || !model} onClick={() => void code()}>
-              {busy ? 'Coding…' : 'Code block model'}
-            </button>
-          </div>
-        </>
-      )}
-      <Error message={codeError} id="geology-code-error" />
-      {result && <CodeResultView result={result} />}
+      <CodingControls key={geology.id} geologyId={geology.id} />
+
+      <h3 className="geo-heading">Remove this geology model</h3>
+      <RemoveGeology key={`remove-${geology.id}`} id={geology.id} name={geology.name} codedModels={shown?.detail.coded_models ?? []} />
     </>
   )
 }

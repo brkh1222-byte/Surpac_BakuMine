@@ -943,6 +943,26 @@ Scene manifest (`GET /api/v1/scene`, `objects[]`):
   (folded: upper case, stripped) to their unit's colour. The key is absent when no category is known.
 - Until T15 adds the category `geology` to the viewer store, these objects are listed and not drawn.
 
+Recorded changes (composition layering, removable, 2026-11-27):
+- `geology code` (CLI and API) writes `<model folder>.geology-coding.json` beside the block model folder:
+  `{"format": "bakumine.geology-coding", "version": 1, "model", "geology", "attributes": [{"name", "role",
+  "created"}]}`; `role` is the layer, `density`, `display` or `distance`; `created: false` = the model had the
+  attribute before the coding. `GeologyCodingResult.written` carries the same list.
+- `geology uncode MODEL [--attributes NAMES] [--merge | --no-merge] [--geology FOLDER ...]` and
+  `POST /api/v1/ops/geology/uncode` `{"model", "merge"?, "attributes"?}` -> `{"model", "removed", "kept":
+  {name: reason}, "n_merged", "n_blocks", "geology": [ids]}`; op `geology_uncode`. Drops the attributes with
+  `created: true`, keeps the others (with the coded values in them), merges sibling sub-blocks equal in all
+  remaining attributes (default), deletes the coding record and `coding/<model>.provenance.json`.
+- `geology remove PROJECT ID` and `POST /api/v1/ops/geology/remove` `{"geology"}` -> `{"removed", "name",
+  "path", "undoable", "coded_models"}`; op `geology_remove`, job-log key `removes`. Coded block models keep
+  their attributes.
+- Undo: `geology_uncode` restores the model folder and the two records; `geology_remove` keeps the geology
+  folder as its snapshot (mode `"object"`) and undo registers it again under the same id, name and path.
+  Undo of `geology_code` now also takes back the coding record and the provenance file (it did not before).
+- Scene manifest: a block model with a coding record carries `"composition": {"geology", "layers": {layer:
+  attribute}}`; categorical block attributes carry `"labels": {"<category>": "<name>"}` from the unit
+  dictionaries. `GET /api/v1/ops/project`: a model carries `geology_coding` (the record) when it has one.
+
 ## 13. Synthetic layered deposit (T2)
 
 Command: `bakumine synth --preset layered | layered-small --out DIR [--seed 42]`. Every number below is part of

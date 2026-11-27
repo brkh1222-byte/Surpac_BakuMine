@@ -14,6 +14,13 @@ thing and runs them into a new project:
     surface_from_points / import_mesh / implicit_solid
                  bakumine surface from-points | surface import | solid implicit --out
                  WORK/....obj + project add (:data:`bakumine.commands.geometry.REPLAY`)
+    geology_build / geology_code / geology_uncode / geology_remove
+                 bakumine geology build + project add | geology code | geology uncode
+                 --attributes ... | geology remove PROJECT ID
+
+A job that removed an object the log did not make (a geology model added by hand, then
+removed) is skipped with a comment: the source project no longer has that object. Jobs
+that read such an object before it was removed cannot be replayed.
 
 Objects a job reads that no earlier job made (solids, DTMs added to the project by hand)
 are copied from the source project with ``bakumine project add``; solids and DTMs are
@@ -289,11 +296,13 @@ _MAPPERS["classify"] = _classify  # bakumine classify --params WORK/....json
 
 
 def _more_mappers() -> None:
-    from bakumine.commands import geology_build, geometry, solid
+    from bakumine.commands import geology_build, geology_remove, geology_uncode, geometry, solid
 
     _MAPPERS.update(geometry.REPLAY)  # surface_from_points | _raster, import_mesh
     _MAPPERS.update(solid.REPLAY)  # implicit_solid
     _MAPPERS.update(geology_build.REPLAY)  # geology_build, geology_code
+    _MAPPERS.update(geology_uncode.REPLAY)  # geology_uncode
+    _MAPPERS.update(geology_remove.REPLAY)  # geology_remove
 
 
 _more_mappers()
@@ -310,6 +319,17 @@ def replay_steps(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if op not in _MAPPERS:
             raise ReplayError(f"job {e.get('id')}: unknown operation {op!r}")
+        # objects the job takes out of the project (``removes``): the source project no
+        # longer has them, so they are never copied from it
+        removes = {o["id"] for o in e.get("removes", [])}
+        if removes - present:
+            gone = ", ".join(sorted(removes - present))
+            text = (
+                f"job {e['id']}: {op} skipped: {gone} was not made by this log, so the new "
+                "project does not have it"
+            )
+            steps.append({"kind": "comment", "text": text})
+            continue
         for obj in e.get("inputs", []):
             if obj["id"] not in present:
                 add = _add(obj, f"{SOURCE}/{obj['path']}")
@@ -320,6 +340,7 @@ def replay_steps(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         mapped.insert(0, {"kind": "comment", "text": f"job {e['id']}: {op} ({e.get('time')})"})
         steps += mapped
         present.update(o["id"] for o in e.get("outputs", []))
+        present -= removes
     return steps
 
 

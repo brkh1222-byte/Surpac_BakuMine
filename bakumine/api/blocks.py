@@ -138,6 +138,12 @@ class BlockData:
     #: category -> colour ``#rrggbb`` from the project's unit dictionaries; the manifest
     #: entry of a category attribute carries the ones of its own categories (``colours``)
     colours: dict[str, str] = field(default_factory=dict)
+    #: category -> name from the same dictionaries ("SST" -> "Sandstone"): ``labels`` on
+    #: the manifest entry of a category attribute, for the legend
+    labels: dict[str, str] = field(default_factory=dict)
+    #: the geology coding of the model (``operations_geology.model_coding``): which
+    #: attribute holds which composition layer; None when the model has no coding record
+    composition: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------- demo model
@@ -332,6 +338,9 @@ def block_attribute_summaries(data: BlockData) -> list[dict[str, Any]]:
             colours = {c: data.colours[c] for c in entry["categories"] if c in data.colours}
             if colours:
                 entry["colours"] = colours
+            labels = {c: data.labels[c] for c in entry["categories"] if c in data.labels}
+            if labels:
+                entry["labels"] = labels
         else:
             entry["type"] = "numeric"
             entry["storage"] = spec.kind
@@ -374,6 +383,7 @@ def block_object_entry(data: BlockData) -> dict[str, Any]:
             "solids": [{"id": k, "name": v} for k, v in data.solids.items()],
             "surfaces": [{"id": k, "name": v} for k, v in data.surfaces.items()],
         },
+        **({"composition": data.composition} if data.composition else {}),
     }
 
 

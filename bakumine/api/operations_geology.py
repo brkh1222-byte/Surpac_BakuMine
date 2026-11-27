@@ -1,5 +1,7 @@
 """Geology operations behind the UI panel: ``bakumine geology build`` and ``geology code``
-on project objects, and what the viewer reads of a geology model.
+on project objects, taking both off again (``geology uncode``: the coded attributes of a
+block model; ``geology remove``: the geology model itself), and what the viewer reads of
+a geology model.
 
 Like :mod:`bakumine.api.operations_implicit` they call the functions the CLI calls
 (:func:`bakumine.core.geology.spec.build_geology`, :func:`bakumine.core.geology.coding.
@@ -166,8 +168,11 @@ def _code(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[st
         DEFAULT_LAYERS,
         code_geology,
         coding_provenance_path,
+        coding_record_path,
+        read_coding_record,
         unit_tonnage,
         write_coding_provenance,
+        write_coding_record,
     )
     from bakumine.core.geology.model import GeologyModel
     from bakumine.core.geology.spec import json_safe
@@ -194,8 +199,11 @@ def _code(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[st
     model_name = path.name
     _claim(model_id)
     try:
-        coding_provenance_path(geology_folder, model_name)  # an unusable name fails now
+        # an unusable name fails now
+        provenance_file = coding_provenance_path(geology_folder, model_name)
         _will_modify(rec, folder, model_id, path, None)
+        if rec.entry["snapshot"]:  # undo also takes back the two records of the coding
+            joblog.snapshot_files(folder, rec.id, [coding_record_path(path), provenance_file])
         rec.entry["inputs"].append(Project.open(folder).get(request["geology"]).to_dict())
         geology = GeologyModel.load(geology_folder)
         model = load_model(path)
@@ -206,6 +214,10 @@ def _code(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[st
             merge=request.get("merge", False),
         )  # fmt: skip
         header = save_model(model, path)
+        coded_before = read_coding_record(path) is None and provenance_file.is_file()
+        write_coding_record(
+            path, model, result, geology=request["geology"], coded_before=coded_before
+        )
         write_coding_provenance(geology_folder, model_name, result.provenance)
         tonnage = None
         if "lith" in result.attributes:
@@ -233,6 +245,176 @@ def _code(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[st
             "provenance": kinds,
         }
     )
+
+
+# ------------------------------------------------------------------ geology uncode
+
+
+def geology_uncode(source: Any, request: dict[str, Any]) -> dict[str, Any]:
+    """``bakumine geology uncode``: drop the attributes a geology coding wrote to a model."""
+    return _record(
+        source.folder, "geology_uncode", request, lambda rec: _uncode(source, request, rec)
+    )
+
+
+def coding_provenance_files(folder: Path, model_name: str) -> list[tuple[Any, Path]]:
+    """(geology object, its record of coding the model ``model_name``) where one exists."""
+    project = Project.open(folder)
+    out = []
+    for obj in project.list("geology"):
+        file = project.path_of(obj) / "coding" / f"{model_name}.provenance.json"
+        if file.is_file():
+            out.append((obj, file))
+    return out
+
+
+def _uncode(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
+    from bakumine.core.blockmodel.storage import load_model, save_model
+    from bakumine.core.geology.coding import (
+        coding_record_path,
+        read_coding_record,
+        remove_coding,
+        save_coding_record,
+    )
+
+    if not isinstance(request, dict):
+        raise OperationError("the request must be an object")
+    folder = Path(source.folder)
+    model_id = request.get("model")
+    if not isinstance(model_id, str):
+        raise OperationError("model: the id of the block model to take the coding off")
+    path = _model_path(folder, model_id)
+    names = request.get("attributes")
+    if names is not None and (
+        not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names)
+    ):
+        raise OperationError("attributes must be a list of attribute names")
+    merge = request.get("merge")
+    if merge is not None and not isinstance(merge, bool):
+        raise OperationError("merge must be true or false")
+    try:
+        record = read_coding_record(path)
+    except ValueError as exc:
+        raise OperationError(str(exc)) from None
+    if record is None and names is None:
+        raise OperationError(
+            f"block model {model_id!r} has no geology coding to remove (no coding record "
+            f"{coding_record_path(path).name}); to drop attributes of an older coding, name "
+            "them in 'attributes'"
+        )
+    provenance = coding_provenance_files(folder, path.name)
+    _claim(model_id)
+    try:
+        _will_modify(rec, folder, model_id, path, None)
+        rec.entry["inputs"] += [obj.to_dict() for obj, _ in provenance]
+        if rec.entry["snapshot"]:
+            files = [coding_record_path(path), *(file for _, file in provenance)]
+            joblog.snapshot_files(folder, rec.id, files)
+        model = load_model(path)
+        try:
+            removal = remove_coding(model, record, attributes=names, merge=merge)
+        except ValueError as exc:
+            raise OperationError(f"block model {model_id!r}: {exc}") from None
+        header = save_model(model, path)
+        save_coding_record(path, removal.record)
+        if removal.record is None:  # nothing of the coding is left: its records go too
+            for _, file in provenance:
+                file.unlink(missing_ok=True)
+    except OperationError:
+        raise
+    except _ERRORS as exc:
+        raise _fail(exc) from None
+    finally:
+        _release(model_id)
+    # replay drops exactly these attributes, whatever record the new project has
+    rec.entry["replay"] = {"attributes": removal.removed, "merge": removal.n_merged > 0}
+    return {
+        "model": model_id,
+        "removed": removal.removed,
+        "kept": removal.kept,
+        "n_merged": removal.n_merged,
+        "n_blocks": int(header.n_blocks),
+        "geology": [obj.id for obj, _ in provenance] if removal.record is None else [],
+    }
+
+
+def model_coding(folder: Path, model_path: Path) -> dict[str, Any] | None:
+    """What the viewer shows of a model's geology coding: ``{"geology", "layers": {layer:
+    attribute}, "attributes": [{"name", "role", "created"}]}``, or None without a record."""
+    from bakumine.core.geology.coding import LAYERS, read_coding_record
+
+    try:
+        record = read_coding_record(model_path)
+    except ValueError:
+        return None
+    if record is None:
+        return None
+    return {
+        "geology": record.get("geology"),
+        "layers": {a["role"]: a["name"] for a in record["attributes"] if a.get("role") in LAYERS},
+        "attributes": record["attributes"],
+    }
+
+
+# ------------------------------------------------------------------ geology remove
+
+
+def geology_remove(source: Any, request: dict[str, Any]) -> dict[str, Any]:
+    """``bakumine geology remove``: take a geology model and its files out of the project."""
+    return _record(
+        source.folder, "geology_remove", request, lambda rec: _remove(source, request, rec)
+    )
+
+
+def _remove(source: Any, request: dict[str, Any], rec: joblog.Recorder) -> dict[str, Any]:
+    import shutil
+
+    if not isinstance(request, dict):
+        raise OperationError("the request must be an object")
+    folder = Path(source.folder)
+    object_id = request.get("geology")
+    project = Project.open(folder)
+    try:
+        if not isinstance(object_id, str) or project.get(object_id).kind != "geology":
+            raise KeyError(object_id)
+    except KeyError:
+        raise OperationError(f"no geology model {object_id!r} in the project") from None
+    obj = project.get(object_id)
+    path = project.path_of(obj)
+    coded = sorted(
+        p.name.removesuffix(".provenance.json") for p in (path / "coding").glob("*.provenance.json")
+    )
+    _claim(object_id)
+    try:
+        rec.entry["inputs"] = [obj.to_dict()]
+        rec.entry["removes"] = [obj.to_dict()]
+        undoable = joblog.keep_snapshots() > 0 and path.exists()
+        if undoable:
+            # the snapshot IS the object: moved aside, moved back by undo
+            snapshot = joblog.take_object_snapshot(folder, rec.id, obj.to_dict(), path)
+            try:
+                project.remove(object_id, delete_files=False)
+            except Exception:
+                shutil.move(str(snapshot / "object"), str(path))
+                joblog.drop_snapshot(folder, rec.id)
+                raise
+            rec.entry.update(modifies=object_id, snapshot=True)
+        else:
+            project.remove(object_id)
+    except OperationError:
+        raise
+    except _ERRORS as exc:
+        raise _fail(exc) from None
+    finally:
+        _release(object_id)
+    return {
+        "removed": object_id,
+        "name": obj.name,
+        "path": obj.path,
+        "undoable": undoable,
+        # block models coded from it keep their attributes (``geology uncode`` drops them)
+        "coded_models": coded,
+    }
 
 
 # ------------------------------------------------------------------ reading a model

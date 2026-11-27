@@ -63,7 +63,7 @@ function JobLogBody() {
     <>
       <div className="control" style={ROW}>
         <button type="button" data-testid="joblog-undo" disabled={!target || busy} onClick={() => void undo()}
-          title={target ? `Restore the model as it was before job ${target.id}` : 'No model change to undo'}>
+          title={target ? `Restore the project as it was before job ${target.id}` : 'No change to undo'}>
           {target ? `Undo ${operationLabel(target.operation).toLowerCase()}` : 'Undo'}
         </button>
         <button type="button" data-testid="joblog-refresh" onClick={() => void load()}>Refresh</button>

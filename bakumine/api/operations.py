@@ -666,6 +666,11 @@ def project_summary(folder: Path) -> dict[str, Any]:
                     for n, a in model.attributes.items()
                 ]
                 entry["n_blocks"] = int(model.n_blocks)
+                from bakumine.api.operations_geology import model_coding
+
+                coding = model_coding(folder, path)
+                if coding is not None:  # what "remove coding" would work on
+                    entry["geology_coding"] = coding
         except Exception as exc:  # a damaged object must not hide the others
             entry["error"] = str(exc)
         out.append(entry)
